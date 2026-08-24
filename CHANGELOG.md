@@ -5,6 +5,34 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Changed — UI design system (light/blue)
+
+- Replaced the original minimal black/AMOLED theme with an approved light design
+  system: white/light-gray surfaces, a blue primary accent, clean typography, generous
+  spacing, and subtle borders/elevation instead of glow/gradients. See
+  PROJECT_MASTER.md §37 for the full decision record.
+- New app icon: a blue "M" mark on a white rounded-square card, used both as the
+  launcher icon and as an in-app logo (`MediaVaultLogo`).
+- New shared components (`ui/components/`): `MediaVaultLogo`, `MediaVaultTopBar`,
+  `MediaVaultCard`, `SectionLabel`, `EmptyStateCard` — used consistently across all
+  five screens instead of each screen styling itself independently.
+- Home screen gained: a time-of-day greeting, a Popular Sources chip row (static —
+  no source-index screen exists yet), a Quick Actions grid linking to the real
+  Downloads/Library/Player/Settings screens (no fake counts), a Recent Activity empty
+  state (no download-history persistence exists yet), and a device status row showing
+  **real** free storage space and network type (`DeviceStatusProvider`, backed by
+  `StatFs`/`ConnectivityManager` — not a `NetworkPolicyManager` implementation).
+- Downloads/Library/Player/Settings are now consistently styled `EmptyStateCard`
+  placeholders (icon + honest "not implemented yet" copy) instead of bare centered text.
+- All existing functionality — URL analysis, playlist analysis/selection, cancellation —
+  is unchanged; only presentation was touched. Verified live on a physical device
+  (navigation, Home, single-video analysis) with no regressions or crashes.
+- **Found while testing, not caused by this change:** yt-dlp's `youtube:tab` extractor
+  (used for playlist URLs) is currently returning `HTTP Error 400` from YouTube for
+  every playlist tried, including one that worked in the prior session — looks like an
+  upstream YouTube API change; single-video analysis is unaffected, and the playlist
+  mapping/UI code is unchanged and still covered by 15 passing unit tests.
+
 ### Added — Playlist analysis support
 
 - `ExtractorEngine.analyze` now returns `ExtractionResult`, a sealed type of `Single`

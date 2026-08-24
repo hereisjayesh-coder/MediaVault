@@ -2,6 +2,7 @@ package com.mediavault.app.ui.screens.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
@@ -9,6 +10,7 @@ import com.mediavault.core.domain.extractor.PlaylistItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val extractorEngine: ExtractorEngine,
+    private val deviceStatusProvider: DeviceStatusProvider,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -26,6 +29,14 @@ class HomeViewModel @Inject constructor(
 
     private var analyzeJob: Job? = null
     private var activeTaskId: String? = null
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val freeBytes = deviceStatusProvider.freeStorageBytes()
+            val networkStatus = deviceStatusProvider.networkStatus()
+            _uiState.update { it.copy(freeStorageBytes = freeBytes, networkStatus = networkStatus) }
+        }
+    }
 
     fun onUrlChanged(url: String) {
         _uiState.update { it.copy(url = url, errorMessage = null) }

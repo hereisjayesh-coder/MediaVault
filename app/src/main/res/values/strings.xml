@@ -9,8 +9,12 @@
     <string name="nav_settings">Settings</string>
 
     <string name="home_title">MediaVault</string>
+    <string name="home_greeting_morning">Good morning</string>
+    <string name="home_greeting_afternoon">Good afternoon</string>
+    <string name="home_greeting_evening">Good evening</string>
+    <string name="home_subtitle">Download from 1,700+ supported sources</string>
     <string name="home_url_hint">Paste a link to analyze</string>
-    <string name="home_analyze">Analyze</string>
+    <string name="home_analyze">Analyze Link</string>
     <string name="home_cancel">Cancel</string>
     <string name="home_analyzing">Analyzing…</string>
     <string name="home_available_formats">Available formats</string>
@@ -22,19 +26,32 @@
     <string name="home_download_playlist">Download entire playlist</string>
     <string name="home_download_selected">Download selected (%1$d)</string>
     <string name="home_unavailable">Unavailable</string>
-    <string name="home_supported_sources">Supported Sources</string>
-    <string name="home_recent_downloads">Recent Downloads</string>
-    <string name="home_placeholder_body">Foundation build — analysis and downloading are not implemented yet.</string>
+
+    <string name="home_popular_sources">Popular Sources</string>
+    <string name="home_quick_actions">Quick Actions</string>
+    <string name="home_quick_action_downloads_subtitle">View queue</string>
+    <string name="home_quick_action_library_subtitle">Browse media</string>
+    <string name="home_quick_action_player_subtitle">Watch &amp; listen</string>
+    <string name="home_quick_action_settings_subtitle">Preferences</string>
+
+    <string name="home_recent_activity">Recent Activity</string>
+    <string name="home_recent_activity_empty_title">No recent activity</string>
+    <string name="home_recent_activity_empty_body">Downloads and analyzed links will show up here.</string>
+
+    <string name="home_storage_free">%1$s free</string>
+    <string name="network_status_wifi">Wi-Fi</string>
+    <string name="network_status_mobile">Mobile data</string>
+    <string name="network_status_offline">Offline</string>
 
     <string name="downloads_title">Downloads</string>
-    <string name="downloads_placeholder_body">The download queue will appear here.</string>
+    <string name="downloads_placeholder_body">The download queue will appear here once downloading is implemented.</string>
 
     <string name="library_title">Library</string>
-    <string name="library_placeholder_body">Downloaded and imported media will appear here.</string>
+    <string name="library_placeholder_body">Downloaded and imported media will appear here once the library is implemented.</string>
 
     <string name="player_title">Player</string>
-    <string name="player_placeholder_body">The Media3 player screen will appear here.</string>
+    <string name="player_placeholder_body">The Media3 player will appear here once playback is implemented.</string>
 
     <string name="settings_title">Settings</string>
-    <string name="settings_placeholder_body">Network policy, storage, and app preferences will appear here.</string>
+    <string name="settings_placeholder_body">Network policy, storage, and app preferences will appear here once implemented.</string>
 </resources>

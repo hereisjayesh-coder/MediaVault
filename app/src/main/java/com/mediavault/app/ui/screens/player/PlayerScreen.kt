@@ -1,5 +1,7 @@
 package com.mediavault.app.ui.screens.player
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.mediavault.app.R
@@ -9,6 +11,7 @@ import com.mediavault.app.ui.screens.common.PlaceholderScreen
 fun PlayerScreen() {
     PlaceholderScreen(
         title = stringResource(R.string.player_title),
+        icon = Icons.Default.PlayArrow,
         body = stringResource(R.string.player_placeholder_body),
     )
 }

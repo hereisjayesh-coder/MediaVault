@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
+import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.extractor.ExtractionResult
@@ -31,12 +32,21 @@ class HomeViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         fakeEngine = FakeExtractorEngine()
-        viewModel = HomeViewModel(fakeEngine)
+        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider())
     }
 
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `device status is loaded on start`() = runTest {
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(10_000_000_000L, state.freeStorageBytes)
+        assertEquals(NetworkStatus.WIFI, state.networkStatus)
     }
 
     @Test

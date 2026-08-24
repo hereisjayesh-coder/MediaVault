@@ -7,7 +7,9 @@
 **Project Type:** Open-source Android application
 **Distribution:** GitHub Releases / direct APK distribution
 **Primary UI:** Native Android, Kotlin, Jetpack Compose
-**Design:** Minimal, black/AMOLED, clean, no advertisements
+**Design:** Light, minimal, blue primary accent, clean typography, generous spacing,
+subtle borders/elevation only (no neon/glow/gradients), no advertisements. Approved
+2026-08-24 (see §37 Decision Log) — replaces the earlier AMOLED-dark design named here.
 
 ---
 
@@ -769,14 +771,22 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-24, after the playlist analysis stage._
+_Last updated: 2026-08-24, after the UI design system stage._
 
 * Multi-module Gradle project: `app`, `core:model`, `core:common`, `core:domain`,
   `core:database`, `core:extractor-ytdlp` (Kotlin, Jetpack Compose, Material 3, AGP
   9.2.1, Kotlin 2.4.10).
-* Minimal AMOLED-black Compose theme, bottom-navigation skeleton, and placeholder
-  screens for Downloads, Library, Player, Settings. Home is now a real screen (see
-  below), not a placeholder.
+* **UI redesigned** (see §1, §37 Decision Log 2026-08-24): light theme, white/light-gray
+  surfaces, blue primary accent (`#2F6FEB`), a blue "M" logo mark, consistent top bar and
+  bottom navigation across all five screens. Shared components in
+  `ui/components/` (`MediaVaultLogo`, `MediaVaultTopBar`, `MediaVaultCard`,
+  `SectionLabel`, `EmptyStateCard`) are reused by Home and by the four placeholder
+  screens. Home also gained: a time-of-day greeting, a static Popular Sources chip row,
+  a Quick Actions grid linking to the real Downloads/Library/Player/Settings screens, a
+  Recent Activity empty state, and a real device storage/network status row
+  (`DeviceStatusProvider`, backed by `StatFs`/`ConnectivityManager` — genuine data, no
+  `NetworkPolicyManager` logic implied). Downloads/Library/Player/Settings remain
+  `EmptyStateCard` placeholders, now styled consistently rather than fabricated.
 * Room database foundation in place (`download_tasks`, `media_items` tables).
   `download_tasks` gained optional `sourceMediaId`/`playlistId`/`playlistItemIndex`
   columns to prepare for a future playlist-aware download queue — unused until
@@ -810,11 +820,22 @@ _Last updated: 2026-08-24, after the playlist analysis stage._
   CONTRIBUTING, CHANGELOG, THIRD-PARTY-NOTICES.
 * `gradlew build` succeeds; unit tests cover the JSON mapper (single video, playlist,
   empty playlist, mixed-availability playlist), the error mapper, formatting helpers,
-  and `HomeViewModel` (analysis + playlist selection, using a fake `ExtractorEngine`).
-  An on-device instrumented test runs the real yt-dlp extraction path (requires
+  and `HomeViewModel` (analysis + playlist selection + device-status loading, using a
+  fake `ExtractorEngine`/`DeviceStatusProvider`) — 41 tests, 0 failures. An on-device
+  instrumented test runs the real yt-dlp extraction path (requires
   `core:extractor-ytdlp`'s own `AndroidManifest.xml` to declare `INTERNET`, since its
-  test APK is a separate process from `:app`). The debug APK has been installed and
-  exercised on a physical device (Pixel 7a), including playlist analysis.
+  test APK is a separate process from `:app`). The redesigned debug APK has been
+  installed and exercised on a physical device (Pixel 7a): navigation, Home (greeting,
+  URL analyze, popular sources, quick actions, recent activity, real storage/network
+  status), and single-video analysis all verified live with no crashes.
+* **Known external issue found while testing (not caused by this stage's changes):**
+  yt-dlp `2026.8.19`'s `youtube:tab` extractor — used for `youtube.com/playlist?list=…`
+  URLs — is currently returning `HTTP Error 400: Bad Request` from YouTube's browse API
+  for every playlist tested, including one that worked in the previous session. Direct
+  single-video analysis is unaffected. This looks like an upstream YouTube API change
+  outpacing this pinned yt-dlp version, not a MediaVault bug — the playlist mapping/UI
+  logic itself is unchanged and still covered by 15 passing unit tests. Next
+  yt-dlp-focused session should investigate/bump the pinned version.
 * Git repository initialized locally and pushed to GitHub
   (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
@@ -890,6 +911,38 @@ no built-in call-cancellation primitive. AGP was also pinned to `9.2.1` (down fr
 
 **Where this is documented for contributors:** README.md ("Why yt-dlp runs via
 Chaquopy, not a prebuilt wrapper") and THIRD-PARTY-NOTICES.md.
+
+### 2026-08-24 — UI redesign: light/blue design system replaces AMOLED-dark
+
+**Decision:** MediaVault switches from the original minimal black/AMOLED theme (set in
+§1 at project init) to a light design system: white/light-gray surfaces, a blue primary
+accent, clean typography, generous spacing, and subtle borders/elevation instead of
+glow, gradients, or decorative filler. The app logo is a blue "M" mark on a white
+rounded-square card.
+
+**Why:** The product owner reviewed a full UI mockup/showcase (multiple screen
+concepts, several logo options) and approved this light/blue direction over the
+original dark one. This is a product/design decision, not a technical one — the
+backend architecture (`ExtractorEngine`, Room, Hilt, module boundaries) is unchanged.
+
+**What changed:** `ui/theme/{Color,Theme,Type}.kt` (light `ColorScheme`, expanded type
+scale), the launcher icon (white background, blue "M" foreground), `themes.xml`
+(`Theme.Material.Light`, light status/nav bars), new shared components
+(`MediaVaultLogo`, `MediaVaultTopBar`, `MediaVaultCard`, `SectionLabel`,
+`EmptyStateCard`) used across all five screens, and a Home screen redesign (greeting,
+popular-sources row, quick-actions grid linking to the real Downloads/Library/
+Player/Settings screens, a recent-activity empty state, and a real device
+storage/network status row backed by a new `DeviceStatusProvider`).
+
+**What did not change:** `ExtractorEngine`/`YtDlpExtractorEngine`, `HomeViewModel`'s
+analyze/cancel/playlist-selection logic, Room schema, DI graph shape (aside from the
+new `DeviceStatusProvider` binding) — the redesign is presentation-layer only.
+
+**Placeholders kept honest:** Popular Sources is a static, non-interactive list (no
+source-index/search screen exists yet); Quick Actions' subtitles carry no fake counts;
+Recent Activity shows a real empty state (no download-history persistence exists yet);
+Downloads/Library/Player/Settings remain `EmptyStateCard` placeholders styled to match,
+not fabricated functional screens.
 
 ---
 

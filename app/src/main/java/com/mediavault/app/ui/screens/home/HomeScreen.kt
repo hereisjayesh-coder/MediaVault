@@ -1,5 +1,7 @@
 package com.mediavault.app.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,12 +15,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -27,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,20 +51,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
 import com.mediavault.app.R
+import com.mediavault.app.navigation.MediaVaultDestination
+import com.mediavault.app.ui.components.EmptyStateCard
+import com.mediavault.app.ui.components.MediaVaultCard
+import com.mediavault.app.ui.components.MediaVaultTopBar
+import com.mediavault.app.ui.components.SectionLabel
+import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.model.MediaFormat
+import java.time.LocalTime
 
 @Composable
-fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
+fun HomeScreen(
+    viewModel: HomeViewModel = hiltViewModel(),
+    onNavigateToDestination: (MediaVaultDestination) -> Unit = {},
+) {
     val uiState by viewModel.uiState.collectAsState()
 
     HomeScreenContent(
@@ -62,6 +88,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
         onCancelSelection = viewModel::cancelSelection,
         onDownloadEntirePlaylist = viewModel::downloadEntirePlaylist,
         onDownloadSelected = viewModel::downloadSelectedItems,
+        onNavigateToDestination = onNavigateToDestination,
     )
 }
 
@@ -76,48 +103,29 @@ private fun HomeScreenContent(
     onCancelSelection: () -> Unit,
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
+    onNavigateToDestination: (MediaVaultDestination) -> Unit,
 ) {
+    val showDiscovery = uiState.result == null && !uiState.isAnalyzing
+
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item {
-            Text(text = stringResource(R.string.home_title), style = MaterialTheme.typography.titleLarge)
-        }
+        item { MediaVaultTopBar(title = stringResource(R.string.home_title)) }
+
+        item { GreetingHeader() }
 
         item {
-            OutlinedTextField(
-                value = uiState.url,
-                onValueChange = onUrlChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.home_url_hint)) },
-                singleLine = true,
-                enabled = !uiState.isAnalyzing,
+            UrlAnalyzeCard(
+                url = uiState.url,
+                isAnalyzing = uiState.isAnalyzing,
+                onUrlChanged = onUrlChanged,
+                onAnalyzeClick = onAnalyzeClick,
+                onCancelClick = onCancelClick,
             )
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(onClick = onAnalyzeClick, enabled = !uiState.isAnalyzing) {
-                    Text(stringResource(R.string.home_analyze))
-                }
-                if (uiState.isAnalyzing) {
-                    OutlinedButton(onClick = onCancelClick) {
-                        Text(stringResource(R.string.home_cancel))
-                    }
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                    Text(
-                        text = stringResource(R.string.home_analyzing),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
         }
 
         val error = uiState.errorMessage
@@ -155,6 +163,264 @@ private fun HomeScreenContent(
 
             null -> Unit
         }
+
+        if (showDiscovery) {
+            item { PopularSourcesSection() }
+            item { QuickActionsSection(onNavigateToDestination) }
+            item { RecentActivitySection() }
+            item { DeviceStatusRow(uiState.freeStorageBytes, uiState.networkStatus) }
+        }
+    }
+}
+
+@Composable
+private fun GreetingHeader() {
+    val greetingRes = when (LocalTime.now().hour) {
+        in 5..11 -> R.string.home_greeting_morning
+        in 12..17 -> R.string.home_greeting_afternoon
+        else -> R.string.home_greeting_evening
+    }
+    Column {
+        Text(text = stringResource(greetingRes), style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = stringResource(R.string.home_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun UrlAnalyzeCard(
+    url: String,
+    isAnalyzing: Boolean,
+    onUrlChanged: (String) -> Unit,
+    onAnalyzeClick: () -> Unit,
+    onCancelClick: () -> Unit,
+) {
+    MediaVaultCard {
+        OutlinedTextField(
+            value = url,
+            onValueChange = onUrlChanged,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text(stringResource(R.string.home_url_hint)) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            singleLine = true,
+            enabled = !isAnalyzing,
+            shape = MaterialTheme.shapes.medium,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            ),
+        )
+
+        Button(
+            onClick = onAnalyzeClick,
+            enabled = !isAnalyzing,
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        ) {
+            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(
+                text = stringResource(R.string.home_analyze),
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+
+        if (isAnalyzing) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    text = stringResource(R.string.home_analyzing),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = onCancelClick) {
+                    Text(stringResource(R.string.home_cancel))
+                }
+            }
+        }
+    }
+}
+
+private val popularSourceNames = listOf("YouTube", "Instagram", "TikTok", "Facebook", "Vimeo")
+
+@Composable
+private fun PopularSourcesSection() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionLabel(text = stringResource(R.string.home_popular_sources))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(popularSourceNames) { name ->
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class QuickAction(
+    val destination: MediaVaultDestination,
+    val labelRes: Int,
+    val subtitleRes: Int,
+    val icon: ImageVector,
+)
+
+@Composable
+private fun QuickActionsSection(onNavigateToDestination: (MediaVaultDestination) -> Unit) {
+    val actions = listOf(
+        QuickAction(
+            MediaVaultDestination.DOWNLOADS,
+            R.string.nav_downloads,
+            R.string.home_quick_action_downloads_subtitle,
+            Icons.Default.Download,
+        ),
+        QuickAction(
+            MediaVaultDestination.LIBRARY,
+            R.string.nav_library,
+            R.string.home_quick_action_library_subtitle,
+            Icons.AutoMirrored.Filled.PlaylistPlay,
+        ),
+        QuickAction(
+            MediaVaultDestination.PLAYER,
+            R.string.nav_player,
+            R.string.home_quick_action_player_subtitle,
+            Icons.Default.PlayArrow,
+        ),
+        QuickAction(
+            MediaVaultDestination.SETTINGS,
+            R.string.nav_settings,
+            R.string.home_quick_action_settings_subtitle,
+            Icons.Default.Storage,
+        ),
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionLabel(text = stringResource(R.string.home_quick_actions))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            QuickActionCard(actions[0], onNavigateToDestination, Modifier.weight(1f))
+            QuickActionCard(actions[1], onNavigateToDestination, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            QuickActionCard(actions[2], onNavigateToDestination, Modifier.weight(1f))
+            QuickActionCard(actions[3], onNavigateToDestination, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun QuickActionCard(
+    action: QuickAction,
+    onNavigateToDestination: (MediaVaultDestination) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.clickable { onNavigateToDestination(action.destination) },
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(
+                modifier = Modifier.size(36.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = action.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            Text(text = stringResource(action.labelRes), style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = stringResource(action.subtitleRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentActivitySection() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionLabel(text = stringResource(R.string.home_recent_activity))
+        EmptyStateCard(
+            icon = Icons.Default.History,
+            title = stringResource(R.string.home_recent_activity_empty_title),
+            description = stringResource(R.string.home_recent_activity_empty_body),
+        )
+    }
+}
+
+@Composable
+private fun DeviceStatusRow(freeStorageBytes: Long?, networkStatus: NetworkStatus?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            val storageLabel = formatFileSizeLabel(freeStorageBytes)
+            if (storageLabel != null) {
+                StatusChip(
+                    icon = Icons.Default.Storage,
+                    text = stringResource(R.string.home_storage_free, storageLabel),
+                )
+            }
+
+            val (networkIcon, networkLabelRes) = when (networkStatus) {
+                NetworkStatus.WIFI -> Icons.Default.Wifi to R.string.network_status_wifi
+                NetworkStatus.MOBILE_DATA -> Icons.Default.SignalCellularAlt to R.string.network_status_mobile
+                NetworkStatus.OFFLINE -> Icons.Default.WifiOff to R.string.network_status_offline
+                null -> null to null
+            }
+            if (networkIcon != null && networkLabelRes != null) {
+                StatusChip(icon = networkIcon, text = stringResource(networkLabelRes))
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusChip(icon: ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        Text(text = text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -163,11 +429,13 @@ private fun MessageCard(message: String, isError: Boolean) {
     val containerColor = if (isError) {
         MaterialTheme.colorScheme.errorContainer
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.primaryContainer
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Text(
             text = message,
@@ -180,37 +448,32 @@ private fun MessageCard(message: String, isError: Boolean) {
 
 @Composable
 private fun AnalysisResultCard(result: MediaAnalysisResult) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Thumbnail(result.thumbnailUrl)
+    MediaVaultCard {
+        Thumbnail(result.thumbnailUrl)
 
-            Text(text = result.title, style = MaterialTheme.typography.titleMedium)
+        Text(text = result.title, style = MaterialTheme.typography.titleMedium)
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = result.sourceName, style = MaterialTheme.typography.labelLarge)
-                val durationLabel = formatDurationLabel(result.durationSeconds)
-                if (durationLabel != null) {
-                    Text(
-                        text = durationLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            if (result.formats.isNotEmpty()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = result.sourceName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            val durationLabel = formatDurationLabel(result.durationSeconds)
+            if (durationLabel != null) {
                 Text(
-                    text = stringResource(R.string.home_available_formats),
+                    text = durationLabel,
                     style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    result.formats
-                        .sortedByDescending { it.estimatedSizeBytes ?: 0L }
-                        .forEach { format -> FormatRow(format) }
-                }
+            }
+        }
+
+        if (result.formats.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.home_available_formats),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                result.formats
+                    .sortedByDescending { it.estimatedSizeBytes ?: 0L }
+                    .forEach { format -> FormatRow(format) }
             }
         }
     }
@@ -218,38 +481,33 @@ private fun AnalysisResultCard(result: MediaAnalysisResult) {
 
 @Composable
 private fun PlaylistHeader(playlist: PlaylistAnalysisResult) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.PlaylistPlay,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+    MediaVaultCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.PlaylistPlay,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = stringResource(R.string.home_playlist_detected),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        Thumbnail(playlist.thumbnailUrl)
+
+        Text(text = playlist.title, style = MaterialTheme.typography.titleMedium)
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = playlist.sourceName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            val count = playlist.itemCount
+            if (count != null) {
                 Text(
-                    text = stringResource(R.string.home_playlist_detected),
+                    text = stringResource(R.string.home_playlist_item_count, count),
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-
-            Thumbnail(playlist.thumbnailUrl)
-
-            Text(text = playlist.title, style = MaterialTheme.typography.titleMedium)
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = playlist.sourceName, style = MaterialTheme.typography.labelLarge)
-                val count = playlist.itemCount
-                if (count != null) {
-                    Text(
-                        text = stringResource(R.string.home_playlist_item_count, count),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }
@@ -285,10 +543,17 @@ private fun PlaylistSelectionToolbar(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onDownloadEntirePlaylist) {
+            Button(
+                onClick = onDownloadEntirePlaylist,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
                 Text(stringResource(R.string.home_download_playlist))
             }
-            Button(onClick = onDownloadSelected, enabled = selection.selectedItemIds.isNotEmpty()) {
+            Button(
+                onClick = onDownloadSelected,
+                enabled = selection.selectedItemIds.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
                 Text(stringResource(R.string.home_download_selected, selection.selectedItemIds.size))
             }
         }
@@ -297,42 +562,49 @@ private fun PlaylistSelectionToolbar(
 
 @Composable
 private fun PlaylistItemRow(item: PlaylistItem, isSelected: Boolean, onClick: () -> Unit) {
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = item.isAvailable, onClick = onClick)
-            .alpha(if (item.isAvailable) 1f else 0.5f)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .alpha(if (item.isAvailable) 1f else 0.5f),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Checkbox(checked = isSelected, onCheckedChange = { onClick() }, enabled = item.isAvailable)
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = isSelected, onCheckedChange = { onClick() }, enabled = item.isAvailable)
 
-        Thumbnail(
-            thumbnailUrl = item.thumbnailUrl,
-            modifier = Modifier
-                .width(96.dp)
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(6.dp)),
-        )
-
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "${item.index}. ${item.title}",
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2,
+            Thumbnail(
+                thumbnailUrl = item.thumbnailUrl,
+                modifier = Modifier
+                    .width(96.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(6.dp)),
             )
-            val subtitle = if (!item.isAvailable) {
-                stringResource(R.string.home_unavailable)
-            } else {
-                formatDurationLabel(item.durationSeconds)
-            }
-            if (subtitle != null) {
+
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = "${item.index}. ${item.title}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
                 )
+                val subtitle = if (!item.isAvailable) {
+                    stringResource(R.string.home_unavailable)
+                } else {
+                    formatDurationLabel(item.durationSeconds)
+                }
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -346,7 +618,7 @@ private fun Thumbnail(
         .aspectRatio(16f / 9f)
         .clip(RoundedCornerShape(8.dp)),
 ) {
-    Surface(modifier = modifier, color = MaterialTheme.colorScheme.surface) {
+    Surface(modifier = modifier, color = MaterialTheme.colorScheme.surfaceVariant) {
         if (thumbnailUrl != null) {
             AsyncImage(
                 model = thumbnailUrl,

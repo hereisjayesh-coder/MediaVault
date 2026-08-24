@@ -2,15 +2,24 @@ package com.mediavault.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val AmoledBlack = Color(0xFF000000)
-val SurfaceDark = Color(0xFF0A0A0A)
-val SurfaceVariantDark = Color(0xFF1A1A1A)
-val OutlineDark = Color(0xFF2A2A2A)
+// Approved MediaVault design system: light, white/light-gray surfaces, blue primary accent.
+// See PROJECT_MASTER.md §37 (Decision Log) for why this replaced the earlier AMOLED-dark theme.
 
-val AccentTeal = Color(0xFF2DD4BF)
-val AccentTealMuted = Color(0xFF115E56)
+val BackgroundLight = Color(0xFFF5F6FA)
+val SurfaceLight = Color(0xFFFFFFFF)
+val SurfaceVariantLight = Color(0xFFF0F2F8)
+val OutlineLight = Color(0xFFE3E6EE)
 
-val TextPrimary = Color(0xFFF5F5F5)
-val TextSecondary = Color(0xFFA0A0A0)
+val PrimaryBlue = Color(0xFF2F6FEB)
+val PrimaryBlueDark = Color(0xFF1D4FC4)
+val PrimaryBlueContainer = Color(0xFFE8EFFE)
 
-val ErrorRed = Color(0xFFCF6679)
+val TextPrimary = Color(0xFF14161F)
+val TextSecondary = Color(0xFF6B7280)
+val TextTertiary = Color(0xFF9AA0AC)
+
+val SuccessGreen = Color(0xFF1FA556)
+val SuccessGreenContainer = Color(0xFFE6F7ED)
+
+val ErrorRed = Color(0xFFDC2626)
+val ErrorRedContainer = Color(0xFFFCE9E9)

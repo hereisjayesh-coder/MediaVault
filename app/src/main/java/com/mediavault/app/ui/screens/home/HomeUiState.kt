@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
+import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.domain.extractor.ExtractionResult
 
 data class HomeUiState(
@@ -10,6 +11,9 @@ data class HomeUiState(
     val infoMessage: String? = null,
     val result: ExtractionResult? = null,
     val playlistSelection: PlaylistSelectionState = PlaylistSelectionState(),
+    /** Real device status (storage free space, network transport) — read once when Home loads. */
+    val freeStorageBytes: Long? = null,
+    val networkStatus: NetworkStatus? = null,
 )
 
 /**
