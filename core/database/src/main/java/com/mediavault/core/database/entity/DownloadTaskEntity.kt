@@ -35,6 +35,19 @@ data class DownloadTaskEntity(
     /** Set when this task came from a playlist item; groups tasks and preserves playlist order. */
     val playlistId: String? = null,
     val playlistItemIndex: Int? = null,
+    /** Denormalized across every task in a playlist group — avoids a separate playlist table for just two display fields. */
+    val playlistTitle: String? = null,
+    val playlistThumbnailUrl: String? = null,
+    /**
+     * The quality every task in this playlist group was queued at (see `QualityDescriptor`
+     * in core:domain), persisted per-task so format resolution can resume after process death
+     * without needing to remember anything outside Room. Null for non-playlist tasks, which
+     * already know their exact `formatId` up front and never need to re-resolve one.
+     */
+    val qualityResolutionLabel: String? = null,
+    val qualityContainer: String? = null,
+    val qualityHasVideo: Boolean? = null,
+    val qualityHasAudio: Boolean? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
 )

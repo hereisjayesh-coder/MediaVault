@@ -124,6 +124,10 @@ fun HomeScreen(
         onCancelSelection = viewModel::cancelSelection,
         onDownloadEntirePlaylist = viewModel::downloadEntirePlaylist,
         onDownloadSelected = viewModel::downloadSelectedItems,
+        onSkipAlreadyDownloadedToggled = viewModel::onSkipAlreadyDownloadedToggled,
+        onPlaylistFormatSelected = viewModel::onPlaylistFormatSelected,
+        onQueuePlaylistClicked = viewModel::onQueuePlaylistClicked,
+        onCancelPlaylistDownloadSetup = viewModel::cancelPlaylistDownloadSetup,
         onNavigateToDestination = onNavigateToDestination,
         onNavigateToSources = onNavigateToSources,
     )
@@ -142,6 +146,10 @@ private fun HomeScreenContent(
     onCancelSelection: () -> Unit,
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
+    onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
+    onPlaylistFormatSelected: (MediaFormat) -> Unit,
+    onQueuePlaylistClicked: () -> Unit,
+    onCancelPlaylistDownloadSetup: () -> Unit,
     onNavigateToDestination: (MediaVaultDestination) -> Unit,
     onNavigateToSources: () -> Unit,
 ) {
@@ -197,7 +205,19 @@ private fun HomeScreenContent(
                         onCancelSelection = onCancelSelection,
                         onDownloadEntirePlaylist = onDownloadEntirePlaylist,
                         onDownloadSelected = onDownloadSelected,
+                        onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
                     )
+                }
+                val setup = uiState.playlistDownloadSetup
+                if (setup != null) {
+                    item {
+                        PlaylistDownloadSetupCard(
+                            setup = setup,
+                            onFormatSelected = onPlaylistFormatSelected,
+                            onQueueClicked = onQueuePlaylistClicked,
+                            onCancelClicked = onCancelPlaylistDownloadSetup,
+                        )
+                    }
                 }
                 items(result.playlist.items, key = { it.id }) { playlistItem ->
                     PlaylistItemRow(
@@ -600,6 +620,7 @@ private fun PlaylistSelectionToolbar(
     onCancelSelection: () -> Unit,
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
+    onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -622,6 +643,17 @@ private fun PlaylistSelectionToolbar(
             )
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { onSkipAlreadyDownloadedToggled(!selection.skipAlreadyDownloaded) },
+        ) {
+            Checkbox(checked = selection.skipAlreadyDownloaded, onCheckedChange = onSkipAlreadyDownloadedToggled)
+            Text(
+                text = stringResource(R.string.home_skip_already_downloaded),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
                 onClick = onDownloadEntirePlaylist,
@@ -635,6 +667,69 @@ private fun PlaylistSelectionToolbar(
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
                 Text(stringResource(R.string.home_download_selected, selection.selectedItemIds.size))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistDownloadSetupCard(
+    setup: PlaylistDownloadSetupState,
+    onFormatSelected: (MediaFormat) -> Unit,
+    onQueueClicked: () -> Unit,
+    onCancelClicked: () -> Unit,
+) {
+    MediaVaultCard {
+        Text(
+            text = stringResource(R.string.home_playlist_setup_title, setup.items.size),
+            style = MaterialTheme.typography.titleMedium,
+        )
+
+        when {
+            setup.isResolvingFormats -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    text = stringResource(R.string.home_playlist_setup_resolving),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            setup.errorMessage != null -> Text(
+                text = setup.errorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+
+            else -> {
+                Text(text = stringResource(R.string.home_select_format), style = MaterialTheme.typography.labelLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    setup.formatOptions
+                        .sortedByDescending { it.estimatedSizeBytes ?: 0L }
+                        .forEach { format ->
+                            FormatRow(
+                                format = format,
+                                isSelected = format.formatId == setup.selectedFormatId,
+                                onClick = { onFormatSelected(format) },
+                            )
+                        }
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onQueueClicked,
+                enabled = setup.selectedFormatId != null,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
+                Text(stringResource(R.string.home_playlist_setup_queue, setup.items.size))
+            }
+            OutlinedButton(onClick = onCancelClicked) {
+                Text(stringResource(R.string.home_cancel))
             }
         }
     }

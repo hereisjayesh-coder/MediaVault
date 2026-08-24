@@ -3,6 +3,7 @@ package com.mediavault.app.di
 import android.content.Context
 import androidx.room.Room
 import com.mediavault.core.database.MEDIAVAULT_DATABASE_NAME
+import com.mediavault.core.database.MIGRATION_1_2
 import com.mediavault.core.database.MediaVaultDatabase
 import com.mediavault.core.database.dao.DownloadTaskDao
 import com.mediavault.core.database.dao.MediaItemDao
@@ -21,6 +22,7 @@ object DatabaseModule {
     @Singleton
     fun provideMediaVaultDatabase(@ApplicationContext context: Context): MediaVaultDatabase =
         Room.databaseBuilder(context, MediaVaultDatabase::class.java, MEDIAVAULT_DATABASE_NAME)
+            .addMigrations(MIGRATION_1_2)
             .build()
 
     @Provides

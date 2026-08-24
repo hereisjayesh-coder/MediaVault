@@ -5,6 +5,51 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Playlist Download Engine
+
+- Playlist downloading is now real: selecting items from a detected playlist and tapping
+  "Download entire playlist"/"Download selected" queues genuine, independent downloads
+  instead of only reporting what would be queued. Each selected item becomes its own
+  `DownloadTask`, in original playlist order, tracked individually (own progress,
+  pause/resume/cancel/retry) and as a group (playlist title/thumbnail, completed/failed/
+  queued/remaining counts, current item).
+- One quality choice applies across the whole playlist via a new portable
+  `QualityDescriptor` (resolution/container/has-video/has-audio), matched against each
+  item's own independently-resolved formats — never a raw shared `formatId`. An item with
+  no matching format fails clearly rather than silently downloading a different quality.
+- "Skip already downloaded" (on by default) checks each item's stable source id against
+  completed downloads before queueing, so re-running a playlist download never silently
+  duplicates a file.
+- Downloads screen gained a "Playlists" section: thumbnail, title, live counts, current
+  item, overall progress bar, Pause all/Cancel all/Retry failed, and a per-item status row
+  — sitting above the existing Active/Queued/Failed/Completed sections, which now show
+  only non-playlist downloads.
+- Process-death recovery now also resumes playlist items that were still resolving their
+  format when the app died, instead of leaving them stuck — verified live by force-
+  stopping mid-resolution and confirming the item reached a normal terminal state and
+  retried successfully on relaunch.
+- Filenames get a zero-padded playlist-index prefix (`002 - Title.ext`) for both ordering
+  and collision avoidance; storage otherwise reuses the existing single-destination SAF
+  folder flow unchanged.
+- Room database bumped to schema version 2 with a real, additive migration (the project's
+  first — earlier stages could evolve the schema in place since no real device data
+  existed yet). Verified live that pre-existing downloads/media survive the update.
+- FFmpeg was **not** added this stage, matching the earlier single-item decision: only
+  formats that need no video+audio merge are selectable, so no playlist item ever required
+  one.
+- **Real external content restriction found during testing, not a MediaVault bug:** one
+  test playlist had every item blocked at the source (confirmed independently via the
+  yt-dlp CLI: a copyright claim). The per-item failure path surfaced this cleanly without
+  crashing or stalling the rest of the group.
+- Verified live on a physical device (Pixel 7a) with a small playlist: analyze → select
+  several items → choose a format → queue → download to completion with correctly-named
+  files, real-time playlist progress, a genuinely-unavailable item failing without
+  stopping the rest of the group, and process-death recovery mid-format-resolution.
+- New unit tests: `QualityDescriptorTest`, `PlaylistProgressTest`,
+  `MediaVaultDownloadEngineTest` (playlist task creation/ordering/duplicate-detection,
+  retry decisions, process-recovery grouping), plus new playlist-flow coverage in
+  `HomeViewModelTest`.
+
 ### Added — Supported Sources catalog
 
 - New Supported Sources screen and detail screen (`app/ui/screens/sources/`), reachable

@@ -199,30 +199,88 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun `downloading selected items reports how many, without starting anything`() = runTest {
+    fun `downloading selected items resolves formats from the first selected item`() = runTest {
         loadPlaylist()
         viewModel.onPlaylistItemTapped(item("a"))
         viewModel.onPlaylistItemTapped(item("b"))
+        fakeEngine.nextResult = null // force the second analyze() call to suspend until completePending()
 
         viewModel.downloadSelectedItems()
+        dispatcher.scheduler.runCurrent()
 
-        assertEquals(
-            "Downloading isn't implemented yet — would queue 2 selected item(s).",
-            viewModel.uiState.value.infoMessage,
-        )
+        assertEquals("https://example.com/a", fakeEngine.analyzeCalls.last().first)
+        assertTrue(viewModel.uiState.value.playlistDownloadSetup!!.isResolvingFormats)
+
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.completePending(AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed)))))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val setup = viewModel.uiState.value.playlistDownloadSetup
+        assertEquals(listOf(muxed), setup!!.formatOptions)
+        assertTrue(!setup.isResolvingFormats)
     }
 
     @Test
-    fun `downloading the entire playlist counts only available items`() = runTest {
+    fun `downloading the entire playlist only considers available items`() = runTest {
         loadPlaylist()
 
         viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.runCurrent()
 
-        // 4 items total, "c" is unavailable.
-        assertEquals(
-            "Downloading isn't implemented yet — would queue all 3 available item(s).",
-            viewModel.uiState.value.infoMessage,
-        )
+        // 4 items total, "c" is unavailable — the first *available* one ("a") is resolved.
+        assertEquals("https://example.com/a", fakeEngine.analyzeCalls.last().first)
+        assertEquals(3, viewModel.uiState.value.playlistDownloadSetup!!.items.size)
+    }
+
+    @Test
+    fun `queuing a playlist download preserves order and carries playlist item ids`() = runTest {
+        loadPlaylist()
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onQueuePlaylistClicked()
+        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val request = fakeDownloadEngine.enqueuedPlaylists.single()
+        assertEquals(listOf(1, 2, 4), request.items.map { it.itemIndex })
+        assertEquals(listOf("a", "b", "d"), request.items.map { it.sourceMediaId })
+        assertEquals("content://tree/primary%3ADownload", request.destinationTreeUri)
+        assertTrue(request.skipAlreadyDownloaded)
+        assertNull(viewModel.uiState.value.playlistDownloadSetup)
+        assertTrue(viewModel.uiState.value.justQueued)
+    }
+
+    @Test
+    fun `skip already downloaded toggle is carried into the playlist request`() = runTest {
+        loadPlaylist()
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        viewModel.onSkipAlreadyDownloadedToggled(false)
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onQueuePlaylistClicked()
+        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(!fakeDownloadEngine.enqueuedPlaylists.single().skipAlreadyDownloaded)
+    }
+
+    @Test
+    fun `cancelling playlist setup clears the setup state`() = runTest {
+        loadPlaylist()
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.cancelPlaylistDownloadSetup()
+
+        assertNull(viewModel.uiState.value.playlistDownloadSetup)
     }
 
     // --- Format selection & download -------------------------------------------------

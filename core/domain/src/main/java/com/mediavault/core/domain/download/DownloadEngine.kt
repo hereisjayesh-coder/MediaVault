@@ -20,10 +20,31 @@ interface DownloadEngine {
     /** Adds a task to the queue and returns immediately; use [observeProgress] to follow it. */
     fun enqueue(request: DownloadRequest)
 
+    /**
+     * Adds every item in [request] as its own task, in order. Each item's own format list is
+     * unknown up front (playlist items are lightweight — see `PlaylistAnalysisResult`), so
+     * each one is resolved against [PlaylistDownloadRequest.qualityDescriptor] independently
+     * once its own analysis completes; a task appears as [com.mediavault.core.model.DownloadStatus.ANALYZING]
+     * until then. Returns immediately — use [observeAll] to follow every item's progress.
+     */
+    fun enqueuePlaylist(request: PlaylistDownloadRequest)
+
     fun pause(taskId: String)
     fun resume(taskId: String)
     fun cancel(taskId: String)
     fun retry(taskId: String)
+
+    /** Pauses every currently-active/queued task belonging to [playlistId]; leaves finished ones alone. */
+    fun pausePlaylist(playlistId: String)
+
+    /** Cancels every non-terminal task belonging to [playlistId]; leaves finished ones alone. */
+    fun cancelPlaylist(playlistId: String)
+
+    /** Retries every [com.mediavault.core.model.DownloadStatus.FAILED] task belonging to [playlistId]. */
+    fun retryFailedInPlaylist(playlistId: String)
+
+    /** True if a task with this [sourceMediaId] has already completed successfully. */
+    suspend fun isAlreadyDownloaded(sourceMediaId: String): Boolean
 
     fun observeProgress(taskId: String): Flow<DownloadProgress>
     fun observeAll(): Flow<List<DownloadProgress>>
@@ -58,6 +79,33 @@ data class PlaylistDownloadContext(
     val itemIndex: Int,
 )
 
+/** One playlist-wide "download these" operation — see [DownloadEngine.enqueuePlaylist]. */
+data class PlaylistDownloadRequest(
+    /** Stable within this queueing operation; used to group tasks and for playlist-level pause/cancel/retry. */
+    val playlistId: String,
+    val playlistTitle: String,
+    val playlistThumbnailUrl: String?,
+    val sourceName: String?,
+    /** The single quality every item is downloaded at; see [QualityDescriptor]. */
+    val qualityDescriptor: QualityDescriptor,
+    val destinationTreeUri: String,
+    /** When true, an item already completed successfully (by [DownloadEngine.isAlreadyDownloaded]) is skipped, not re-downloaded. */
+    val skipAlreadyDownloaded: Boolean,
+    /** In playlist order. */
+    val items: List<PlaylistDownloadItem>,
+)
+
+data class PlaylistDownloadItem(
+    /** Webpage URL to (re-)analyze for this single item's own format list. */
+    val sourceUrl: String,
+    /** Stable extractor id for this item — the basis for duplicate detection. */
+    val sourceMediaId: String,
+    /** 1-based position within the playlist — preserved through to the created task. */
+    val itemIndex: Int,
+    val title: String,
+    val thumbnailUrl: String?,
+)
+
 data class DownloadProgress(
     val taskId: String,
     val title: String?,
@@ -72,4 +120,8 @@ data class DownloadProgress(
     val errorMessage: String?,
     val destinationUri: String?,
     val createdAtEpochMs: Long,
+    val playlistId: String? = null,
+    val playlistItemIndex: Int? = null,
+    val playlistTitle: String? = null,
+    val playlistThumbnailUrl: String? = null,
 )

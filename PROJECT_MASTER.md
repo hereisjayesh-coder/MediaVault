@@ -771,8 +771,107 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-24, after the Supported Sources catalog stage._
+_Last updated: 2026-08-25, after the Playlist Download Engine stage._
 
+* **Playlist downloading is real — a detected playlist queues actual, independent
+  downloads, not just a report.** Builds directly on `MediaVaultDownloadEngine` and the
+  existing `ExtractorEngine`/Room/SAF/`NetworkPolicyManager` stack; no new engine, no
+  site-specific logic.
+  - **One `DownloadTaskEntity` per selected item**, in original playlist order, carrying
+    `playlistId`/`sourceMediaId`/`playlistItemIndex` plus denormalized `playlistTitle`/
+    `playlistThumbnailUrl` and the chosen `qualityResolutionLabel`/`qualityContainer`/
+    `qualityHasVideo`/`qualityHasAudio` on every row (`DownloadTaskDao.getByPlaylistId`).
+    Order is preserved purely by strictly-increasing `createdAtEpochMs`, which the
+    existing queue already picks oldest-`QUEUED`-first — no new ordering concept needed.
+  - **Selection**: entire playlist, individual items, range-select, clear, and a live
+    "Download selected (N)" count were already in `HomeScreen`/`HomeViewModel` from the
+    prior stage (previously report-only) — now wired to actually queue.
+  - **One format choice per playlist, no site-specific logic**: new `QualityDescriptor`
+    (`core:domain/download/`) — resolution label + container + has-video/has-audio — is a
+    portable fingerprint resolved once from a reference item's real formats, then matched
+    against every other selected item's *own* independently-analyzed format list via
+    `List<MediaFormat>.findMatching()`. Playlist items are lightweight/flat-extracted (see
+    §34 prior stage), so each item's real format list is only known once resolved. No
+    match found for a given item → that item is marked failed with a clear "not
+    available" message; **never silently substituted** for a different quality.
+  - **Sequential per-item format resolution**: `resolvePlaylistFormats()` walks ANALYZING
+    tasks in playlist order, calling `ExtractorEngine.analyze()` once per item (avoids
+    concurrent Chaquopy calls), re-reads each task's live status before acting (so a
+    concurrent cancel/pause is respected), and kicks `processQueue()` after each resolved
+    item so downloading and remaining resolution interleave rather than blocking.
+  - **Duplicate protection**: "Skip already downloaded" toggle (default on) checks each
+    item's `sourceMediaId` against completed downloads before enqueueing
+    (`DownloadTaskDao.countBySourceMediaIdAndStatus`); matches are inserted as `CANCELLED`
+    with an "Already downloaded — skipped" message rather than silently re-downloaded or
+    silently dropped from the list.
+  - **Group-level and per-item control**: existing `pause`/`cancel`/`retry` were
+    refactored into public wrappers over private `pauseTask`/`cancelTask`/`retryTask`
+    helpers, reused by new `pausePlaylist`/`cancelPlaylist`/`retryFailedInPlaylist`, which
+    iterate `getByPlaylistId`. A failed item never blocks the rest of the group — each
+    task's terminal state is independent, and `retryFailedInPlaylist` only touches FAILED/
+    CANCELLED rows.
+  - **Network policy is per-task, not bypassed for multi-select**: each playlist item goes
+    through the same `AndroidNetworkPolicyManager` checks (mobile per-download limit,
+    daily budget, Wi-Fi queueing, real transferred-bytes accounting) as a single download
+    — queuing ten items queues ten individually-policed transfers, not one exempt batch.
+  - **Storage**: reuses the existing SAF destination-folder flow; filenames get a
+    zero-padded 3-digit playlist-item-index prefix (e.g. `002 - Title.ext`) for both
+    ordering and collision avoidance, with the SAF provider's own auto-rename-on-collision
+    as the final safety net (no separate playlist subfolder — the existing flat
+    destination-folder design was preserved rather than introduced this stage).
+  - **Downloads UI**: new `PlaylistProgress`/`List<DownloadProgress>.toPlaylistProgressGroups()`
+    (`core:domain/download/`, pure and unit-tested) aggregate playlist tasks into
+    completed/failed/skipped/queued/active counts and the current actively-downloading
+    item's title. `DownloadsScreen` gained a "Playlists" section (thumbnail, title, counts
+    line, "Now: <item>" line, overall progress bar, Pause all/Cancel all/Retry failed, and
+    a per-item status row with one context-appropriate action each) above the existing
+    Active/Queued/Failed/Completed sections, which now render only non-playlist tasks.
+  - **Process-death recovery extended**: `recoverAfterProcessDeath()` (already reset
+    DOWNLOADING/PROCESSING → PAUSED) now also finds every playlist with a still-ANALYZING
+    task (`List<DownloadTaskEntity>.playlistIdsNeedingResolution()`, pure and unit-tested)
+    and re-invokes `resolvePlaylistFormats()` for each — resolution resumes rather than
+    leaving items stuck forever. **Verified live** (Pixel 7a): queued 2 playlist items,
+    force-stopped the app ~1s after tapping Queue (mid ANALYZING), relaunched, and the
+    Downloads screen showed the interrupted item correctly reach a terminal FAILED state
+    (not stuck) with a working Retry that completed it on the next attempt, while the
+    other selected item — already downloaded in an earlier test run — was correctly
+    skipped as `Cancelled` rather than re-downloaded.
+  - **Room migration**: `MediaVaultDatabase` version 1→2, with a real `Migration(1,2)`
+    (`core/database/Migrations.kt`, six additive `ALTER TABLE ADD COLUMN` statements,
+    registered via `.addMigrations()` in `DatabaseModule`) — the first real migration in
+    this project, since the device now carries genuine prior downloads/media unlike
+    earlier schema-only-evolved-at-v1 stages. Verified live: pre-existing download and
+    media rows survived the app update untouched.
+  - **Testability seam**: new `DownloadForegroundServiceStarter` interface (prod impl
+    calls the real `DownloadForegroundService.start()`) removes the one remaining
+    Context-touching call from `MediaVaultDownloadEngine`'s queue-creation paths, enabling
+    JVM unit tests without Robolectric/Mockito (still absent from this project). Combined
+    with pure top-level functions (`buildPlaylistTaskEntities`, `retryNextStatusOrNull`,
+    `playlistIdsNeedingResolution`) extracted out of the Android/Room/coroutine-coupled
+    engine class.
+  - **FFmpeg: still not added**, per this stage's own explicit constraint (same as §37's
+    2026-08-24 muxed/audio-only decision). No playlist item in real-device testing ever
+    required a merge to be selectable, since only muxed/audio-only formats are offered.
+    Video-only playlist formats correctly remain shown-but-disabled with "Requires
+    merging — not available yet", identical to the single-item flow.
+  - **Real content-restriction finding, not a MediaVault bug**: one candidate playlist
+    ("JODA15") had every item individually blocked at extraction time —
+    `python -m yt_dlp` confirmed `Video unavailable. It was blocked due to the claimed
+    content by Zee Entertainment Enterprises Limited (ZEEL)` — despite listing fine in the
+    flat playlist view. The per-item failure UI (clear message, no crash, rest of the
+    group unaffected) handled it correctly; testing switched to a different, working
+    playlist for the successful-download demonstration.
+  - **Verified live** (Pixel 7a, small playlist — a public YouTube channel's video list):
+    analyzed, selected several items, chose an audio-only format, queued, downloaded to
+    completion with correctly-named/sized files at the chosen SAF location, watched
+    playlist progress counts and per-item status update in real time, confirmed a
+    genuinely-blocked item failed without stopping the rest of the group, and confirmed
+    process-death recovery as described above.
+  - Unit tests added: `QualityDescriptorTest` (5), `PlaylistProgressTest` (6),
+    `MediaVaultDownloadEngineTest` (13, covering `buildPlaylistTaskEntities` ordering/
+    duplicate-marking, `retryNextStatusOrNull` decisions, and process-recovery grouping),
+    plus new playlist-flow tests in `HomeViewModelTest`. `./gradlew build` and the full
+    unit test suite pass.
 * **Supported Sources catalog is real, not a placeholder.** A new `Source`/`SourceCategory`
   domain model (`core:model`) and `SourceCatalogRepository`/`SourceCatalog`/
   `SourceCatalogIndex` (`core:domain/source/`) sit behind a generated, bundled JSON asset —
@@ -981,12 +1080,11 @@ _Prior state, before the real DownloadEngine stage:_
 * Git repository initialized locally and pushed to GitHub
   (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
-Not yet started: playlist downloading (queuing multiple `DownloadTask`s — the domain
-model already carries `playlistContext`/`sourceMediaId` for this), media
-processing/FFmpeg (still deliberately avoided — see above), torrent downloading, media
-playback, library scanning, source search (beyond the Supported Sources catalog itself —
-§17's "tapping an item opens the appropriate analysis/download flow" is satisfied by
-returning to Home, not a source-aware analyzer), and update checking.
+Not yet started: media processing/FFmpeg — i.e. merged video+audio downloads (still
+deliberately avoided — see above), torrent downloading, media playback, library scanning,
+source search (beyond the Supported Sources catalog itself — §17's "tapping an item opens
+the appropriate analysis/download flow" is satisfied by returning to Home, not a
+source-aware analyzer), and update checking.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -1150,6 +1248,45 @@ which isn't practical or maintainable. Everything unmatched defaults to `VIDEO` 
 core purpose). The UI never claims a fixed count or that every listed service currently
 works — see §16 and the "Supported by current extraction engine (yt-dlp `<version>`)"
 wording on the detail screen.
+
+---
+
+### 2026-08-25 — Playlist quality choice resolved as a portable descriptor, not a shared formatId
+
+**Decision:** A single quality choice for a whole playlist is represented as a
+`QualityDescriptor` (resolution label + container + has-video/has-audio) rather than a
+literal yt-dlp `formatId` shared across items. Each selected item is matched against this
+descriptor independently once its own real formats are resolved
+(`List<MediaFormat>.findMatching()`); no match means that item fails clearly rather than
+falling back to a different quality.
+
+**Why:** Playlist items are lightweight/flat-extracted (see §34, real `ExtractorEngine`
+stage) — a raw `formatId` from one video has no guaranteed meaning for another video's
+own format list, and nothing in this project's architecture assumes otherwise. A shape-
+based descriptor is the smallest concept that lets "1080p MP4" mean the same thing across
+independently-analyzed items without inventing any site-specific matching logic, which the
+milestone explicitly ruled out.
+
+**Consequence:** per-item unavailability is a first-class, visible outcome (a playlist
+item can legitimately fail to match while its siblings succeed), not an error path to be
+special-cased away — reinforced by the milestone's own "never silently substitute
+quality" requirement.
+
+---
+
+### 2026-08-25 — Real Room migration (v1→v2) instead of evolving the schema in place
+
+**Decision:** The playlist columns added to `download_tasks` this stage went through a
+real, additive `Migration(1,2)` (`core/database/Migrations.kt`, registered via
+`.addMigrations()`), rather than reusing the earlier sessions' shortcut of adjusting the
+entity at schema version 1.
+
+**Why:** Every prior schema change happened before this device carried any real user
+data, so bumping the in-place version 1 definition was harmless. That is no longer true —
+the Pixel 7a test device now holds genuine downloads and media rows from previous stages.
+Skipping a real migration here would have either force-uninstalled the app (losing that
+data) or crashed on the next launch. Verified live: the existing Big Buck Bunny download
+and a previously-cancelled task both survived the version-2 app update untouched.
 
 ---
 

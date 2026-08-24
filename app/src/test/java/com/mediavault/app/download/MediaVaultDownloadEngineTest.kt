@@ -1,0 +1,185 @@
+package com.mediavault.app.download
+
+import com.mediavault.core.database.entity.DownloadTaskEntity
+import com.mediavault.core.domain.download.PlaylistDownloadItem
+import com.mediavault.core.domain.download.PlaylistDownloadRequest
+import com.mediavault.core.domain.download.QualityDescriptor
+import com.mediavault.core.model.DownloadStatus
+import com.mediavault.core.model.MediaType
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Covers the pure, DAO/coroutine-free decision logic extracted from [MediaVaultDownloadEngine]:
+ * playlist task creation, order preservation, duplicate detection, retry-status decisions, and
+ * process-recovery grouping. The engine's actual async orchestration (queue processing, real
+ * downloads) runs on its own long-lived `Dispatchers.Default` scope and touches Android/SAF
+ * APIs — as with the rest of this engine (see PROJECT_MASTER.md), that part is verified via
+ * real-device testing and code review rather than JVM unit tests.
+ */
+class MediaVaultDownloadEngineTest {
+
+    private val descriptor = QualityDescriptor(resolutionLabel = "1080p", container = "mp4", hasVideo = true, hasAudio = true)
+
+    private fun request(
+        items: List<PlaylistDownloadItem>,
+        skipAlreadyDownloaded: Boolean = true,
+    ) = PlaylistDownloadRequest(
+        playlistId = "playlist-1",
+        playlistTitle = "My Playlist",
+        playlistThumbnailUrl = "https://example.com/thumb.jpg",
+        sourceName = "Youtube",
+        qualityDescriptor = descriptor,
+        destinationTreeUri = "content://tree/primary%3ADownload",
+        skipAlreadyDownloaded = skipAlreadyDownloaded,
+        items = items,
+    )
+
+    private fun item(id: String, index: Int) =
+        PlaylistDownloadItem(sourceUrl = "https://example.com/$id", sourceMediaId = id, itemIndex = index, title = "Item $id", thumbnailUrl = null)
+
+    @Test
+    fun `every selected item becomes its own task in playlist order`() {
+        val items = listOf(item("a", 1), item("b", 2), item("c", 3))
+
+        val tasks = buildPlaylistTaskEntities(request(items), alreadyDownloadedSourceMediaIds = emptySet(), nowMs = 1_000L)
+
+        assertEquals(3, tasks.size)
+        assertEquals(listOf(1, 2, 3), tasks.map { it.playlistItemIndex })
+        assertEquals(listOf("a", "b", "c"), tasks.map { it.sourceMediaId })
+        // Distinct createdAtEpochMs, strictly increasing — this is what preserves order once
+        // the real queue picks tasks by createdAtEpochMs ASC.
+        assertTrue(tasks.zipWithNext().all { (a, b) -> a.createdAtEpochMs < b.createdAtEpochMs })
+    }
+
+    @Test
+    fun `every task carries the playlist group and chosen quality`() {
+        val tasks = buildPlaylistTaskEntities(request(listOf(item("a", 1))), emptySet(), 1_000L)
+
+        val task = tasks.single()
+        assertEquals("playlist-1", task.playlistId)
+        assertEquals("My Playlist", task.playlistTitle)
+        assertEquals("https://example.com/thumb.jpg", task.playlistThumbnailUrl)
+        assertEquals("1080p", task.qualityResolutionLabel)
+        assertEquals("mp4", task.qualityContainer)
+        assertEquals(true, task.qualityHasVideo)
+        assertEquals(true, task.qualityHasAudio)
+        assertEquals(DownloadStatus.ANALYZING, task.status)
+    }
+
+    @Test
+    fun `an item already downloaded is marked cancelled instead of queued for download`() {
+        val items = listOf(item("a", 1), item("b", 2))
+
+        val tasks = buildPlaylistTaskEntities(request(items), alreadyDownloadedSourceMediaIds = setOf("a"), nowMs = 1_000L)
+
+        val taskA = tasks.first { it.sourceMediaId == "a" }
+        val taskB = tasks.first { it.sourceMediaId == "b" }
+        assertEquals(DownloadStatus.CANCELLED, taskA.status)
+        assertEquals("Already downloaded — skipped", taskA.errorMessage)
+        assertEquals(DownloadStatus.ANALYZING, taskB.status)
+        assertNull(taskB.errorMessage)
+    }
+
+    @Test
+    fun `an empty already-downloaded set leaves every item queued for analysis`() {
+        // The caller only populates alreadyDownloadedSourceMediaIds when skipAlreadyDownloaded
+        // is set — with it off, every item reaches here as ANALYZING regardless of history.
+        val tasks = buildPlaylistTaskEntities(
+            request(listOf(item("a", 1)), skipAlreadyDownloaded = false),
+            alreadyDownloadedSourceMediaIds = emptySet(),
+            nowMs = 1_000L,
+        )
+
+        assertEquals(DownloadStatus.ANALYZING, tasks.single().status)
+    }
+
+    // --- Retry decisions ---------------------------------------------------------------
+
+    private fun sampleTask(
+        status: DownloadStatus,
+        playlistId: String? = null,
+        formatId: String? = "f1",
+    ) = DownloadTaskEntity(
+        id = "t1",
+        sourceUrl = "https://example.com/a",
+        title = "A",
+        sourceName = null,
+        thumbnailUrl = null,
+        mediaType = MediaType.VIDEO,
+        formatId = formatId,
+        container = "mp4",
+        destinationTreeUri = "content://tree/x",
+        destinationUri = null,
+        localCachePath = null,
+        status = status,
+        bytesTransferred = 0,
+        totalBytes = null,
+        canResume = false,
+        errorMessage = null,
+        playlistId = playlistId,
+        createdAtEpochMs = 0,
+        updatedAtEpochMs = 0,
+    )
+
+    @Test
+    fun `a failed playlist item with no resolved format yet retries into ANALYZING`() {
+        val task = sampleTask(DownloadStatus.FAILED, playlistId = "p1", formatId = null)
+
+        assertEquals(DownloadStatus.ANALYZING, task.retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a failed task that already resolved a format retries straight into QUEUED`() {
+        val task = sampleTask(DownloadStatus.FAILED, playlistId = "p1", formatId = "f1")
+
+        assertEquals(DownloadStatus.QUEUED, task.retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a failed non-playlist task retries into QUEUED`() {
+        val task = sampleTask(DownloadStatus.FAILED, playlistId = null)
+
+        assertEquals(DownloadStatus.QUEUED, task.retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a cancelled (including skipped-duplicate) task can be retried too`() {
+        val task = sampleTask(DownloadStatus.CANCELLED, playlistId = "p1", formatId = null)
+
+        assertEquals(DownloadStatus.ANALYZING, task.retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a task that is not failed or cancelled is not retryable`() {
+        assertNull(sampleTask(DownloadStatus.COMPLETED).retryNextStatusOrNull())
+        assertNull(sampleTask(DownloadStatus.DOWNLOADING).retryNextStatusOrNull())
+        assertNull(sampleTask(DownloadStatus.QUEUED).retryNextStatusOrNull())
+    }
+
+    // --- Process-death recovery ---------------------------------------------------------
+
+    @Test
+    fun `process recovery finds every playlist with a stuck ANALYZING task`() {
+        val tasks = listOf(
+            sampleTask(DownloadStatus.ANALYZING, playlistId = "p1"),
+            sampleTask(DownloadStatus.ANALYZING, playlistId = "p1"),
+            sampleTask(DownloadStatus.ANALYZING, playlistId = "p2"),
+            sampleTask(DownloadStatus.QUEUED, playlistId = "p3"),
+            sampleTask(DownloadStatus.ANALYZING, playlistId = null),
+        )
+
+        val stuck = tasks.playlistIdsNeedingResolution()
+
+        assertEquals(setOf("p1", "p2"), stuck.toSet())
+    }
+
+    @Test
+    fun `process recovery finds nothing when no playlist is mid-resolution`() {
+        val tasks = listOf(sampleTask(DownloadStatus.DOWNLOADING, playlistId = "p1"), sampleTask(DownloadStatus.COMPLETED, playlistId = "p2"))
+
+        assertTrue(tasks.playlistIdsNeedingResolution().isEmpty())
+    }
+}

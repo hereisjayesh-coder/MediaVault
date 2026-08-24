@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,10 +42,12 @@ import android.webkit.MimeTypeMap
 import coil3.compose.AsyncImage
 import com.mediavault.app.R
 import com.mediavault.app.ui.components.EmptyStateCard
+import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import com.mediavault.core.domain.download.DownloadProgress
+import com.mediavault.core.domain.download.PlaylistProgress
 import com.mediavault.core.model.DownloadStatus
 
 @Composable
@@ -57,6 +60,9 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel()) {
         onResume = viewModel::resume,
         onCancel = viewModel::cancel,
         onRetry = viewModel::retry,
+        onPausePlaylist = viewModel::pausePlaylist,
+        onCancelPlaylist = viewModel::cancelPlaylist,
+        onRetryFailedInPlaylist = viewModel::retryFailedInPlaylist,
     )
 }
 
@@ -67,8 +73,11 @@ private fun DownloadsScreenContent(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onPausePlaylist: (String) -> Unit,
+    onCancelPlaylist: (String) -> Unit,
+    onRetryFailedInPlaylist: (String) -> Unit,
 ) {
-    if (uiState.tasks.isEmpty()) {
+    if (uiState.tasks.isEmpty() && uiState.playlists.isEmpty()) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -102,6 +111,23 @@ private fun DownloadsScreenContent(
     ) {
         item { MediaVaultTopBar(title = stringResource(R.string.downloads_title)) }
 
+        if (uiState.playlists.isNotEmpty()) {
+            item { SectionLabel(text = stringResource(R.string.downloads_section_playlists)) }
+            items(uiState.playlists, key = { it.playlistId }) { playlist ->
+                PlaylistGroupCard(
+                    playlist = playlist,
+                    items = uiState.playlistTasksById[playlist.playlistId].orEmpty(),
+                    onPause = onPause,
+                    onResume = onResume,
+                    onCancel = onCancel,
+                    onRetry = onRetry,
+                    onPausePlaylist = { onPausePlaylist(playlist.playlistId) },
+                    onCancelPlaylist = { onCancelPlaylist(playlist.playlistId) },
+                    onRetryFailedInPlaylist = { onRetryFailedInPlaylist(playlist.playlistId) },
+                )
+            }
+        }
+
         downloadSection(R.string.downloads_section_active, active, onPause, onResume, onCancel, onRetry)
         downloadSection(R.string.downloads_section_queued, queued, onPause, onResume, onCancel, onRetry)
         downloadSection(R.string.downloads_section_failed, failed, onPause, onResume, onCancel, onRetry)
@@ -121,6 +147,128 @@ private fun androidx.compose.foundation.lazy.LazyListScope.downloadSection(
     item { SectionLabel(text = stringResource(titleRes)) }
     items(tasks, key = { it.taskId }) { task ->
         DownloadTaskCard(task = task, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry)
+    }
+}
+
+@Composable
+private fun PlaylistGroupCard(
+    playlist: PlaylistProgress,
+    items: List<DownloadProgress>,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onPausePlaylist: () -> Unit,
+    onCancelPlaylist: () -> Unit,
+    onRetryFailedInPlaylist: () -> Unit,
+) {
+    MediaVaultCard {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                modifier = Modifier
+                    .width(64.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(6.dp)),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                if (playlist.playlistThumbnailUrl != null) {
+                    AsyncImage(
+                        model = playlist.playlistThumbnailUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = playlist.playlistTitle ?: stringResource(R.string.downloads_section_playlists),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.downloads_playlist_counts,
+                        playlist.completedCount,
+                        playlist.totalCount,
+                        playlist.failedCount,
+                        playlist.remainingCount,
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val currentItem = playlist.currentItemTitle
+                if (currentItem != null) {
+                    Text(
+                        text = stringResource(R.string.downloads_playlist_current_item, currentItem),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
+        val overallFraction = playlist.totalCount.takeIf { it > 0 }
+            ?.let { total -> (playlist.completedCount.toFloat() / total).coerceIn(0f, 1f) }
+        if (overallFraction != null) {
+            LinearProgressIndicator(progress = { overallFraction }, modifier = Modifier.fillMaxWidth())
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onPausePlaylist) { Text(stringResource(R.string.downloads_action_pause_all)) }
+            OutlinedButton(onClick = onCancelPlaylist) { Text(stringResource(R.string.downloads_action_cancel_all)) }
+            if (playlist.failedCount > 0) {
+                OutlinedButton(onClick = onRetryFailedInPlaylist) { Text(stringResource(R.string.downloads_action_retry_failed)) }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            items.forEach { item ->
+                PlaylistItemStatusRow(item = item, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistItemStatusRow(
+    item: DownloadProgress,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "${item.playlistItemIndex ?: 0}. ${item.title ?: item.taskId}",
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = statusLabel(item.status),
+            style = MaterialTheme.typography.labelMedium,
+            color = statusColor(item.status),
+        )
+        when (item.status) {
+            DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING ->
+                TextButton(onClick = { onPause(item.taskId) }) { Text(stringResource(R.string.downloads_action_pause)) }
+
+            DownloadStatus.PAUSED ->
+                TextButton(onClick = { onResume(item.taskId) }) { Text(stringResource(R.string.downloads_action_resume)) }
+
+            DownloadStatus.FAILED ->
+                TextButton(onClick = { onRetry(item.taskId) }) { Text(stringResource(R.string.downloads_action_retry)) }
+
+            DownloadStatus.QUEUED, DownloadStatus.ANALYZING ->
+                TextButton(onClick = { onCancel(item.taskId) }) { Text(stringResource(R.string.downloads_action_cancel)) }
+
+            else -> Unit
+        }
     }
 }
 
@@ -260,7 +408,8 @@ private fun openDownloadedFile(context: android.content.Context, destinationUri:
 }
 
 private fun statusLabel(status: DownloadStatus): String = when (status) {
-    DownloadStatus.QUEUED, DownloadStatus.ANALYZING -> "Queued"
+    DownloadStatus.QUEUED -> "Queued"
+    DownloadStatus.ANALYZING -> "Checking quality…"
     DownloadStatus.DOWNLOADING -> "Downloading"
     DownloadStatus.PROCESSING, DownloadStatus.MERGING -> "Processing"
     DownloadStatus.COMPLETED -> "Completed"

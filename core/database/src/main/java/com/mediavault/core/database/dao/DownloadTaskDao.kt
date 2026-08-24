@@ -37,4 +37,11 @@ interface DownloadTaskDao {
     /** Used on app start: anything still marked DOWNLOADING/PROCESSING was interrupted by process death. */
     @Query("UPDATE download_tasks SET status = :newStatus, updatedAtEpochMs = :nowMs WHERE status IN (:fromStatuses)")
     suspend fun reassignStatus(fromStatuses: List<DownloadStatus>, newStatus: DownloadStatus, nowMs: Long)
+
+    @Query("SELECT * FROM download_tasks WHERE playlistId = :playlistId ORDER BY playlistItemIndex ASC")
+    suspend fun getByPlaylistId(playlistId: String): List<DownloadTaskEntity>
+
+    /** Duplicate-detection basis: has any task for this stable source id already finished successfully? */
+    @Query("SELECT COUNT(*) FROM download_tasks WHERE sourceMediaId = :sourceMediaId AND status = :status")
+    suspend fun countBySourceMediaIdAndStatus(sourceMediaId: String, status: DownloadStatus): Int
 }

@@ -7,6 +7,9 @@ import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.domain.download.DownloadRequest
+import com.mediavault.core.domain.download.PlaylistDownloadItem
+import com.mediavault.core.domain.download.PlaylistDownloadRequest
+import com.mediavault.core.domain.download.QualityDescriptor
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
@@ -40,6 +43,12 @@ class HomeViewModel @Inject constructor(
 
     private var analyzeJob: Job? = null
     private var activeTaskId: String? = null
+    private var formatResolutionJob: Job? = null
+
+    /** Which flow requested the SAF folder picker — resolved once [onDestinationFolderPicked] fires. */
+    private var pendingDestinationAction: PendingDestinationAction? = null
+
+    private enum class PendingDestinationAction { SINGLE, PLAYLIST }
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -114,6 +123,7 @@ class HomeViewModel @Inject constructor(
     fun onDownloadClicked() {
         val state = _uiState.value
         if (state.selectedFormatId == null) return
+        pendingDestinationAction = PendingDestinationAction.SINGLE
         if (state.destinationTreeUri == null) {
             _uiState.update { it.copy(awaitingDestinationPick = true) }
             return
@@ -122,6 +132,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun onDestinationPickerDismissed() {
+        pendingDestinationAction = null
         _uiState.update { it.copy(awaitingDestinationPick = false) }
     }
 
@@ -130,7 +141,12 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             destinationStore.setTreeUri(treeUri)
             _uiState.update { it.copy(destinationTreeUri = treeUri, awaitingDestinationPick = false) }
-            enqueueSelectedFormat(treeUri)
+            when (pendingDestinationAction) {
+                PendingDestinationAction.SINGLE -> enqueueSelectedFormat(treeUri)
+                PendingDestinationAction.PLAYLIST -> confirmPlaylistQueue(treeUri)
+                null -> Unit
+            }
+            pendingDestinationAction = null
         }
     }
 
@@ -222,21 +238,121 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(playlistSelection = PlaylistSelectionState(), infoMessage = null) }
     }
 
+    fun onSkipAlreadyDownloadedToggled(value: Boolean) {
+        _uiState.update { it.copy(playlistSelection = it.playlistSelection.copy(skipAlreadyDownloaded = value)) }
+    }
+
     fun downloadEntirePlaylist() {
-        val availableCount = currentPlaylistItems().count { it.isAvailable }
-        _uiState.update {
-            it.copy(infoMessage = "Downloading isn't implemented yet — would queue all $availableCount available item(s).")
-        }
+        val items = currentPlaylistItems().filter { it.isAvailable }
+        beginPlaylistDownloadSetup(items)
     }
 
     fun downloadSelectedItems() {
-        val selectedCount = _uiState.value.playlistSelection.selectedItemIds.size
-        if (selectedCount == 0) {
+        val selectedIds = _uiState.value.playlistSelection.selectedItemIds
+        if (selectedIds.isEmpty()) {
             _uiState.update { it.copy(infoMessage = "Select at least one item first.") }
             return
         }
+        val items = currentPlaylistItems().filter { it.id in selectedIds }
+        beginPlaylistDownloadSetup(items)
+    }
+
+    /** Resolves the first item's own format list so the user can pick one quality for the whole batch. */
+    private fun beginPlaylistDownloadSetup(items: List<PlaylistItem>) {
+        val firstWithUrl = items.firstOrNull { it.url != null }
+        if (firstWithUrl == null) {
+            _uiState.update { it.copy(infoMessage = "None of the selected items can be downloaded.") }
+            return
+        }
+
         _uiState.update {
-            it.copy(infoMessage = "Downloading isn't implemented yet — would queue $selectedCount selected item(s).")
+            it.copy(playlistDownloadSetup = PlaylistDownloadSetupState(items = items, isResolvingFormats = true), infoMessage = null)
+        }
+
+        formatResolutionJob?.cancel()
+        formatResolutionJob = viewModelScope.launch {
+            val taskId = UUID.randomUUID().toString()
+            when (val outcome = extractorEngine.analyze(firstWithUrl.url!!, taskId)) {
+                is AppResult.Success -> {
+                    val media = (outcome.data as? ExtractionResult.Single)?.media
+                    _uiState.update { state ->
+                        val setup = state.playlistDownloadSetup ?: return@update state
+                        if (media == null) {
+                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, errorMessage = "That item couldn't be resolved."))
+                        } else {
+                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, formatOptions = media.formats))
+                        }
+                    }
+                }
+
+                is AppResult.Failure -> _uiState.update { state ->
+                    val setup = state.playlistDownloadSetup ?: return@update state
+                    state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, errorMessage = outcome.error.message))
+                }
+            }
+        }
+    }
+
+    fun onPlaylistFormatSelected(format: MediaFormat) {
+        if (!format.isSelectableForDownload()) return
+        _uiState.update { state ->
+            val setup = state.playlistDownloadSetup ?: return@update state
+            state.copy(playlistDownloadSetup = setup.copy(selectedFormatId = format.formatId))
+        }
+    }
+
+    fun cancelPlaylistDownloadSetup() {
+        formatResolutionJob?.cancel()
+        formatResolutionJob = null
+        _uiState.update { it.copy(playlistDownloadSetup = null) }
+    }
+
+    /** Called by the screen when Queue is tapped in the playlist setup step. */
+    fun onQueuePlaylistClicked() {
+        val setup = _uiState.value.playlistDownloadSetup ?: return
+        if (setup.selectedFormatId == null) return
+        pendingDestinationAction = PendingDestinationAction.PLAYLIST
+        val destination = _uiState.value.destinationTreeUri
+        if (destination == null) {
+            _uiState.update { it.copy(awaitingDestinationPick = true) }
+            return
+        }
+        confirmPlaylistQueue(destination)
+    }
+
+    private fun confirmPlaylistQueue(destinationTreeUri: String) {
+        val playlist = (_uiState.value.result as? ExtractionResult.Playlist)?.playlist ?: return
+        val setup = _uiState.value.playlistDownloadSetup ?: return
+        val formatId = setup.selectedFormatId ?: return
+        val format = setup.formatOptions.firstOrNull { it.formatId == formatId } ?: return
+
+        val items = setup.items.mapNotNull { item ->
+            val url = item.url ?: return@mapNotNull null
+            PlaylistDownloadItem(
+                sourceUrl = url,
+                sourceMediaId = item.id,
+                itemIndex = item.index,
+                title = item.title,
+                thumbnailUrl = item.thumbnailUrl,
+            )
+        }
+        if (items.isEmpty()) return
+
+        downloadEngine.enqueuePlaylist(
+            PlaylistDownloadRequest(
+                playlistId = UUID.randomUUID().toString(),
+                playlistTitle = playlist.title,
+                playlistThumbnailUrl = playlist.thumbnailUrl,
+                sourceName = playlist.sourceName,
+                qualityDescriptor = QualityDescriptor.from(format),
+                destinationTreeUri = destinationTreeUri,
+                skipAlreadyDownloaded = _uiState.value.playlistSelection.skipAlreadyDownloaded,
+                items = items,
+            ),
+        )
+
+        _uiState.update {
+            it.copy(playlistDownloadSetup = null, playlistSelection = PlaylistSelectionState(), justQueued = true)
         }
     }
 
@@ -245,6 +361,7 @@ class HomeViewModel @Inject constructor(
 
     override fun onCleared() {
         cancelInFlightAnalysis()
+        formatResolutionJob?.cancel()
         super.onCleared()
     }
 }
