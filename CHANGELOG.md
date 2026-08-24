@@ -5,6 +5,42 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Real DownloadEngine
+
+- `DownloadEngine` now has a real implementation, `MediaVaultDownloadEngine`
+  (`app/download/`): a Room-backed queue (one active transfer at a time, survives
+  process death), real progress (bytes/total/speed/ETA, polled from yt-dlp), pause/resume
+  (cooperative stop via yt-dlp's `progress_hooks`, protocol-aware — non-resumable formats
+  get an honest clean restart instead of a corrupted resume), cancel/retry, a foreground
+  service for background transfers, and SAF-based storage (destination folder chosen once
+  via `ACTION_OPEN_DOCUMENT_TREE`, persisted, free-space checked before starting).
+- `YtDlpExtractorEngine.download()` is implemented (previously "not implemented"):
+  delegates the actual transfer to yt-dlp itself via a new Python bridge function.
+- `AndroidNetworkPolicyManager` is implemented: Wi-Fi/mobile detection, a per-download
+  limit and daily mobile-data budget (both DataStore-backed, with real rollover), and
+  Allow/Warn/QueueForWifi/Block decisions the download engine actually acts on. Real
+  transferred bytes are recorded against the daily budget on completion — no fabricated
+  usage numbers.
+- Home screen: the format list is now genuinely selectable (single choice, showing
+  resolution/fps/container/codec/size/audio info), with a Download button and SAF folder
+  picker wired to the real engine.
+- Downloads screen: replaced the placeholder with real Active/Queued/Failed/Completed
+  sections, progress bars, and Pause/Resume/Cancel/Retry/Open actions.
+- **Deliberately not added: FFmpeg.** Format selection is restricted to muxed
+  (video+audio) or audio-only formats; video-only formats are shown but disabled with a
+  "Requires merging — not available yet" note. See PROJECT_MASTER.md §37 for the full
+  decision record.
+- **Bug found and fixed via real-device testing:** `YtDlpResultMapper` was filtering out
+  every audio-only format before it reached the UI (a leftover from before downloading
+  existed). Combined with the FFmpeg restriction above, a typical modern YouTube video
+  — all video-only + audio-only DASH streams, no muxed format — had zero selectable
+  formats. Fixed to include audio-only formats; storyboard/thumbnail-scrubbing entries
+  are still excluded.
+- Verified live on a physical device (Pixel 7a): analyzed a public-domain test video,
+  selected an audio-only format, picked a SAF folder, downloaded to completion with a
+  correctly-sized file on disk, and confirmed the completed state survives a full
+  process restart. No crashes.
+
 ### Changed — UI design system (light/blue)
 
 - Replaced the original minimal black/AMOLED theme with an approved light design

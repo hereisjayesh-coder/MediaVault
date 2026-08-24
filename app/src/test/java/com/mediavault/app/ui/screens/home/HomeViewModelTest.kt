@@ -8,6 +8,8 @@ import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import com.mediavault.core.domain.extractor.PlaylistItem
+import com.mediavault.core.model.MediaFormat
+import com.mediavault.core.model.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -26,13 +28,17 @@ class HomeViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var fakeEngine: FakeExtractorEngine
+    private lateinit var fakeDownloadEngine: FakeDownloadEngine
+    private lateinit var fakeDestinationProvider: FakeDownloadDestinationProvider
     private lateinit var viewModel: HomeViewModel
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         fakeEngine = FakeExtractorEngine()
-        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider())
+        fakeDownloadEngine = FakeDownloadEngine()
+        fakeDestinationProvider = FakeDownloadDestinationProvider()
+        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine, fakeDestinationProvider)
     }
 
     @After
@@ -219,6 +225,105 @@ class HomeViewModelTest {
         )
     }
 
+    // --- Format selection & download -------------------------------------------------
+
+    @Test
+    fun `video-only formats cannot be selected`() = runTest {
+        val videoOnly = sampleFormat("v1", hasVideo = true, hasAudio = false)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(videoOnly))))
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onFormatSelected(videoOnly)
+
+        assertNull(viewModel.uiState.value.selectedFormatId)
+    }
+
+    @Test
+    fun `muxed formats can be selected`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onFormatSelected(muxed)
+
+        assertEquals("m1", viewModel.uiState.value.selectedFormatId)
+    }
+
+    @Test
+    fun `download with no destination set asks the screen to launch the folder picker`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onFormatSelected(muxed)
+
+        viewModel.onDownloadClicked()
+
+        assertTrue(viewModel.uiState.value.awaitingDestinationPick)
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+    }
+
+    @Test
+    fun `picking a destination enqueues the selected format on the download engine`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true, container = "mp4")
+        fakeEngine.nextResult = AppResult.Success(
+            ExtractionResult.Single(sampleMedia(formats = listOf(muxed), webpageUrl = "https://example.com/video")),
+        )
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onFormatSelected(muxed)
+        viewModel.onDownloadClicked()
+
+        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val request = fakeDownloadEngine.enqueued.single()
+        assertEquals("m1", request.formatId)
+        assertEquals("https://example.com/video", request.sourceUrl)
+        assertEquals("content://tree/primary%3ADownload", request.destinationTreeUri)
+        assertEquals(MediaType.VIDEO, request.mediaType)
+        assertTrue(viewModel.uiState.value.justQueued)
+        assertTrue(!viewModel.uiState.value.awaitingDestinationPick)
+    }
+
+    @Test
+    fun `download engine is not touched when no format is selected`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onDownloadClicked()
+
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+        assertTrue(!viewModel.uiState.value.awaitingDestinationPick)
+    }
+
+    private fun sampleFormat(
+        id: String,
+        hasVideo: Boolean,
+        hasAudio: Boolean,
+        container: String = "mp4",
+    ) = MediaFormat(
+        formatId = id,
+        resolutionLabel = if (hasVideo) "1080p" else null,
+        container = container,
+        videoCodec = if (hasVideo) "avc1" else null,
+        audioCodec = if (hasAudio) "aac" else null,
+        fps = if (hasVideo) 30 else null,
+        estimatedSizeBytes = 100_000_000L,
+        hasVideo = hasVideo,
+        hasAudio = hasAudio,
+        supportsResume = true,
+    )
+
     private suspend fun loadPlaylist() {
         fakeEngine.nextResult = AppResult.Success(ExtractionResult.Playlist(samplePlaylist()))
         viewModel.onUrlChanged("https://example.com/playlist")
@@ -229,14 +334,14 @@ class HomeViewModelTest {
     private fun item(id: String, isAvailable: Boolean = true) =
         samplePlaylist().items.first { it.id == id }.copy(isAvailable = isAvailable)
 
-    private fun sampleMedia() = MediaAnalysisResult(
+    private fun sampleMedia(formats: List<MediaFormat> = emptyList(), webpageUrl: String? = null) = MediaAnalysisResult(
         id = "abc123",
         sourceName = "Youtube",
         title = "Test",
         durationSeconds = 120,
         thumbnailUrl = null,
-        webpageUrl = null,
-        formats = emptyList(),
+        webpageUrl = webpageUrl,
+        formats = formats,
         audioTracks = emptyList(),
         subtitleTracks = emptyList(),
     )

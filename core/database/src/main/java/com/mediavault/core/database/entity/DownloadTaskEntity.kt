@@ -9,15 +9,26 @@ import com.mediavault.core.model.MediaType
 data class DownloadTaskEntity(
     @PrimaryKey
     val id: String,
+    /** Webpage URL to re-extract from — not a raw CDN URL, which may be short-lived/signed. */
     val sourceUrl: String,
     val title: String?,
     val sourceName: String?,
+    val thumbnailUrl: String?,
     val mediaType: MediaType,
     val formatId: String?,
+    /** File extension/container of the selected format, e.g. "mp4" — used to name the saved file. */
+    val container: String?,
+    /** SAF tree URI of the user-selected destination folder, chosen once up front. */
+    val destinationTreeUri: String?,
+    /** SAF file URI of the finished file — set only once [status] is COMPLETED. */
     val destinationUri: String?,
+    /** Real filesystem path in app-private storage the bytes are/were written to mid-transfer. */
+    val localCachePath: String?,
     val status: DownloadStatus,
     val bytesTransferred: Long,
     val totalBytes: Long?,
+    /** Whether a paused copy of this task can safely continue from its byte offset. */
+    val canResume: Boolean,
     val errorMessage: String?,
     /** The extractor-assigned id of the source media, for future dedup/"already downloaded" checks. */
     val sourceMediaId: String? = null,

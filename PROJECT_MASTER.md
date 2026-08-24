@@ -771,7 +771,95 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-24, after the UI design system stage._
+_Last updated: 2026-08-24, after the real DownloadEngine stage._
+
+* **`DownloadEngine` now has a real implementation:** `MediaVaultDownloadEngine`
+  (`app/download/`), bound via Hilt in `DownloadModule`. Source-agnostic — it consumes
+  `ExtractorEngine.download()` for the actual byte transfer (implemented this stage in
+  `YtDlpExtractorEngine`/`mediavault_ytdlp.py`) and knows nothing about yt-dlp itself.
+  - **Queue**: one active transfer at a time, oldest `QUEUED` task first, guarded by a
+    `Mutex`; the rest of the queue stays untouched. `DownloadTaskEntity` (Room) is the
+    single source of truth, so the queue survives process death — `recoverAfterProcessDeath()`
+    (called from `MediaVaultApplication.onCreate()`) resets any task still marked
+    DOWNLOADING/PROCESSING back to PAUSED, then resumes the queue.
+  - **States**: QUEUED → DOWNLOADING → PROCESSING → COMPLETED, plus PAUSED, CANCELLED,
+    FAILED. `pause`/`resume`/`cancel`/`retry` each guard on the task's current status so a
+    stale UI tap can never clobber a terminal state (e.g. Pause racing a just-finished
+    download).
+  - **Pause/resume**: cooperative — `mediavault_ytdlp.py`'s `request_stop()` flags a
+    task id; yt-dlp's own `progress_hooks` (called per chunk) checks it and raises, which
+    is far more reliable than JVM `Thread.interrupt()` racing Python bytecode boundaries.
+    `MediaFormat.supportsResume` (true only for `http`/`https` protocol formats — false
+    for HLS/DASH segment formats) decides what happens next: resumable formats keep their
+    partial file and continue; non-resumable ones have their partial file deleted on pause
+    so a later "resume" is an honest clean restart, never a silently corrupted file.
+  - **Progress**: Kotlin polls `get_progress()` every 750ms (consistent with this
+    project's existing "call a Python function, get JSON back" interop pattern, since
+    Chaquopy callbacks in the other direction are unreliable) — bytes transferred, total
+    bytes, speed, ETA, mapped into `ExtractionEvent.Progress` then `DownloadProgress`.
+  - **Storage**: destination folder is a persisted SAF tree URI
+    (`DownloadDestinationStore`, DataStore-backed, first activated this stage); the
+    engine downloads to a real path in the app's cache dir (yt-dlp needs plain file I/O),
+    checks free space against the format's estimated size first, then copies the
+    finished file into the SAF folder via `DocumentsContract.createDocument` (no new
+    dependency — plain platform API) and deletes the cache copy. A `MediaItemEntity` row
+    is inserted on completion.
+  - **Network policy**: `AndroidNetworkPolicyManager` (`app/policy/`) is now implemented
+    — Wi-Fi/mobile detection via `ConnectivityManager`, a per-download limit and daily
+    mobile-data budget (`NetworkPolicyStore`, DataStore-backed, real rollover via
+    `LocalDate.now().toEpochDay()`), `Allow`/`Warn`/`QueueForWifi`/`Block` decisions. The
+    engine blocks/queues-for-Wi-Fi at download start and records real transferred bytes
+    against the daily budget on completion — no fabricated usage numbers.
+  - **Background execution**: `DownloadForegroundService` (foreground, `dataSync` type),
+    started when a task is enqueued/resumed/retried and stopped once the queue is idle;
+    single ongoing notification summarizing the active/queued state.
+  - **FFmpeg**: deliberately **not added**. Per the milestone's explicit constraint,
+    format selection (`HomeViewModel.isSelectableForDownload`) only allows muxed
+    (video+audio) or audio-only formats; video-only formats are shown but disabled with
+    a "Requires merging — not available yet" note. This was a scoping decision, not an
+    oversight — see §37 Decision Log, 2026-08-24.
+* **Bug found and fixed via real-device testing**: `YtDlpResultMapper` was filtering
+  `MediaAnalysisResult.formats` down to video-having formats only (a leftover from when
+  `formats` was display-only, before downloading existed). Combined with the FFmpeg
+  restriction above, a typical modern YouTube video — which is 100% split video/audio
+  DASH streams, no muxed format — had **zero** selectable formats. Fixed to include
+  audio-only formats too (storyboard/thumbnail-scrubbing entries, which report neither
+  video nor audio, are still excluded). Verified live: format list now shows real
+  audio-only entries (e.g. "M4A • 10 MB • audio only (mp4a.40.2)"), selecting one and
+  downloading produces a byte-for-byte-correct file at the chosen SAF location.
+* Home screen: format list is now genuinely selectable (single radio-button choice,
+  showing resolution/fps/container/codec/size/audio info per format via an expanded
+  `formatFormatSummary`), a Download button gated on a selection, and a SAF folder
+  picker (`ActivityResultContracts.OpenDocumentTree`) triggered on first use and
+  persisted thereafter. Playlist "download" actions are still report-only — see §37.
+* Downloads screen: no longer a placeholder. Real sections (Active/Queued/Failed/
+  Completed) backed by `DownloadsViewModel.observeAll()`, with progress bars,
+  transferred/total/speed/ETA, and Pause/Resume/Cancel/Retry/Open actions per task.
+* Room database: `download_tasks` gained `destinationTreeUri`/`destinationUri`/
+  `localCachePath` columns (schema still version 1 — pre-release, no installed base to
+  migrate, consistent with how this table has evolved in place before).
+* Verified live on a physical device (Pixel 7a): analyzed a public-domain test video
+  (Big Buck Bunny, Blender Foundation), selected an audio-only format, picked a SAF
+  folder, downloaded to completion with a correctly-sized file on disk, confirmed the
+  Downloads screen and the completed state survive a full process restart (force-stop +
+  relaunch), and confirmed the foreground service starts and stops cleanly with no
+  crashes throughout. The system "Open" action did not visibly launch a viewer for the
+  `.m4a` file on this device — not chased further this stage; worth revisiting (possibly
+  a missing default handler for `content://` URIs from a different SAF provider, or a
+  MIME-type mismatch). Pause/resume was implemented and code-reviewed (including the
+  terminal-state race fix above) but not separately exercised on-device this stage — the
+  file downloaded too quickly on Wi-Fi to reliably catch mid-transfer by hand.
+* `gradlew build` and the full unit test suite (all modules) both succeed after these
+  changes, including new tests for format selection/enqueue flow (`HomeViewModelTest`,
+  with new `FakeDownloadEngine`/`FakeDownloadDestinationProvider`), format-summary
+  formatting (video-only/muxed/audio-only cases), and download-side error mapping
+  (`DownloadErrorMapperTest`). Queue/state-transition/persistence logic inside
+  `MediaVaultDownloadEngine` itself is Android/Room/SAF-coupled and has no Robolectric
+  or Mockito infra in this project yet, so it was verified through the real-device run
+  above and code review rather than JVM unit tests — flagged here rather than silently
+  overclaiming coverage.
+
+_Prior state, before the real DownloadEngine stage:_
 
 * Multi-module Gradle project: `app`, `core:model`, `core:common`, `core:domain`,
   `core:database`, `core:extractor-ytdlp` (Kotlin, Jetpack Compose, Material 3, AGP
@@ -839,10 +927,10 @@ _Last updated: 2026-08-24, after the UI design system stage._
 * Git repository initialized locally and pushed to GitHub
   (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
-Not yet started: actual downloading (single item or playlist), media processing/FFmpeg,
-torrent downloading, network policy logic, media playback, library scanning,
-supported-source index, update checking, and any persistence wiring for
-downloads/library beyond the Room schema itself.
+Not yet started: playlist downloading (queuing multiple `DownloadTask`s — the domain
+model already carries `playlistContext`/`sourceMediaId` for this), media
+processing/FFmpeg (still deliberately avoided — see above), torrent downloading, media
+playback, library scanning, supported-source index, and update checking.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -943,6 +1031,34 @@ source-index/search screen exists yet); Quick Actions' subtitles carry no fake c
 Recent Activity shows a real empty state (no download-history persistence exists yet);
 Downloads/Library/Player/Settings remain `EmptyStateCard` placeholders styled to match,
 not fabricated functional screens.
+
+---
+
+### 2026-08-24 — Format selection restricted to muxed/audio-only to avoid FFmpeg
+
+**Decision:** This stage implements the real `DownloadEngine`, but does **not** add
+FFmpeg. `HomeViewModel.isSelectableForDownload()` only allows a format to be chosen for
+download when it is muxed (has both video and audio) or audio-only; video-only formats
+(the common case for high-quality YouTube DASH streams) are shown in the list — with
+resolution/fps/codec/size, per the milestone's display requirement — but disabled with a
+"Requires merging — not available yet" note rather than silently hidden.
+
+**Why:** The milestone instructions were explicit: do not add FFmpeg unless a selected
+format genuinely requires a video+audio merge, and if one does, stop and report the
+exact requirement before adding the dependency. Restricting selection to formats that
+never need a merge satisfies that instruction by construction — no merge is ever
+required, so no dependency decision was needed. This is a scoping decision, not an
+oversight: the alternative (adding FFmpeg to merge separate video+audio DASH streams)
+is a substantial dependency-and-licensing decision on its own and belongs in a future,
+explicitly-scoped stage if/when merged-quality downloads are wanted.
+
+**Consequence found during real-device testing:** combined with a pre-existing mapper
+bug (`YtDlpResultMapper` was filtering out audio-only formats entirely — see the Current
+Project State section above), this initially meant a typical modern YouTube video had
+*zero* selectable formats, since it offers only video-only and audio-only streams, never
+muxed. Fixed by including audio-only formats in the selectable list; video-only formats
+correctly remain disabled. Users can download the best available audio-only stream today;
+merged video+audio downloads remain a future, separately-scoped decision.
 
 ---
 

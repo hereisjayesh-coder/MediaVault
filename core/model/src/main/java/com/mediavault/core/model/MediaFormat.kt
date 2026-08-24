@@ -14,4 +14,6 @@ data class MediaFormat(
     val estimatedSizeBytes: Long?,
     val hasVideo: Boolean,
     val hasAudio: Boolean,
+    /** False for streaming protocols (HLS/DASH segments, ...) where a paused download can't safely continue from a byte offset. */
+    val supportsResume: Boolean = false,
 )

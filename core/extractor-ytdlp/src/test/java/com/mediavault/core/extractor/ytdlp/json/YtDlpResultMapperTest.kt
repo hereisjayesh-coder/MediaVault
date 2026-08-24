@@ -24,11 +24,13 @@ class YtDlpResultMapperTest {
     }
 
     @Test
-    fun `only video-capable formats are exposed as formats`() {
+    fun `video and audio-capable formats are exposed as formats, storyboards are not`() {
         val result = decodeSingle(SINGLE_VIDEO_JSON)
 
-        assertEquals(2, result.formats.size)
-        assertTrue(result.formats.all { it.hasVideo })
+        // 137 (video-only), 18 (muxed), 140 (audio-only) — all three are legitimate download
+        // choices; only vcodec=none/acodec=none storyboard entries would be excluded.
+        assertEquals(3, result.formats.size)
+
         val hd = result.formats.first { it.formatId == "137" }
         assertEquals("1080p", hd.resolutionLabel)
         assertEquals("mp4", hd.container)
@@ -37,6 +39,14 @@ class YtDlpResultMapperTest {
         assertEquals(884_000_000L, hd.estimatedSizeBytes)
         assertTrue(hd.hasVideo)
         assertTrue(!hd.hasAudio)
+
+        val muxed = result.formats.first { it.formatId == "18" }
+        assertTrue(muxed.hasVideo)
+        assertTrue(muxed.hasAudio)
+
+        val audioOnly = result.formats.first { it.formatId == "140" }
+        assertTrue(!audioOnly.hasVideo)
+        assertTrue(audioOnly.hasAudio)
     }
 
     @Test

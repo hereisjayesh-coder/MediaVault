@@ -62,6 +62,8 @@ data class YtDlpFormatJson(
     @SerialName("filesize_approx") val filesizeApprox: Long? = null,
     @SerialName("format_note") val formatNote: String? = null,
     val language: String? = null,
+    /** e.g. "https", "m3u8_native", "http_dash_segments" — determines whether a paused download can safely resume. */
+    val protocol: String? = null,
 )
 
 @Serializable

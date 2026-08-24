@@ -31,6 +31,20 @@ internal fun PyException.toAppError(): AppError {
         raw.contains("No information could be extracted", ignoreCase = true) ->
             AppError.Unsupported("Nothing playable was found at this URL.")
 
+        raw.contains("No space left on device", ignoreCase = true) ->
+            AppError.Storage("Not enough storage space to finish this download.")
+
+        raw.contains("Permission denied", ignoreCase = true) ->
+            AppError.Permission("MediaVault doesn't have permission to write to the selected location.")
+
+        raw.contains("Requested format is not available", ignoreCase = true) ->
+            AppError.Unsupported("That quality is no longer available for this item.")
+
+        raw.contains("HTTP Error 403", ignoreCase = true) ||
+            raw.contains("HTTP Error 404", ignoreCase = true) ||
+            raw.contains("fragment", ignoreCase = true) ->
+            AppError.Source("The source rejected or removed this download partway through.", this)
+
         else -> AppError.Unknown(cleanExtractorMessage(raw), this)
     }
 }

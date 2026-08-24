@@ -1,0 +1,327 @@
+package com.mediavault.app.download
+
+import android.content.Context
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.webkit.MimeTypeMap
+import com.mediavault.app.util.DeviceStatusProvider
+import com.mediavault.core.common.AppError
+import com.mediavault.core.database.dao.DownloadTaskDao
+import com.mediavault.core.database.dao.MediaItemDao
+import com.mediavault.core.database.entity.DownloadTaskEntity
+import com.mediavault.core.database.entity.MediaItemEntity
+import com.mediavault.core.domain.download.DownloadEngine
+import com.mediavault.core.domain.download.DownloadProgress
+import com.mediavault.core.domain.download.DownloadRequest
+import com.mediavault.core.domain.extractor.ExtractionEvent
+import com.mediavault.core.domain.extractor.ExtractionRequest
+import com.mediavault.core.domain.extractor.ExtractionStage
+import com.mediavault.core.domain.extractor.ExtractorEngine
+import com.mediavault.core.domain.network.NetworkPolicyDecision
+import com.mediavault.core.domain.network.NetworkPolicyManager
+import com.mediavault.core.model.DownloadStatus
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+/**
+ * Real [DownloadEngine]: persists every task in Room (the single source of truth, so the queue
+ * survives process death), runs one transfer at a time via [ExtractorEngine.download], applies
+ * [NetworkPolicyManager] before starting, and copies the finished file into the user's SAF
+ * folder. Source-agnostic — everything here works the same regardless of which [ExtractorEngine]
+ * is bound; nothing here knows about yt-dlp.
+ */
+@Singleton
+class MediaVaultDownloadEngine @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val dao: DownloadTaskDao,
+    private val mediaItemDao: MediaItemDao,
+    private val extractorEngine: ExtractorEngine,
+    private val networkPolicyManager: NetworkPolicyManager,
+    private val deviceStatusProvider: DeviceStatusProvider,
+) : DownloadEngine {
+
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val activeJobs = ConcurrentHashMap<String, Job>()
+    private val queueMutex = Mutex()
+
+    /** Resets anything left DOWNLOADING/PROCESSING by a killed process back to PAUSED, then resumes the queue. */
+    fun recoverAfterProcessDeath() {
+        engineScope.launch {
+            dao.reassignStatus(
+                fromStatuses = listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING),
+                newStatus = DownloadStatus.PAUSED,
+                nowMs = System.currentTimeMillis(),
+            )
+            processQueue()
+        }
+    }
+
+    override fun enqueue(request: DownloadRequest) {
+        engineScope.launch {
+            val now = System.currentTimeMillis()
+            dao.upsert(
+                DownloadTaskEntity(
+                    id = request.taskId,
+                    sourceUrl = request.sourceUrl,
+                    title = request.title,
+                    sourceName = request.sourceName,
+                    thumbnailUrl = request.thumbnailUrl,
+                    mediaType = request.mediaType,
+                    formatId = request.formatId,
+                    container = request.container,
+                    destinationTreeUri = request.destinationTreeUri,
+                    destinationUri = null,
+                    localCachePath = null,
+                    status = DownloadStatus.QUEUED,
+                    bytesTransferred = 0,
+                    totalBytes = request.expectedSizeBytes,
+                    canResume = request.canResume,
+                    errorMessage = null,
+                    sourceMediaId = request.sourceMediaId,
+                    playlistId = request.playlistContext?.playlistId,
+                    playlistItemIndex = request.playlistContext?.itemIndex,
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now,
+                ),
+            )
+            DownloadForegroundService.start(context)
+            processQueue()
+        }
+    }
+
+    override fun pause(taskId: String) {
+        engineScope.launch {
+            extractorEngine.cancel(taskId)
+            val task = dao.getById(taskId) ?: return@launch
+            // Guards against a race where the transfer finishes (or fails) in the moment
+            // between the user tapping Pause and this coroutine running — a terminal status
+            // must never be clobbered back to PAUSED.
+            if (task.status != DownloadStatus.DOWNLOADING && task.status != DownloadStatus.PROCESSING) return@launch
+            if (!task.canResume) {
+                // This format's protocol can't safely continue from a byte offset (e.g. HLS/DASH
+                // segments) — discard the partial file now so a later "resume" is an honest clean
+                // restart instead of silently corrupting a half-written file.
+                task.localCachePath?.let { runCatching { File(it).delete() } }
+                dao.update(task.copy(status = DownloadStatus.PAUSED, bytesTransferred = 0, localCachePath = null, updatedAtEpochMs = System.currentTimeMillis()))
+            } else {
+                dao.update(task.copy(status = DownloadStatus.PAUSED, updatedAtEpochMs = System.currentTimeMillis()))
+            }
+        }
+    }
+
+    override fun resume(taskId: String) {
+        engineScope.launch {
+            val task = dao.getById(taskId) ?: return@launch
+            if (task.status != DownloadStatus.PAUSED) return@launch
+            dao.update(task.copy(status = DownloadStatus.QUEUED, errorMessage = null, updatedAtEpochMs = System.currentTimeMillis()))
+            DownloadForegroundService.start(context)
+            processQueue()
+        }
+    }
+
+    override fun cancel(taskId: String) {
+        engineScope.launch {
+            extractorEngine.cancel(taskId)
+            activeJobs[taskId]?.cancel()
+            val task = dao.getById(taskId) ?: return@launch
+            if (task.status == DownloadStatus.COMPLETED || task.status == DownloadStatus.CANCELLED) return@launch
+            task.localCachePath?.let { runCatching { File(it).delete() } }
+            dao.update(task.copy(status = DownloadStatus.CANCELLED, updatedAtEpochMs = System.currentTimeMillis()))
+        }
+    }
+
+    override fun retry(taskId: String) {
+        engineScope.launch {
+            val task = dao.getById(taskId) ?: return@launch
+            if (task.status != DownloadStatus.FAILED && task.status != DownloadStatus.CANCELLED) return@launch
+            dao.update(task.copy(status = DownloadStatus.QUEUED, errorMessage = null, updatedAtEpochMs = System.currentTimeMillis()))
+            DownloadForegroundService.start(context)
+            processQueue()
+        }
+    }
+
+    override fun observeProgress(taskId: String): Flow<DownloadProgress> =
+        dao.observeById(taskId).filterNotNull().map { it.toDownloadProgress() }
+
+    override fun observeAll(): Flow<List<DownloadProgress>> =
+        dao.observeAll().map { tasks -> tasks.map { it.toDownloadProgress() } }
+
+    // --- Queue processing -------------------------------------------------------------------
+
+    private suspend fun processQueue() {
+        val next = queueMutex.withLock {
+            val running = dao.getByStatuses(listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING))
+            if (running.isNotEmpty()) return
+            dao.getByStatuses(listOf(DownloadStatus.QUEUED)).firstOrNull()
+        } ?: return
+
+        val job = engineScope.launch { runDownload(next) }
+        activeJobs[next.id] = job
+        job.invokeOnCompletion {
+            activeJobs.remove(next.id)
+            engineScope.launch { processQueue() }
+        }
+    }
+
+    private suspend fun runDownload(task: DownloadTaskEntity) {
+        val decision = networkPolicyManager.evaluate(task.totalBytes ?: 0L)
+        when (decision) {
+            is NetworkPolicyDecision.Block -> {
+                fail(task.id, AppError.Network(decision.reason))
+                return
+            }
+            is NetworkPolicyDecision.QueueForWifi -> {
+                // Leave it QUEUED — the user (or a future auto-retry-on-Wi-Fi) can retry later.
+                updateTask(task.id) {
+                    it.copy(errorMessage = "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.")
+                }
+                return
+            }
+            is NetworkPolicyDecision.Warn, NetworkPolicyDecision.Allow -> Unit
+        }
+
+        val expected = task.totalBytes ?: 0L
+        if (expected > 0 && deviceStatusProvider.freeStorageBytes() < expected) {
+            fail(task.id, AppError.Storage("Not enough free storage for this download."))
+            return
+        }
+
+        val cachePath = task.localCachePath
+            ?: File(context.cacheDir, "downloads/${task.id}.${task.container ?: "bin"}").path
+        updateTask(task.id) { it.copy(status = DownloadStatus.DOWNLOADING, localCachePath = cachePath) }
+
+        val request = ExtractionRequest(
+            taskId = task.id,
+            sourceUrl = task.sourceUrl,
+            formatId = task.formatId.orEmpty(),
+            destinationPath = cachePath,
+        )
+
+        extractorEngine.download(request).collect { event ->
+            when (event) {
+                is ExtractionEvent.Progress -> updateTask(task.id) {
+                    it.copy(
+                        status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
+                        bytesTransferred = event.bytesTransferred,
+                        totalBytes = event.totalBytes ?: it.totalBytes,
+                    )
+                }
+
+                is ExtractionEvent.Completed -> finish(task.id, event.outputPath)
+
+                is ExtractionEvent.Failed -> fail(task.id, AppError.Unknown(event.message, event.cause))
+            }
+        }
+        // If the flow ended without a terminal event, it was our own pause()/cancel() — the DB
+        // status those already set (PAUSED/CANCELLED) stands; there's nothing more to do here.
+    }
+
+    private suspend fun finish(taskId: String, cacheOutputPath: String) {
+        updateTask(taskId) { it.copy(status = DownloadStatus.PROCESSING) }
+        val task = dao.getById(taskId) ?: return
+
+        val finalUri = try {
+            withContext(Dispatchers.IO) { copyToDestination(task, cacheOutputPath) }
+        } catch (e: Exception) {
+            fail(taskId, e.toDownloadAppError())
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val completed = task.copy(
+            status = DownloadStatus.COMPLETED,
+            destinationUri = finalUri,
+            localCachePath = null,
+            errorMessage = null,
+            updatedAtEpochMs = now,
+        )
+        dao.update(completed)
+
+        val networkType = networkPolicyManager.currentNetworkType()
+        networkPolicyManager.recordTransferredBytes(networkType, completed.bytesTransferred)
+
+        mediaItemDao.upsert(
+            MediaItemEntity(
+                id = UUID.randomUUID().toString(),
+                title = completed.title ?: "Untitled",
+                mediaUri = finalUri,
+                mediaType = completed.mediaType,
+                durationMs = null,
+                sizeBytes = completed.bytesTransferred,
+                container = completed.container,
+                isImported = false,
+                sourceDownloadTaskId = completed.id,
+                lastPlaybackPositionMs = 0,
+                isFavorite = false,
+                addedAtEpochMs = now,
+            ),
+        )
+    }
+
+    /** Copies the finished cache file into the user's SAF folder and deletes the cache copy. */
+    private fun copyToDestination(task: DownloadTaskEntity, cacheOutputPath: String): String {
+        val treeUriString = task.destinationTreeUri
+            ?: throw IllegalStateException("No destination folder was selected for this download.")
+        val cacheFile = File(cacheOutputPath)
+        if (!cacheFile.exists()) throw java.io.IOException("Downloaded file went missing before it could be saved.")
+
+        val extension = task.container ?: cacheFile.extension.ifBlank { "bin" }
+        val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
+        val fileName = sanitizeFileName(task.title ?: task.id) + "." + extension
+
+        val treeUri = Uri.parse(treeUriString)
+        val treeDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+        val newFileUri = DocumentsContract.createDocument(context.contentResolver, treeDocUri, mimeType, fileName)
+            ?: throw java.io.IOException("Couldn't create the destination file.")
+
+        context.contentResolver.openOutputStream(newFileUri)?.use { output ->
+            cacheFile.inputStream().use { input -> input.copyTo(output) }
+        } ?: throw java.io.IOException("Couldn't open the destination file for writing.")
+
+        runCatching { cacheFile.delete() }
+        return newFileUri.toString()
+    }
+
+    private suspend fun fail(taskId: String, error: AppError) {
+        updateTask(taskId) { it.copy(status = DownloadStatus.FAILED, errorMessage = error.message) }
+    }
+
+    private suspend fun updateTask(taskId: String, transform: (DownloadTaskEntity) -> DownloadTaskEntity) {
+        val current = dao.getById(taskId) ?: return
+        dao.update(transform(current).copy(updatedAtEpochMs = System.currentTimeMillis()))
+    }
+}
+
+private fun sanitizeFileName(name: String): String =
+    name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(150).ifBlank { "download" }
+
+private fun DownloadTaskEntity.toDownloadProgress(): DownloadProgress = DownloadProgress(
+    taskId = id,
+    title = title,
+    sourceName = sourceName,
+    thumbnailUrl = thumbnailUrl,
+    status = status,
+    bytesTransferred = bytesTransferred,
+    totalBytes = totalBytes,
+    throughputBytesPerSecond = null,
+    etaSeconds = null,
+    canResume = canResume,
+    errorMessage = errorMessage,
+    destinationUri = destinationUri,
+    createdAtEpochMs = createdAtEpochMs,
+)

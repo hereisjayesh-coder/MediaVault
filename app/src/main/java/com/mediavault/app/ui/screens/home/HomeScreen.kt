@@ -1,5 +1,8 @@
 package com.mediavault.app.ui.screens.home
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,9 +45,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -77,12 +82,42 @@ fun HomeScreen(
     onNavigateToDestination: (MediaVaultDestination) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            viewModel.onDestinationFolderPicked(uri.toString())
+        } else {
+            viewModel.onDestinationPickerDismissed()
+        }
+    }
+
+    LaunchedEffect(uiState.awaitingDestinationPick) {
+        if (uiState.awaitingDestinationPick) {
+            folderPickerLauncher.launch(null)
+        }
+    }
+
+    LaunchedEffect(uiState.justQueued) {
+        if (uiState.justQueued) {
+            onNavigateToDestination(MediaVaultDestination.DOWNLOADS)
+            viewModel.consumeJustQueued()
+        }
+    }
 
     HomeScreenContent(
         uiState = uiState,
         onUrlChanged = viewModel::onUrlChanged,
         onAnalyzeClick = viewModel::analyze,
         onCancelClick = viewModel::cancelInFlightAnalysis,
+        onFormatSelected = viewModel::onFormatSelected,
+        onDownloadClicked = viewModel::onDownloadClicked,
         onPlaylistItemTapped = viewModel::onPlaylistItemTapped,
         onBeginRangeSelection = viewModel::beginRangeSelection,
         onCancelSelection = viewModel::cancelSelection,
@@ -98,6 +133,8 @@ private fun HomeScreenContent(
     onUrlChanged: (String) -> Unit,
     onAnalyzeClick: () -> Unit,
     onCancelClick: () -> Unit,
+    onFormatSelected: (MediaFormat) -> Unit,
+    onDownloadClicked: () -> Unit,
     onPlaylistItemTapped: (PlaylistItem) -> Unit,
     onBeginRangeSelection: () -> Unit,
     onCancelSelection: () -> Unit,
@@ -139,7 +176,14 @@ private fun HomeScreenContent(
         }
 
         when (val result = uiState.result) {
-            is ExtractionResult.Single -> item { AnalysisResultCard(result.media) }
+            is ExtractionResult.Single -> item {
+                AnalysisResultCard(
+                    result = result.media,
+                    selectedFormatId = uiState.selectedFormatId,
+                    onFormatSelected = onFormatSelected,
+                    onDownloadClicked = onDownloadClicked,
+                )
+            }
 
             is ExtractionResult.Playlist -> {
                 item { PlaylistHeader(result.playlist) }
@@ -447,7 +491,12 @@ private fun MessageCard(message: String, isError: Boolean) {
 }
 
 @Composable
-private fun AnalysisResultCard(result: MediaAnalysisResult) {
+private fun AnalysisResultCard(
+    result: MediaAnalysisResult,
+    selectedFormatId: String?,
+    onFormatSelected: (MediaFormat) -> Unit,
+    onDownloadClicked: () -> Unit,
+) {
     MediaVaultCard {
         Thumbnail(result.thumbnailUrl)
 
@@ -467,13 +516,30 @@ private fun AnalysisResultCard(result: MediaAnalysisResult) {
 
         if (result.formats.isNotEmpty()) {
             Text(
-                text = stringResource(R.string.home_available_formats),
+                text = stringResource(R.string.home_select_format),
                 style = MaterialTheme.typography.labelLarge,
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 result.formats
                     .sortedByDescending { it.estimatedSizeBytes ?: 0L }
-                    .forEach { format -> FormatRow(format) }
+                    .forEach { format ->
+                        FormatRow(
+                            format = format,
+                            isSelected = format.formatId == selectedFormatId,
+                            onClick = { onFormatSelected(format) },
+                        )
+                    }
+            }
+
+            Button(
+                onClick = onDownloadClicked,
+                enabled = selectedFormatId != null,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(text = stringResource(R.string.home_download_button), modifier = Modifier.padding(start = 8.dp))
             }
         }
     }
@@ -639,10 +705,29 @@ private fun Thumbnail(
 }
 
 @Composable
-private fun FormatRow(format: MediaFormat) {
-    Text(
-        text = formatFormatSummary(format),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun FormatRow(format: MediaFormat, isSelected: Boolean, onClick: () -> Unit) {
+    val isSelectable = format.isSelectableForDownload()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = isSelectable, onClick = onClick)
+            .alpha(if (isSelectable) 1f else 0.5f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = isSelected, onClick = onClick, enabled = isSelectable)
+        Column {
+            Text(
+                text = formatFormatSummary(format),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (!isSelectable) {
+                Text(
+                    text = stringResource(R.string.home_format_requires_merge),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
 }

@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "dac8e8a20bc84c63d4f2b3bb2c0959ba",
+    "identityHash": "e81457e8585ccd6aa3ab1f896657dc9b",
     "entities": [
       {
         "tableName": "download_tasks",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sourceUrl` TEXT NOT NULL, `title` TEXT, `sourceName` TEXT, `mediaType` TEXT NOT NULL, `formatId` TEXT, `destinationUri` TEXT, `status` TEXT NOT NULL, `bytesTransferred` INTEGER NOT NULL, `totalBytes` INTEGER, `errorMessage` TEXT, `sourceMediaId` TEXT, `playlistId` TEXT, `playlistItemIndex` INTEGER, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sourceUrl` TEXT NOT NULL, `title` TEXT, `sourceName` TEXT, `thumbnailUrl` TEXT, `mediaType` TEXT NOT NULL, `formatId` TEXT, `container` TEXT, `destinationTreeUri` TEXT, `destinationUri` TEXT, `localCachePath` TEXT, `status` TEXT NOT NULL, `bytesTransferred` INTEGER NOT NULL, `totalBytes` INTEGER, `canResume` INTEGER NOT NULL, `errorMessage` TEXT, `sourceMediaId` TEXT, `playlistId` TEXT, `playlistItemIndex` INTEGER, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -31,6 +31,11 @@
             "affinity": "TEXT"
           },
           {
+            "fieldPath": "thumbnailUrl",
+            "columnName": "thumbnailUrl",
+            "affinity": "TEXT"
+          },
+          {
             "fieldPath": "mediaType",
             "columnName": "mediaType",
             "affinity": "TEXT",
@@ -42,8 +47,23 @@
             "affinity": "TEXT"
           },
           {
+            "fieldPath": "container",
+            "columnName": "container",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "destinationTreeUri",
+            "columnName": "destinationTreeUri",
+            "affinity": "TEXT"
+          },
+          {
             "fieldPath": "destinationUri",
             "columnName": "destinationUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "localCachePath",
+            "columnName": "localCachePath",
             "affinity": "TEXT"
           },
           {
@@ -62,6 +82,12 @@
             "fieldPath": "totalBytes",
             "columnName": "totalBytes",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "canResume",
+            "columnName": "canResume",
+            "affinity": "INTEGER",
+            "notNull": true
           },
           {
             "fieldPath": "errorMessage",
@@ -186,7 +212,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'dac8e8a20bc84c63d4f2b3bb2c0959ba')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e81457e8585ccd6aa3ab1f896657dc9b')"
     ]
   }
 }

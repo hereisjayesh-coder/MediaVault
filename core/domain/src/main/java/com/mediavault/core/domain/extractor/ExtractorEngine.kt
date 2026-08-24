@@ -66,9 +66,15 @@ data class MediaAnalysisResult(
 
 data class ExtractionRequest(
     val taskId: String,
+    /** Webpage URL to (re-)extract from — the direct media URL may be short-lived/signed. */
     val sourceUrl: String,
     val formatId: String,
-    val destinationUri: String,
+    /**
+     * A real, writable filesystem path (not a `content://` SAF URI — extractor backends write
+     * with plain file I/O). Callers are responsible for copying the finished file to the user's
+     * chosen SAF destination once [ExtractionEvent.Completed] arrives.
+     */
+    val destinationPath: String,
 )
 
 sealed class ExtractionEvent {
@@ -77,9 +83,11 @@ sealed class ExtractionEvent {
         val bytesTransferred: Long,
         val totalBytes: Long?,
         val stage: ExtractionStage,
+        val speedBytesPerSecond: Long? = null,
+        val etaSeconds: Long? = null,
     ) : ExtractionEvent()
 
-    data class Completed(val taskId: String, val outputUri: String) : ExtractionEvent()
+    data class Completed(val taskId: String, val outputPath: String) : ExtractionEvent()
     data class Failed(val taskId: String, val message: String, val cause: Throwable? = null) : ExtractionEvent()
 }
 

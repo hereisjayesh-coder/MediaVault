@@ -45,6 +45,37 @@
 
     <string name="downloads_title">Downloads</string>
     <string name="downloads_placeholder_body">The download queue will appear here once downloading is implemented.</string>
+    <string name="downloads_empty_title">No downloads yet</string>
+    <string name="downloads_empty_body">Analyze a link from Home to start your first download.</string>
+    <string name="downloads_section_active">Active</string>
+    <string name="downloads_section_queued">Queued</string>
+    <string name="downloads_section_completed">Completed</string>
+    <string name="downloads_section_failed">Failed</string>
+    <string name="downloads_action_pause">Pause</string>
+    <string name="downloads_action_resume">Resume</string>
+    <string name="downloads_action_cancel">Cancel</string>
+    <string name="downloads_action_retry">Retry</string>
+    <string name="downloads_action_open">Open</string>
+    <string name="downloads_status_queued">Queued</string>
+    <string name="downloads_status_downloading">Downloading</string>
+    <string name="downloads_status_processing">Processing</string>
+    <string name="downloads_status_completed">Completed</string>
+    <string name="downloads_status_paused">Paused</string>
+    <string name="downloads_status_cancelled">Cancelled</string>
+    <string name="downloads_status_failed">Failed</string>
+
+    <string name="download_notification_channel_name">Downloads</string>
+    <string name="download_notification_title">MediaVault</string>
+    <string name="download_notification_queued">%1$d queued</string>
+    <string name="download_notification_idle">Download complete</string>
+
+    <string name="home_select_format">Select a format</string>
+    <string name="home_format_requires_merge">Requires merging — not available yet</string>
+    <string name="home_choose_destination">Choose download folder</string>
+    <string name="home_download_button">Download</string>
+    <string name="home_network_warn_title">Mobile data warning</string>
+    <string name="home_network_warn_proceed">Download anyway</string>
+    <string name="home_network_blocked">This download is blocked by your current network policy.</string>
 
     <string name="library_title">Library</string>
     <string name="library_placeholder_body">Downloaded and imported media will appear here once the library is implemented.</string>

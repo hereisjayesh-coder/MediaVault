@@ -13,6 +13,12 @@ sealed class AppError(open val message: String, open val cause: Throwable? = nul
     data class Network(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
     data class Storage(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
     data class Unsupported(override val message: String) : AppError(message)
+    /** The source (site/extractor) itself reported a failure — removed video, blocked, etc. */
+    data class Source(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
+    /** An OS-level permission (storage access, notifications, ...) was denied or missing. */
+    data class Permission(override val message: String) : AppError(message)
+    /** The operation was cancelled or paused by the user — not a real failure. */
+    data class Cancelled(override val message: String = "Cancelled.") : AppError(message)
     data class Unknown(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
 }
 

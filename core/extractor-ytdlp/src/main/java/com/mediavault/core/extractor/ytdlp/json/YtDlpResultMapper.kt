@@ -31,7 +31,10 @@ private fun YtDlpInfoJson.toMediaAnalysisResult(): MediaAnalysisResult {
         durationSeconds = duration?.let { floor(it).toLong() },
         thumbnailUrl = bestThumbnail,
         webpageUrl = webpageUrl,
-        formats = allFormats.filter { it.hasVideo() }.map { it.toMediaFormat() },
+        // Includes audio-only formats — they're a legitimate download choice (and, unlike
+        // video-only formats, need no FFmpeg merge — see HomeViewModel.isSelectableForDownload).
+        // Storyboard/thumbnail-scrubbing entries (vcodec=none, acodec=none) are excluded.
+        formats = allFormats.filter { it.hasVideo() || it.hasAudio() }.map { it.toMediaFormat() },
         audioTracks = allFormats.filter { it.isAudioOnly() }.toAudioTracks(defaultLanguage = language),
         subtitleTracks = subtitles.toSubtitleTracks(),
     )
@@ -122,6 +125,7 @@ private fun YtDlpFormatJson.toMediaFormat(): MediaFormat {
         estimatedSizeBytes = filesize ?: filesizeApprox,
         hasVideo = isVideo,
         hasAudio = isAudio,
+        supportsResume = protocol == "http" || protocol == "https",
     )
 }
 
