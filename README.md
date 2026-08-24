@@ -8,13 +8,14 @@ than a hard dependency on any one backend.
 This repository is under active early development. See [CHANGELOG.md](CHANGELOG.md)
 for what currently exists versus what is planned.
 
-## Status: foundation stage
+## Status: extraction (analysis-only) stage
 
-The current codebase is the **architectural foundation**: project structure, module
-boundaries, navigation skeleton, Room database scaffolding, and the core interfaces the
-rest of the app will be implemented against. It does **not** yet download media,
-process media, or handle torrents — those backends are intentionally not wired up yet.
-See [Project limitations](#project-limitations) below.
+The architectural foundation is in place, and the first real backend is wired up:
+pasting a URL on the Home screen runs it through `ExtractorEngine` → `YtDlpExtractorEngine`
+(yt-dlp, embedded via Chaquopy) and shows real metadata — title, thumbnail, duration,
+source, and available formats. It does **not** yet download media, process media, or
+handle torrents — those backends are intentionally not wired up yet. See
+[Project limitations](#project-limitations) below.
 
 ## Product goals
 
@@ -35,32 +36,45 @@ MediaVault follows Clean Architecture / MVVM, split into Gradle modules so the a
 UI layers can only depend on stable interfaces, not concrete backends:
 
 ```
-app                 Compose UI, navigation, Hilt wiring, screens, view models
-core/model           Pure Kotlin data models shared across modules (no Android deps)
-core/common          Cross-cutting utilities (dispatcher provider, result types)
-core/domain          The engine interfaces described below (pure Kotlin)
-core/database        Room database, entities, DAOs
+app                     Compose UI, navigation, Hilt wiring, screens, view models
+core/model              Pure Kotlin data models shared across modules (no Android deps)
+core/common             Cross-cutting utilities (dispatcher provider, result types)
+core/domain             The engine interfaces described below (pure Kotlin)
+core/database           Room database, entities, DAOs
+core/extractor-ytdlp    ExtractorEngine implementation: yt-dlp via Chaquopy
 ```
 
-Future backend implementations (a yt-dlp-backed extractor, an FFmpeg-backed processor,
-a libtorrent-backed torrent engine, an HTTP download engine) are expected to live in
-their own modules that implement the interfaces in `core/domain` — the UI never
-references those backends directly.
+Backend implementations live in their own modules that implement the interfaces in
+`core/domain` — the UI never references a backend (yt-dlp, and eventually FFmpeg and
+libtorrent) directly; it only ever depends on `core/domain`.
 
 ### Core engine interfaces
 
-| Interface | Responsibility | Planned backend |
+| Interface | Responsibility | Backend |
 |---|---|---|
-| [`ExtractorEngine`](core/domain/src/main/java/com/mediavault/core/domain/extractor/ExtractorEngine.kt) | Analyze a source URL into metadata, formats, and tracks; drive extraction-based downloads | yt-dlp |
-| [`DownloadEngine`](core/domain/src/main/java/com/mediavault/core/domain/download/DownloadEngine.kt) | Queue, transfer, pause/resume/cancel/retry downloads | HTTP downloader |
-| [`TorrentEngine`](core/domain/src/main/java/com/mediavault/core/domain/torrent/TorrentEngine.kt) | Magnet/`.torrent` handling, metadata, file selection, progress | libtorrent |
-| [`NetworkPolicyManager`](core/domain/src/main/java/com/mediavault/core/domain/network/NetworkPolicyManager.kt) | Wi-Fi/mobile decisions, daily budget, quality recommendation | — (pure logic) |
-| [`UpdateManager`](core/domain/src/main/java/com/mediavault/core/domain/update/UpdateManager.kt) | GitHub release/version checks | GitHub Releases API |
-| [`PlayerEngine`](core/domain/src/main/java/com/mediavault/core/domain/player/PlayerEngine.kt) | Playback control surface for the UI | Media3 (ExoPlayer) |
+| [`ExtractorEngine`](core/domain/src/main/java/com/mediavault/core/domain/extractor/ExtractorEngine.kt) | Analyze a source URL into metadata, formats, and tracks; drive extraction-based downloads | **Implemented** — [`YtDlpExtractorEngine`](core/extractor-ytdlp/src/main/java/com/mediavault/core/extractor/ytdlp/YtDlpExtractorEngine.kt) (analysis only; download is not implemented yet) |
+| [`DownloadEngine`](core/domain/src/main/java/com/mediavault/core/domain/download/DownloadEngine.kt) | Queue, transfer, pause/resume/cancel/retry downloads | Not implemented — planned HTTP downloader |
+| [`TorrentEngine`](core/domain/src/main/java/com/mediavault/core/domain/torrent/TorrentEngine.kt) | Magnet/`.torrent` handling, metadata, file selection, progress | Not implemented — planned libtorrent |
+| [`NetworkPolicyManager`](core/domain/src/main/java/com/mediavault/core/domain/network/NetworkPolicyManager.kt) | Wi-Fi/mobile decisions, daily budget, quality recommendation | Not implemented — pure logic, no backend needed |
+| [`UpdateManager`](core/domain/src/main/java/com/mediavault/core/domain/update/UpdateManager.kt) | GitHub release/version checks | Not implemented — planned GitHub Releases API |
+| [`PlayerEngine`](core/domain/src/main/java/com/mediavault/core/domain/player/PlayerEngine.kt) | Playback control surface for the UI | Not implemented — planned Media3 (ExoPlayer) |
 
 Media processing (transcoding/muxing, planned FFmpeg backend) will get its own
 interface in `core/domain` once implementation work on it begins, following the same
 pattern.
+
+### Why yt-dlp runs via Chaquopy, not a prebuilt wrapper
+
+yt-dlp is a Python project. The common way to run it on Android is
+`youtubedl-android`, a ready-made Kotlin wrapper around a bundled yt-dlp binary — but
+that wrapper is GPLv3-licensed, and combining it into MediaVault would effectively force
+the whole project to relicense under the GPL to be distributed. Instead, MediaVault
+embeds a Python interpreter via [Chaquopy](https://chaquo.com/chaquopy/) (MIT-licensed
+as of v12.0.1) and `pip install`s yt-dlp (Unlicense) directly, keeping every dependency
+on the extraction path permissively licensed. The tradeoff is that MediaVault owns a
+small Kotlin↔Python bridge itself (`core/extractor-ytdlp/src/main/python/`) instead of
+using an off-the-shelf Kotlin API. See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for details.
 
 Why this matters: the app version, the extraction-engine version, and the
 media-processing version can evolve independently — upgrading yt-dlp or FFmpeg should
@@ -76,12 +90,14 @@ upgrade.
 - **Persistence:** Room
 - **DI:** Hilt
 - **Playback:** Media3
+- **Extraction:** yt-dlp, embedded via Chaquopy (see above)
+- **Images:** Coil (thumbnail loading)
 - **Storage:** Android Storage Access Framework (user-selected locations, no
   hard-coded paths)
 
 See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full list of dependencies
-and their licenses, including planned integrations (yt-dlp, FFmpeg, libtorrent) that
-are not yet part of the codebase.
+and their licenses, including planned integrations (FFmpeg, libtorrent) that are not
+yet part of the codebase.
 
 ## Setup
 
@@ -100,15 +116,17 @@ required at this stage.
 
 Being upfront about the current state:
 
-- No extraction backend is implemented — `ExtractorEngine` has no concrete
-  implementation yet, so URL analysis and downloading do not work.
+- `ExtractorEngine` can analyze a URL (metadata, formats, tracks) but cannot download
+  yet — `download()` returns a "not implemented" result on purpose rather than faking
+  progress.
 - No media-processing backend is implemented.
 - No torrent backend is implemented — `TorrentEngine` has no concrete implementation
   yet.
 - The network policy engine, update checker, and player are interfaces only; they have
   no concrete implementation wired into the app yet.
 - The supported-sources index does not exist yet.
-- There is no automated UI/instrumentation test suite yet, only JVM unit tests.
+- There is no Compose UI test suite yet; test coverage is JVM unit tests plus one
+  on-device instrumented test that exercises the real yt-dlp extraction path.
 
 ## User responsibility
 

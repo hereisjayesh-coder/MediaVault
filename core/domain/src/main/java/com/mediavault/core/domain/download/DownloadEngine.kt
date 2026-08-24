@@ -32,6 +32,16 @@ data class DownloadRequest(
     val destinationUri: String,
     val mediaType: MediaType,
     val expectedSizeBytes: Long?,
+    /** The extractor-assigned id of the media being downloaded, for future dedup/"already downloaded" checks. */
+    val sourceMediaId: String? = null,
+    /** Set when this request came from a playlist item, so the queue can preserve order and group by playlist. */
+    val playlistContext: PlaylistDownloadContext? = null,
+)
+
+data class PlaylistDownloadContext(
+    val playlistId: String,
+    /** 1-based position within the playlist — preserves download order. */
+    val itemIndex: Int,
 )
 
 data class DownloadProgress(

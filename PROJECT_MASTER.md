@@ -769,27 +769,59 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-24, after the foundation-stage commit._
+_Last updated: 2026-08-24, after the playlist analysis stage._
 
-* Multi-module Gradle project created: `app`, `core:model`, `core:common`,
-  `core:domain`, `core:database` (Kotlin, Jetpack Compose, Material 3, AGP 9.3.2,
-  Kotlin 2.4.10).
+* Multi-module Gradle project: `app`, `core:model`, `core:common`, `core:domain`,
+  `core:database`, `core:extractor-ytdlp` (Kotlin, Jetpack Compose, Material 3, AGP
+  9.2.1, Kotlin 2.4.10).
 * Minimal AMOLED-black Compose theme, bottom-navigation skeleton, and placeholder
-  screens (Home, Downloads, Library, Player, Settings) implemented.
+  screens for Downloads, Library, Player, Settings. Home is now a real screen (see
+  below), not a placeholder.
 * Room database foundation in place (`download_tasks`, `media_items` tables).
+  `download_tasks` gained optional `sourceMediaId`/`playlistId`/`playlistItemIndex`
+  columns to prepare for a future playlist-aware download queue — unused until
+  `DownloadEngine` has an implementation.
 * Core engine interfaces defined in `core/domain`: `ExtractorEngine`, `DownloadEngine`,
-  `TorrentEngine`, `NetworkPolicyManager`, `UpdateManager`, `PlayerEngine`. No concrete
-  implementations exist yet — no yt-dlp, FFmpeg, or libtorrent integration.
-- Hilt wired in; Room database is the first provided dependency.
-* Open-source repo docs written: README, LICENSE, PRIVACY, TERMS, CONTRIBUTING,
-  CHANGELOG, THIRD-PARTY-NOTICES.
-* `gradlew build` succeeds, unit tests pass, and the debug APK has been installed and
-  launched on a physical device (Pixel 7a) with working bottom-nav.
-* Git repository initialized locally; first commit made. GitHub remote not yet created.
+  `TorrentEngine`, `NetworkPolicyManager`, `UpdateManager`, `PlayerEngine`.
+  - **`ExtractorEngine` now has a real implementation:** `YtDlpExtractorEngine`
+    (`core:extractor-ytdlp`), backed by yt-dlp `2026.8.19` running via Chaquopy
+    (see §37 Decision Log, 2026-08-24, for why — not `youtubedl-android`).
+    `analyze()` returns `ExtractionResult`, a sealed `Single` (one item — the original
+    title/thumbnail/duration/source/webpage URL/formats/audio tracks/subtitles) or
+    `Playlist` (`PlaylistAnalysisResult`: title/thumbnail/source/item count/ordered
+    `PlaylistItem`s, each with id/title/thumbnail/duration/url/availability).
+    Playlist items are lightweight (flat-extracted); resolving one item's full formats
+    means calling `analyze()` again with that item's own URL. Best-effort `cancel()`.
+    `download()` intentionally returns "not implemented".
+  - `DownloadRequest` gained optional `sourceMediaId`/`playlistContext` fields so a
+    future `DownloadEngine` implementation can give each playlist item its own ordered
+    `DownloadTask` and support "skip already downloaded" via stable ids.
+  - `DownloadEngine`, `TorrentEngine`, `NetworkPolicyManager`, `UpdateManager`,
+    `PlayerEngine` still have no concrete implementation.
+* Home screen: URL field, Analyze button, loading/cancel state, error state; single-item
+  result preview (thumbnail via Coil, title, source, duration, format list); playlist
+  result shows a "Playlist detected" header, item count, and an ordered item list with
+  per-item checkboxes, select-range, "Download entire playlist"/"Download selected"
+  (both report what they'd queue — no download actually starts). Wired to
+  `HomeViewModel` via Hilt.
+* Hilt wired in; Room database and `ExtractorEngine` (bound to `YtDlpExtractorEngine`)
+  are the provided dependencies.
+* Open-source repo docs written and current: README, LICENSE, PRIVACY, TERMS,
+  CONTRIBUTING, CHANGELOG, THIRD-PARTY-NOTICES.
+* `gradlew build` succeeds; unit tests cover the JSON mapper (single video, playlist,
+  empty playlist, mixed-availability playlist), the error mapper, formatting helpers,
+  and `HomeViewModel` (analysis + playlist selection, using a fake `ExtractorEngine`).
+  An on-device instrumented test runs the real yt-dlp extraction path (requires
+  `core:extractor-ytdlp`'s own `AndroidManifest.xml` to declare `INTERNET`, since its
+  test APK is a separate process from `:app`). The debug APK has been installed and
+  exercised on a physical device (Pixel 7a), including playlist analysis.
+* Git repository initialized locally and pushed to GitHub
+  (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
-Not yet started: extraction, media processing, torrent downloading, network policy
-logic, media playback, library scanning, supported-source index, update checking, and
-any ViewModels/ persistence wiring beyond the Room schema itself.
+Not yet started: actual downloading (single item or playlist), media processing/FFmpeg,
+torrent downloading, network policy logic, media playback, library scanning,
+supported-source index, update checking, and any persistence wiring for
+downloads/library beyond the Room schema itself.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -823,6 +855,41 @@ Priority order:
 6. Previous AI conversation context
 
 If conversation memory conflicts with the repository, inspect the repository before changing anything.
+
+---
+
+## 37. Decision Log
+
+### 2026-08-24 — yt-dlp runs via Chaquopy, not the `youtubedl-android` wrapper
+
+**Decision:** `ExtractorEngine`'s first implementation (`YtDlpExtractorEngine`, in the
+new `core:extractor-ytdlp` module) embeds a Python interpreter via
+[Chaquopy](https://chaquo.com/chaquopy/) and `pip install`s yt-dlp directly, rather than
+depending on `io.github.junkfood02.youtubedl-android`, the most commonly used
+ready-made Kotlin wrapper for yt-dlp on Android.
+
+**Why the alternative was rejected:** `youtubedl-android` is GPLv3-licensed. Bundling it
+into MediaVault and distributing the resulting APK would put the combined binary under
+GPLv3 obligations — in practice this would mean relicensing MediaVault away from MIT
+(this is exactly why other apps built on that wrapper, e.g. Seal, are GPLv3 themselves).
+Section 1 of this document did not fix MediaVault's license, but MIT was chosen at
+project init and changing it as a side effect of a dependency choice is exactly the kind
+of decision this log exists to make explicit rather than silent.
+
+**Why Chaquopy was viable:** Chaquopy went fully open-source and MIT-licensed as of
+v12.0.1 (previously it required a paid commercial license for closed-source
+distribution). Combined with yt-dlp's own Unlicense, the whole extraction path stays
+permissively licensed.
+
+**Tradeoff accepted:** MediaVault owns a small Kotlin↔Python bridge
+(`core/extractor-ytdlp/src/main/python/mediavault_ytdlp.py`) instead of using an
+off-the-shelf Kotlin API, and cancellation of an in-flight extraction is best-effort
+(interrupting a background thread) rather than a clean process kill, since Chaquopy has
+no built-in call-cancellation primitive. AGP was also pinned to `9.2.1` (down from
+`9.3.2`) because Chaquopy's Gradle plugin documents support only up to AGP `9.2.x`.
+
+**Where this is documented for contributors:** README.md ("Why yt-dlp runs via
+Chaquopy, not a prebuilt wrapper") and THIRD-PARTY-NOTICES.md.
 
 ---
 

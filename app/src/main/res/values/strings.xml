@@ -11,6 +11,17 @@
     <string name="home_title">MediaVault</string>
     <string name="home_url_hint">Paste a link to analyze</string>
     <string name="home_analyze">Analyze</string>
+    <string name="home_cancel">Cancel</string>
+    <string name="home_analyzing">Analyzing…</string>
+    <string name="home_available_formats">Available formats</string>
+    <string name="home_playlist_detected">Playlist detected</string>
+    <string name="home_playlist_item_count">%1$d items</string>
+    <string name="home_select_range">Select range</string>
+    <string name="home_select_range_hint">Tap the first and last item</string>
+    <string name="home_cancel_selection">Cancel selection</string>
+    <string name="home_download_playlist">Download entire playlist</string>
+    <string name="home_download_selected">Download selected (%1$d)</string>
+    <string name="home_unavailable">Unavailable</string>
     <string name="home_supported_sources">Supported Sources</string>
     <string name="home_recent_downloads">Recent Downloads</string>
     <string name="home_placeholder_body">Foundation build — analysis and downloading are not implemented yet.</string>

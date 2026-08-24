@@ -14,20 +14,30 @@ planned.
 |---|---|---|
 | [AndroidX Jetpack libraries](https://developer.android.com/jetpack) (Compose, Room, Lifecycle, Navigation, DataStore, Activity, Core) | UI toolkit, local database, navigation, app architecture | Apache License 2.0 |
 | [Media3](https://github.com/androidx/media3) | Built-in video/audio playback (ExoPlayer, session, UI) | Apache License 2.0 |
-| [Kotlin / kotlinx.coroutines](https://github.com/Kotlin) | Primary language and asynchronous programming | Apache License 2.0 |
+| [Kotlin / kotlinx.coroutines / kotlinx.serialization](https://github.com/Kotlin) | Primary language, async programming, JSON parsing | Apache License 2.0 |
 | [Dagger Hilt](https://github.com/google/dagger) | Dependency injection | Apache License 2.0 |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) (pinned `2026.8.19`) | Media extraction backend behind `ExtractorEngine`, run via Chaquopy | Unlicense |
+| [Chaquopy](https://chaquo.com/chaquopy/) (`17.0.0`) | Embeds a Python interpreter in the app so yt-dlp (a Python project) can run on Android | MIT License (open-sourced as of v12.0.1) |
+| [Coil](https://coil-kt.github.io/coil/) | Thumbnail image loading in Compose | Apache License 2.0 |
+
+MediaVault deliberately chose Chaquopy over the more common `youtubedl-android` wrapper
+(a ready-made Kotlin API around a bundled yt-dlp binary) because that wrapper is
+GPLv3-licensed; combining it into MediaVault would have effectively forced the whole
+project to relicense under the GPL to distribute it. Chaquopy plus yt-dlp directly keeps
+every extraction-path dependency permissively licensed, matching MediaVault's MIT
+license, at the cost of MediaVault owning its own thin Kotlin↔Python bridge instead of
+using an off-the-shelf one.
 
 ## Planned integrations (not yet in the codebase)
 
 These are named in the project architecture as the intended backends behind MediaVault's
-engine abstractions ([`ExtractorEngine`](core/domain/src/main/java/com/mediavault/core/domain/extractor/ExtractorEngine.kt),
-a media-processing layer, and [`TorrentEngine`](core/domain/src/main/java/com/mediavault/core/domain/torrent/TorrentEngine.kt)).
-They will be added to this table with their exact version and license the moment their
-code is vendored or depended upon.
+remaining engine abstractions (a media-processing layer and
+[`TorrentEngine`](core/domain/src/main/java/com/mediavault/core/domain/torrent/TorrentEngine.kt)).
+They will be added to the table above with their exact version and license the moment
+their code is vendored or depended upon.
 
 | Project | Planned purpose | License |
 |---|---|---|
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Media extraction backend behind `ExtractorEngine` | Unlicense |
 | [FFmpeg](https://ffmpeg.org/) | Media processing/transcoding/muxing backend | LGPL v2.1+ / GPL v2+ depending on build configuration |
 | [libtorrent](https://www.libtorrent.org/) | Torrent/magnet backend behind `TorrentEngine` | BSD 3-Clause |
 

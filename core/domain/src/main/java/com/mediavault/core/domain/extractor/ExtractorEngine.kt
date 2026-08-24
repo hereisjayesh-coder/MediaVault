@@ -24,21 +24,41 @@ interface ExtractorEngine {
     /** Whether this engine believes it can analyze the given URL, without performing a full analysis. */
     suspend fun canHandle(url: String): Boolean
 
-    /** Fetches metadata, available formats, and available tracks for [url]. */
-    suspend fun analyze(url: String): AppResult<MediaAnalysisResult>
+    /**
+     * Fetches metadata for [url] — a single item's formats and tracks, or a playlist's
+     * ordered items, depending on what the URL points to. See [ExtractionResult].
+     *
+     * [taskId] identifies this specific call so it can be stopped with [cancel] while it is
+     * still in flight — callers that care about cancellation must generate and retain their
+     * own id (a random UUID is fine) before calling this.
+     */
+    suspend fun analyze(url: String, taskId: String): AppResult<ExtractionResult>
 
     /** Starts a download for a previously analyzed [ExtractionRequest], emitting progress events. */
     fun download(request: ExtractionRequest): Flow<ExtractionEvent>
 
-    /** Cancels an in-flight extraction/download identified by [taskId]. */
+    /** Cancels an in-flight [analyze] or [download] call identified by [taskId]. Safe to call for an unknown or already-finished id. */
     suspend fun cancel(taskId: String)
 }
 
+/**
+ * What analyzing a URL turned out to be: one playable item, or a playlist/channel of them.
+ * Single-item analysis is unaffected by the existence of this wrapper — [Single] carries
+ * exactly the [MediaAnalysisResult] the engine has always produced.
+ */
+sealed class ExtractionResult {
+    data class Single(val media: MediaAnalysisResult) : ExtractionResult()
+    data class Playlist(val playlist: PlaylistAnalysisResult) : ExtractionResult()
+}
+
 data class MediaAnalysisResult(
+    /** Extractor-assigned id, stable across analyses — the basis for future dedup/"already downloaded" checks. */
+    val id: String,
     val sourceName: String,
     val title: String,
     val durationSeconds: Long?,
     val thumbnailUrl: String?,
+    val webpageUrl: String?,
     val formats: List<MediaFormat>,
     val audioTracks: List<MediaTrackInfo>,
     val subtitleTracks: List<SubtitleTrackInfo>,

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Declared here, not just in :app, so this module's own androidTest APK (a separate
+         process/package from :app) can reach the network yt-dlp needs. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
