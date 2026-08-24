@@ -769,13 +769,27 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-At project start:
+_Last updated: 2026-08-24, after the foundation-stage commit._
 
-* New SSD directory created.
-* New Android project is being created.
-* New GitHub repository will be created.
-* Development environment already exists.
-* Product architecture is defined above.
+* Multi-module Gradle project created: `app`, `core:model`, `core:common`,
+  `core:domain`, `core:database` (Kotlin, Jetpack Compose, Material 3, AGP 9.3.2,
+  Kotlin 2.4.10).
+* Minimal AMOLED-black Compose theme, bottom-navigation skeleton, and placeholder
+  screens (Home, Downloads, Library, Player, Settings) implemented.
+* Room database foundation in place (`download_tasks`, `media_items` tables).
+* Core engine interfaces defined in `core/domain`: `ExtractorEngine`, `DownloadEngine`,
+  `TorrentEngine`, `NetworkPolicyManager`, `UpdateManager`, `PlayerEngine`. No concrete
+  implementations exist yet — no yt-dlp, FFmpeg, or libtorrent integration.
+- Hilt wired in; Room database is the first provided dependency.
+* Open-source repo docs written: README, LICENSE, PRIVACY, TERMS, CONTRIBUTING,
+  CHANGELOG, THIRD-PARTY-NOTICES.
+* `gradlew build` succeeds, unit tests pass, and the debug APK has been installed and
+  launched on a physical device (Pixel 7a) with working bottom-nav.
+* Git repository initialized locally; first commit made. GitHub remote not yet created.
+
+Not yet started: extraction, media processing, torrent downloading, network policy
+logic, media playback, library scanning, supported-source index, update checking, and
+any ViewModels/ persistence wiring beyond the Room schema itself.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
