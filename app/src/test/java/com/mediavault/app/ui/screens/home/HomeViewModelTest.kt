@@ -29,7 +29,6 @@ class HomeViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private lateinit var fakeEngine: FakeExtractorEngine
     private lateinit var fakeDownloadEngine: FakeDownloadEngine
-    private lateinit var fakeDestinationProvider: FakeDownloadDestinationProvider
     private lateinit var viewModel: HomeViewModel
 
     @Before
@@ -37,8 +36,7 @@ class HomeViewModelTest {
         Dispatchers.setMain(dispatcher)
         fakeEngine = FakeExtractorEngine()
         fakeDownloadEngine = FakeDownloadEngine()
-        fakeDestinationProvider = FakeDownloadDestinationProvider()
-        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine, fakeDestinationProvider)
+        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine)
     }
 
     @After
@@ -243,13 +241,11 @@ class HomeViewModelTest {
 
         viewModel.onPlaylistFormatSelected(muxed)
         viewModel.onQueuePlaylistClicked()
-        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
         dispatcher.scheduler.advanceUntilIdle()
 
         val request = fakeDownloadEngine.enqueuedPlaylists.single()
         assertEquals(listOf(1, 2, 4), request.items.map { it.itemIndex })
         assertEquals(listOf("a", "b", "d"), request.items.map { it.sourceMediaId })
-        assertEquals("content://tree/primary%3ADownload", request.destinationTreeUri)
         assertTrue(request.skipAlreadyDownloaded)
         assertNull(viewModel.uiState.value.playlistDownloadSetup)
         assertTrue(viewModel.uiState.value.justQueued)
@@ -266,7 +262,6 @@ class HomeViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
         viewModel.onPlaylistFormatSelected(muxed)
         viewModel.onQueuePlaylistClicked()
-        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
         dispatcher.scheduler.advanceUntilIdle()
 
         assertTrue(!fakeDownloadEngine.enqueuedPlaylists.single().skipAlreadyDownloaded)
@@ -312,22 +307,7 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun `download with no destination set asks the screen to launch the folder picker`() = runTest {
-        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
-        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
-        viewModel.onUrlChanged("https://example.com/video")
-        viewModel.analyze()
-        dispatcher.scheduler.advanceUntilIdle()
-        viewModel.onFormatSelected(muxed)
-
-        viewModel.onDownloadClicked()
-
-        assertTrue(viewModel.uiState.value.awaitingDestinationPick)
-        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
-    }
-
-    @Test
-    fun `picking a destination enqueues the selected format on the download engine`() = runTest {
+    fun `download enqueues the selected format immediately, no destination picker needed`() = runTest {
         val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true, container = "mp4")
         fakeEngine.nextResult = AppResult.Success(
             ExtractionResult.Single(sampleMedia(formats = listOf(muxed), webpageUrl = "https://example.com/video")),
@@ -336,18 +316,14 @@ class HomeViewModelTest {
         viewModel.analyze()
         dispatcher.scheduler.advanceUntilIdle()
         viewModel.onFormatSelected(muxed)
-        viewModel.onDownloadClicked()
 
-        viewModel.onDestinationFolderPicked("content://tree/primary%3ADownload")
-        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onDownloadClicked()
 
         val request = fakeDownloadEngine.enqueued.single()
         assertEquals("m1", request.formatId)
         assertEquals("https://example.com/video", request.sourceUrl)
-        assertEquals("content://tree/primary%3ADownload", request.destinationTreeUri)
         assertEquals(MediaType.VIDEO, request.mediaType)
         assertTrue(viewModel.uiState.value.justQueued)
-        assertTrue(!viewModel.uiState.value.awaitingDestinationPick)
     }
 
     @Test
@@ -361,7 +337,6 @@ class HomeViewModelTest {
         viewModel.onDownloadClicked()
 
         assertTrue(fakeDownloadEngine.enqueued.isEmpty())
-        assertTrue(!viewModel.uiState.value.awaitingDestinationPick)
     }
 
     private fun sampleFormat(

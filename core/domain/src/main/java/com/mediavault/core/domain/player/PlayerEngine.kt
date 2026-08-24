@@ -37,4 +37,6 @@ data class PlaybackState(
     val selectedAudioTrackId: String?,
     val selectedSubtitleTrackId: String?,
     val playbackSpeed: Float,
+    /** Set when the underlying player hit a playback error (corrupt file, unsupported codec, ...); null otherwise. */
+    val errorMessage: String? = null,
 )

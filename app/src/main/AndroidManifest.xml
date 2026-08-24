@@ -34,6 +34,21 @@
             android:name=".download.DownloadForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!--
+          Grants other apps temporary, scoped read access to a single file inside private
+          storage — the only sanctioned way a file leaves MediaVault's private directory
+          (Share / Export), never a broad content:// exposure of the whole folder.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

@@ -18,10 +18,6 @@ data class HomeUiState(
     val networkStatus: NetworkStatus? = null,
     /** The one format id the user has chosen for a [ExtractionResult.Single] result, if any. */
     val selectedFormatId: String? = null,
-    /** SAF tree URI of the folder downloads are saved to; null until the user has picked one. */
-    val destinationTreeUri: String? = null,
-    /** True right after Download is tapped with no destination set yet — the screen must launch the folder picker. */
-    val awaitingDestinationPick: Boolean = false,
     /** True once a download has just been queued, so the screen can offer to jump to Downloads. */
     val justQueued: Boolean = false,
     /** Non-null while the user is choosing one quality to apply to a playlist download — see [HomeViewModel]. */

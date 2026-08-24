@@ -19,3 +19,16 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("ALTER TABLE download_tasks ADD COLUMN qualityHasAudio INTEGER")
     }
 }
+
+/**
+ * Adds the metadata the Private Library needs to display real duration/resolution/thumbnail
+ * per item, without a network call or local frame-generation. Purely additive.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN durationSeconds INTEGER")
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN resolutionLabel TEXT")
+        db.execSQL("ALTER TABLE media_items ADD COLUMN resolutionLabel TEXT")
+        db.execSQL("ALTER TABLE media_items ADD COLUMN thumbnailUrl TEXT")
+    }
+}

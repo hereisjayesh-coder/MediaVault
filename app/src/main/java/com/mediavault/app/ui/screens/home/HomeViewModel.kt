@@ -2,7 +2,6 @@ package com.mediavault.app.ui.screens.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mediavault.app.storage.DownloadDestinationProvider
 import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
@@ -35,7 +34,6 @@ class HomeViewModel @Inject constructor(
     private val extractorEngine: ExtractorEngine,
     private val deviceStatusProvider: DeviceStatusProvider,
     private val downloadEngine: DownloadEngine,
-    private val destinationStore: DownloadDestinationProvider,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -45,19 +43,11 @@ class HomeViewModel @Inject constructor(
     private var activeTaskId: String? = null
     private var formatResolutionJob: Job? = null
 
-    /** Which flow requested the SAF folder picker — resolved once [onDestinationFolderPicked] fires. */
-    private var pendingDestinationAction: PendingDestinationAction? = null
-
-    private enum class PendingDestinationAction { SINGLE, PLAYLIST }
-
     init {
         viewModelScope.launch(Dispatchers.IO) {
             val freeBytes = deviceStatusProvider.freeStorageBytes()
             val networkStatus = deviceStatusProvider.networkStatus()
-            val destinationUri = destinationStore.currentTreeUri()
-            _uiState.update {
-                it.copy(freeStorageBytes = freeBytes, networkStatus = networkStatus, destinationTreeUri = destinationUri)
-            }
+            _uiState.update { it.copy(freeStorageBytes = freeBytes, networkStatus = networkStatus) }
         }
     }
 
@@ -119,42 +109,17 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(selectedFormatId = format.formatId, justQueued = false) }
     }
 
-    /** Called by the screen when Download is tapped. Triggers the SAF folder picker if no destination is set yet. */
+    /** Called by the screen when Download is tapped. Downloads are app-private by default — no folder picker needed. */
     fun onDownloadClicked() {
-        val state = _uiState.value
-        if (state.selectedFormatId == null) return
-        pendingDestinationAction = PendingDestinationAction.SINGLE
-        if (state.destinationTreeUri == null) {
-            _uiState.update { it.copy(awaitingDestinationPick = true) }
-            return
-        }
-        enqueueSelectedFormat(state.destinationTreeUri)
-    }
-
-    fun onDestinationPickerDismissed() {
-        pendingDestinationAction = null
-        _uiState.update { it.copy(awaitingDestinationPick = false) }
-    }
-
-    /** Called by the screen once the user has picked a folder via ACTION_OPEN_DOCUMENT_TREE. */
-    fun onDestinationFolderPicked(treeUri: String) {
-        viewModelScope.launch {
-            destinationStore.setTreeUri(treeUri)
-            _uiState.update { it.copy(destinationTreeUri = treeUri, awaitingDestinationPick = false) }
-            when (pendingDestinationAction) {
-                PendingDestinationAction.SINGLE -> enqueueSelectedFormat(treeUri)
-                PendingDestinationAction.PLAYLIST -> confirmPlaylistQueue(treeUri)
-                null -> Unit
-            }
-            pendingDestinationAction = null
-        }
+        if (_uiState.value.selectedFormatId == null) return
+        enqueueSelectedFormat()
     }
 
     fun consumeJustQueued() {
         _uiState.update { it.copy(justQueued = false) }
     }
 
-    private fun enqueueSelectedFormat(destinationTreeUri: String) {
+    private fun enqueueSelectedFormat() {
         val media = (_uiState.value.result as? ExtractionResult.Single)?.media ?: return
         val formatId = _uiState.value.selectedFormatId ?: return
         val format = media.formats.firstOrNull { it.formatId == formatId } ?: return
@@ -169,9 +134,10 @@ class HomeViewModel @Inject constructor(
                 sourceName = media.sourceName,
                 thumbnailUrl = media.thumbnailUrl,
                 container = format.container,
-                destinationTreeUri = destinationTreeUri,
                 mediaType = if (format.hasVideo) MediaType.VIDEO else MediaType.AUDIO,
                 expectedSizeBytes = format.estimatedSizeBytes,
+                durationSeconds = media.durationSeconds,
+                resolutionLabel = format.resolutionLabel,
                 canResume = format.supportsResume,
                 sourceMediaId = media.id,
             ),
@@ -311,16 +277,10 @@ class HomeViewModel @Inject constructor(
     fun onQueuePlaylistClicked() {
         val setup = _uiState.value.playlistDownloadSetup ?: return
         if (setup.selectedFormatId == null) return
-        pendingDestinationAction = PendingDestinationAction.PLAYLIST
-        val destination = _uiState.value.destinationTreeUri
-        if (destination == null) {
-            _uiState.update { it.copy(awaitingDestinationPick = true) }
-            return
-        }
-        confirmPlaylistQueue(destination)
+        confirmPlaylistQueue()
     }
 
-    private fun confirmPlaylistQueue(destinationTreeUri: String) {
+    private fun confirmPlaylistQueue() {
         val playlist = (_uiState.value.result as? ExtractionResult.Playlist)?.playlist ?: return
         val setup = _uiState.value.playlistDownloadSetup ?: return
         val formatId = setup.selectedFormatId ?: return
@@ -334,6 +294,7 @@ class HomeViewModel @Inject constructor(
                 itemIndex = item.index,
                 title = item.title,
                 thumbnailUrl = item.thumbnailUrl,
+                durationSeconds = item.durationSeconds,
             )
         }
         if (items.isEmpty()) return
@@ -345,7 +306,6 @@ class HomeViewModel @Inject constructor(
                 playlistThumbnailUrl = playlist.thumbnailUrl,
                 sourceName = playlist.sourceName,
                 qualityDescriptor = QualityDescriptor.from(format),
-                destinationTreeUri = destinationTreeUri,
                 skipAlreadyDownloaded = _uiState.value.playlistSelection.skipAlreadyDownloaded,
                 items = items,
             ),

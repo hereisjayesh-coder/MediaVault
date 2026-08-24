@@ -5,6 +5,51 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Private Library + In-App Playback Foundation
+
+- Completed downloads now become real, playable Library items instead of just files on
+  disk. New downloads are saved to MediaVault's own app-private storage by default — the
+  folder-picker step that used to appear before every download is gone. Private storage
+  is never indexed by the system Gallery/Photos app and is removed automatically if
+  MediaVault is uninstalled.
+- New Library screen: search, sort (Recent/Name/Size), thumbnail/duration/resolution/
+  size/type per item, and an honest empty state. A three-dot menu on every item offers
+  Play, Share, Export to device, Rename, Delete, and Details. Deleting an item always
+  removes its database record, even if the file is somehow already gone — never leaves a
+  stale entry behind.
+- A real in-app player, built on Media3: play/pause, seek, playback speed, fullscreen,
+  and audio-track/subtitle-track selection when a file actually has more than one track
+  (language labels are only ever shown when the source provided them — never guessed).
+  Tapping a Library item opens the player; playback position is saved continuously and
+  resumes automatically next time, including from the bottom-tab Player entry with no
+  item explicitly chosen (it resumes whatever was played most recently).
+- Downloads completed by the previous SAF-based milestone keep working exactly as
+  before — they still show up in the Library, still play, and can still be shared or
+  exported; only renaming an old SAF-based item isn't supported (it reports a clear
+  message rather than failing silently), since that would need a permission grant this
+  app no longer requests by default.
+- **Bug found and fixed during this stage's own device testing:** the player's fullscreen
+  mode let the video surface claim all available space, pushing its own play/pause/seek/
+  speed controls completely off-screen and unreachable. Fixed so the video fills the
+  space above the controls instead of consuming it.
+- Room database bumped to schema version 3 with another real, additive migration
+  (duration/resolution/thumbnail metadata columns) — verified live that every
+  pre-existing download and Library item survived the update untouched.
+- FFmpeg was **not** added this stage, consistent with earlier decisions — only formats
+  that need no video+audio merge are downloadable at all, so the player never needed to
+  handle a merged file.
+- Verified live on a physical device (Pixel 7a) with a short (19-second) test video:
+  downloaded it straight to private storage, confirmed it appears in the Library with
+  correct metadata, played it to completion in-app, seeked partway through, force-stopped
+  and reopened the app and confirmed playback resumed from the saved position, renamed
+  and deleted it via the three-dot menu, and confirmed both the Library entry and the
+  underlying file were fully removed (app storage usage dropped back to a negligible
+  11 KB afterward).
+- New unit tests: `FileNamingTest`, `LibraryQueryTest`, `LibraryRepositoryTest` (real
+  filesystem rename against a temp directory), `PlayerViewModelTest`
+  (resume-from-saved-position, immediate persistence on pause/seek, missing-file
+  handling), and new metadata-mapping tests in `MediaVaultDownloadEngineTest`.
+
 ### Added — Playlist Download Engine
 
 - Playlist downloading is now real: selecting items from a detected playlist and tapping

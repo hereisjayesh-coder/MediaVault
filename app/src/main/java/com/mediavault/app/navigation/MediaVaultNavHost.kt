@@ -25,6 +25,7 @@ import com.mediavault.app.ui.screens.downloads.DownloadsScreen
 import com.mediavault.app.ui.screens.home.HomeScreen
 import com.mediavault.app.ui.screens.library.LibraryScreen
 import com.mediavault.app.ui.screens.player.PlayerScreen
+import com.mediavault.app.ui.screens.player.PlayerViewModel
 import com.mediavault.app.ui.screens.settings.SettingsScreen
 import com.mediavault.app.ui.screens.sources.SourceDetailScreen
 import com.mediavault.app.ui.screens.sources.SourceDetailViewModel
@@ -32,6 +33,7 @@ import com.mediavault.app.ui.screens.sources.SourcesScreen
 
 private const val SOURCES_ROUTE = "sources"
 private const val SOURCE_DETAIL_ROUTE = "sources/{${SourceDetailViewModel.SOURCE_ID_ARG}}"
+private const val PLAYER_ITEM_ROUTE = "player/{${PlayerViewModel.MEDIA_ITEM_ID_ARG}}"
 
 private val bottomBarDestinations = listOf(
     MediaVaultDestination.HOME,
@@ -102,9 +104,20 @@ fun MediaVaultNavHost() {
                 )
             }
             composable(MediaVaultDestination.DOWNLOADS.route) { DownloadsScreen() }
-            composable(MediaVaultDestination.LIBRARY.route) { LibraryScreen() }
-            composable(MediaVaultDestination.PLAYER.route) { PlayerScreen() }
+            composable(MediaVaultDestination.LIBRARY.route) {
+                LibraryScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
+            }
+            composable(MediaVaultDestination.PLAYER.route) {
+                PlayerScreen(onBackToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) })
+            }
             composable(MediaVaultDestination.SETTINGS.route) { SettingsScreen() }
+
+            composable(
+                route = PLAYER_ITEM_ROUTE,
+                arguments = listOf(navArgument(PlayerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
+            ) {
+                PlayerScreen(onBackToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) })
+            }
 
             composable(SOURCES_ROUTE) {
                 SourcesScreen(onSourceClick = { sourceId -> navController.navigate("sources/$sourceId") })

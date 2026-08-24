@@ -4,13 +4,13 @@ import com.mediavault.core.common.AppError
 import java.io.IOException
 
 /**
- * Maps failures that happen in the download *orchestrator* itself (moving the finished file to
- * the user's SAF folder, mostly) rather than inside yt-dlp — those are already mapped close to
- * the source by `PyException.toAppError()` in core:extractor-ytdlp.
+ * Maps failures that happen in the download *orchestrator* itself (moving the finished file
+ * into MediaVault's private storage, mostly) rather than inside yt-dlp — those are already
+ * mapped close to the source by `PyException.toAppError()` in core:extractor-ytdlp.
  */
 internal fun Throwable.toDownloadAppError(): AppError = when (this) {
     is SecurityException ->
-        AppError.Permission("MediaVault doesn't have permission to write to the selected location.")
+        AppError.Permission("MediaVault doesn't have permission to write to its private storage.")
 
     is IOException -> {
         val text = message.orEmpty()

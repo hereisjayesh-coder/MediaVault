@@ -18,6 +18,10 @@ data class MediaItemEntity(
     val durationMs: Long?,
     val sizeBytes: Long?,
     val container: String?,
+    /** e.g. "1080p" — null for audio-only items. */
+    val resolutionLabel: String? = null,
+    /** Carried from the source so the Library can show a thumbnail without generating one locally. */
+    val thumbnailUrl: String? = null,
     val isImported: Boolean,
     val sourceDownloadTaskId: String?,
     val lastPlaybackPositionMs: Long,

@@ -1,7 +1,7 @@
 package com.mediavault.app.di
 
-import com.mediavault.app.storage.AndroidMediaVaultStorage
-import com.mediavault.app.storage.MediaVaultStorage
+import com.mediavault.app.library.AndroidLibraryRepository
+import com.mediavault.app.library.LibraryRepository
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -10,9 +10,9 @@ import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
-abstract class StorageModule {
+abstract class LibraryModule {
 
     @Binds
     @Singleton
-    abstract fun bindMediaVaultStorage(impl: AndroidMediaVaultStorage): MediaVaultStorage
+    abstract fun bindLibraryRepository(impl: AndroidLibraryRepository): LibraryRepository
 }

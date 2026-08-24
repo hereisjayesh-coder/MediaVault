@@ -2,9 +2,10 @@ package com.mediavault.app.download
 
 import android.content.Context
 import android.net.Uri
-import android.provider.DocumentsContract
-import android.webkit.MimeTypeMap
+import com.mediavault.app.storage.MediaVaultStorage
 import com.mediavault.app.util.DeviceStatusProvider
+import com.mediavault.app.util.nextAvailableFileName
+import com.mediavault.app.util.sanitizeFileName
 import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.database.dao.DownloadTaskDao
@@ -47,9 +48,10 @@ import kotlinx.coroutines.withContext
 /**
  * Real [DownloadEngine]: persists every task in Room (the single source of truth, so the queue
  * survives process death), runs one transfer at a time via [ExtractorEngine.download], applies
- * [NetworkPolicyManager] before starting, and copies the finished file into the user's SAF
- * folder. Source-agnostic — everything here works the same regardless of which [ExtractorEngine]
- * is bound; nothing here knows about yt-dlp.
+ * [NetworkPolicyManager] before starting, and copies the finished file into MediaVault's
+ * app-private [MediaVaultStorage] — see PROJECT_MASTER.md's private-storage decision.
+ * Source-agnostic — everything here works the same regardless of which [ExtractorEngine] is
+ * bound; nothing here knows about yt-dlp.
  */
 @Singleton
 class MediaVaultDownloadEngine @Inject constructor(
@@ -60,6 +62,7 @@ class MediaVaultDownloadEngine @Inject constructor(
     private val networkPolicyManager: NetworkPolicyManager,
     private val deviceStatusProvider: DeviceStatusProvider,
     private val foregroundServiceStarter: DownloadForegroundServiceStarter,
+    private val mediaVaultStorage: MediaVaultStorage,
 ) : DownloadEngine {
 
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -97,7 +100,7 @@ class MediaVaultDownloadEngine @Inject constructor(
                     mediaType = request.mediaType,
                     formatId = request.formatId,
                     container = request.container,
-                    destinationTreeUri = request.destinationTreeUri,
+                    destinationTreeUri = null,
                     destinationUri = null,
                     localCachePath = null,
                     status = DownloadStatus.QUEUED,
@@ -108,6 +111,8 @@ class MediaVaultDownloadEngine @Inject constructor(
                     sourceMediaId = request.sourceMediaId,
                     playlistId = request.playlistContext?.playlistId,
                     playlistItemIndex = request.playlistContext?.itemIndex,
+                    durationSeconds = request.durationSeconds,
+                    resolutionLabel = request.resolutionLabel,
                     createdAtEpochMs = now,
                     updatedAtEpochMs = now,
                 ),
@@ -169,6 +174,8 @@ class MediaVaultDownloadEngine @Inject constructor(
                                     mediaType = if (format.hasVideo) MediaType.VIDEO else MediaType.AUDIO,
                                     totalBytes = format.estimatedSizeBytes,
                                     canResume = format.supportsResume,
+                                    durationSeconds = media.durationSeconds ?: current.durationSeconds,
+                                    resolutionLabel = format.resolutionLabel,
                                     updatedAtEpochMs = System.currentTimeMillis(),
                                 ),
                             )
@@ -372,50 +379,41 @@ class MediaVaultDownloadEngine @Inject constructor(
         networkPolicyManager.recordTransferredBytes(networkType, completed.bytesTransferred)
 
         mediaItemDao.upsert(
-            MediaItemEntity(
-                id = UUID.randomUUID().toString(),
-                title = completed.title ?: "Untitled",
-                mediaUri = finalUri,
-                mediaType = completed.mediaType,
-                durationMs = null,
-                sizeBytes = completed.bytesTransferred,
-                container = completed.container,
-                isImported = false,
-                sourceDownloadTaskId = completed.id,
-                lastPlaybackPositionMs = 0,
-                isFavorite = false,
-                addedAtEpochMs = now,
-            ),
+            buildMediaItemEntity(completed, finalUri, UUID.randomUUID().toString(), now),
         )
     }
 
-    /** Copies the finished cache file into the user's SAF folder and deletes the cache copy. */
+    /**
+     * Copies the finished cache file into MediaVault's private media directory and deletes the
+     * cache copy. Never touches SAF/MediaStore — new downloads are app-private by design (see
+     * PROJECT_MASTER.md's private-storage decision), so nothing here exposes the file to the
+     * public Gallery.
+     */
     private fun copyToDestination(task: DownloadTaskEntity, cacheOutputPath: String): String {
-        val treeUriString = task.destinationTreeUri
-            ?: throw IllegalStateException("No destination folder was selected for this download.")
         val cacheFile = File(cacheOutputPath)
         if (!cacheFile.exists()) throw java.io.IOException("Downloaded file went missing before it could be saved.")
 
+        if (mediaVaultStorage.freeSpaceBytes() < cacheFile.length()) {
+            throw java.io.IOException("Not enough storage space to finish this download.")
+        }
+
         val extension = task.container ?: cacheFile.extension.ifBlank { "bin" }
-        val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
-        // A playlist-item prefix keeps files in playlist order in the destination folder and,
-        // since siblings can otherwise share a title, meaningfully reduces name collisions —
-        // the SAF provider itself auto-suffixes any name that still collides ("Title (1).ext"),
-        // so no file is ever silently overwritten either way.
+        // A playlist-item prefix keeps files in playlist order and, since siblings can otherwise
+        // share a title, meaningfully reduces name collisions — nextAvailableFileName is the
+        // final safety net so a same-named file is never silently overwritten.
         val indexPrefix = task.playlistItemIndex?.let { "%03d - ".format(it) }.orEmpty()
-        val fileName = indexPrefix + sanitizeFileName(task.title ?: task.id) + "." + extension
+        val desiredName = indexPrefix + sanitizeFileName(task.title ?: task.id) + "." + extension
 
-        val treeUri = Uri.parse(treeUriString)
-        val treeDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
-        val newFileUri = DocumentsContract.createDocument(context.contentResolver, treeDocUri, mimeType, fileName)
-            ?: throw java.io.IOException("Couldn't create the destination file.")
+        val mediaDir = mediaVaultStorage.mediaDirectory()
+        val existingNames = mediaDir.list()?.toSet() ?: emptySet()
+        val destinationFile = File(mediaDir, nextAvailableFileName(desiredName, existingNames))
 
-        context.contentResolver.openOutputStream(newFileUri)?.use { output ->
+        destinationFile.outputStream().use { output ->
             cacheFile.inputStream().use { input -> input.copyTo(output) }
-        } ?: throw java.io.IOException("Couldn't open the destination file for writing.")
+        }
 
         runCatching { cacheFile.delete() }
-        return newFileUri.toString()
+        return Uri.fromFile(destinationFile).toString()
     }
 
     private suspend fun fail(taskId: String, error: AppError) {
@@ -427,9 +425,6 @@ class MediaVaultDownloadEngine @Inject constructor(
         dao.update(transform(current).copy(updatedAtEpochMs = System.currentTimeMillis()))
     }
 }
-
-private fun sanitizeFileName(name: String): String =
-    name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(150).ifBlank { "download" }
 
 /**
  * Pure: turns a [PlaylistDownloadRequest] into the rows to insert, in playlist order, with
@@ -451,7 +446,7 @@ internal fun buildPlaylistTaskEntities(
         mediaType = MediaType.VIDEO, // placeholder — corrected once this item's format resolves
         formatId = null,
         container = null,
-        destinationTreeUri = request.destinationTreeUri,
+        destinationTreeUri = null,
         destinationUri = null,
         localCachePath = null,
         status = if (alreadyDownloaded) DownloadStatus.CANCELLED else DownloadStatus.ANALYZING,
@@ -468,6 +463,8 @@ internal fun buildPlaylistTaskEntities(
         qualityContainer = request.qualityDescriptor.container,
         qualityHasVideo = request.qualityDescriptor.hasVideo,
         qualityHasAudio = request.qualityDescriptor.hasAudio,
+        durationSeconds = item.durationSeconds,
+        resolutionLabel = null, // unknown until this item's own format resolves
         // Offset by item order, not wall-clock arrival, so playlist order survives even
         // though every row would otherwise be inserted with the same millisecond timestamp.
         createdAtEpochMs = nowMs + offset,
@@ -516,3 +513,22 @@ private fun DownloadTaskEntity.toDownloadProgress(): DownloadProgress = Download
     playlistTitle = playlistTitle,
     playlistThumbnailUrl = playlistThumbnailUrl,
 )
+
+/** Pure: maps a just-COMPLETED task to the Library row it becomes — no DAO, directly unit-testable. */
+internal fun buildMediaItemEntity(task: DownloadTaskEntity, mediaUri: String, id: String, nowMs: Long) =
+    MediaItemEntity(
+        id = id,
+        title = task.title ?: "Untitled",
+        mediaUri = mediaUri,
+        mediaType = task.mediaType,
+        durationMs = task.durationSeconds?.let { it * 1000 },
+        sizeBytes = task.bytesTransferred,
+        container = task.container,
+        resolutionLabel = task.resolutionLabel,
+        thumbnailUrl = task.thumbnailUrl,
+        isImported = false,
+        sourceDownloadTaskId = task.id,
+        lastPlaybackPositionMs = 0,
+        isFavorite = false,
+        addedAtEpochMs = nowMs,
+    )

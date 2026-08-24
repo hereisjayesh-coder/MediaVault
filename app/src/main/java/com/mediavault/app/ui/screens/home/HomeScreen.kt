@@ -1,8 +1,5 @@
 package com.mediavault.app.ui.screens.home
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -83,27 +80,6 @@ fun HomeScreen(
     onNavigateToSources: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    val folderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-            viewModel.onDestinationFolderPicked(uri.toString())
-        } else {
-            viewModel.onDestinationPickerDismissed()
-        }
-    }
-
-    LaunchedEffect(uiState.awaitingDestinationPick) {
-        if (uiState.awaitingDestinationPick) {
-            folderPickerLauncher.launch(null)
-        }
-    }
 
     LaunchedEffect(uiState.justQueued) {
         if (uiState.justQueued) {

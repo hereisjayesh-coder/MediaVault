@@ -771,8 +771,109 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the Playlist Download Engine stage._
+_Last updated: 2026-08-25, after the Private Library + In-App Playback Foundation stage._
 
+* **Completed downloads are now managed MediaVault Library items, playable inside the
+  app.** New downloads land in app-private storage by default (no SAF folder picker in
+  the download flow any more), get indexed automatically as `MediaItemEntity` rows with
+  real metadata, and can be played, searched, sorted, renamed, deleted, exported, or
+  shared from a real Library screen. FFmpeg was **not** added this stage — see §37.
+  - **Private storage**: new `MediaVaultStorage` (`app/storage/`) exposes
+    `context.getExternalFilesDir(null)/media` — app-specific external storage, removed
+    automatically on uninstall, never indexed by MediaStore/Gallery, reachable with plain
+    `File` I/O and no storage permission or SAF grant. `MediaVaultDownloadEngine.copyToDestination()`
+    now always copies the finished cache file here (collision-safe via
+    `nextAvailableFileName`) instead of the old SAF `DocumentsContract` path — see §37's
+    private-storage decision. `DownloadRequest`/`PlaylistDownloadRequest.destinationTreeUri`
+    were removed (the `DownloadTaskEntity` column stays, now unused, for schema
+    stability); `HomeViewModel`'s SAF-folder-picker gating (`awaitingDestinationPick`,
+    `onDestinationFolderPicked`, `DownloadDestinationStore`) was deleted outright as dead
+    code rather than left half-wired. **Verified live**: `adb shell run-as` on a freshly
+    completed download showed the file under the app's private `files/media/` directory
+    with `drwxrws---` permissions (denied to a plain, non-`run-as` shell), and a MediaStore
+    `content://media/external/audio/media` query for the file's name returned nothing —
+    genuinely not exposed to the Gallery.
+  - **Preserving pre-existing files**: downloads completed by the prior (SAF-based)
+    milestone still have valid `content://` `MediaItemEntity` rows — `LibraryRepository`
+    handles both `file://` (new, private) and `content://` (legacy) schemes for
+    exists-checks, Play (Media3 accepts `content://` URIs directly), Share, and Export;
+    only Rename is `file://`-only, since renaming a SAF document needs a tree-permission
+    grant this app no longer requests, and reports a clear "can't rename" instead of
+    silently failing. **Verified live**: all 5 pre-migration Library rows loaded, showed
+    correct existing-file state, and their three-dot menus worked (Details opened
+    correctly, honestly omitting duration/resolution — that metadata didn't exist before
+    this migration).
+  - **Metadata plumbing**: `DownloadTaskEntity` gained `durationSeconds`/`resolutionLabel`
+    (populated at enqueue for single items, at playlist-item format-resolution for
+    playlist items); `MediaItemEntity` gained `resolutionLabel`/`thumbnailUrl` (carried
+    from the source, not locally generated — reuses the existing Coil pipeline, avoids
+    `MediaMetadataRetriever` frame-extraction complexity this milestone didn't need).
+  - **Library screen** (`ui/screens/library/`): search (case-insensitive title substring)
+    and sort (Recent/Name/Size) are a pure `List<MediaItemEntity>.filterAndSort()` function
+    in `app/library/LibraryQuery.kt` — the same "linear scan over a small in-memory list"
+    approach already used by `SourceCatalogIndex`, not dynamic SQL. An honest empty state
+    distinguishes "library is genuinely empty" from "no search matches." Each row shows
+    thumbnail/title/duration/resolution/size/media type, a "File missing" badge when
+    `LibraryRepository.fileExists()` is false (disabling Play/Share/Export/Rename, keeping
+    Delete enabled so a stale record can always be cleaned up), and a three-dot menu
+    (Play/Share/Export to device/Rename/Delete/Details).
+  - **Three-dot menu**: Share/Export build a `content://` URI via a new `FileProvider`
+    (manifest + `res/xml/file_paths.xml`, scoped only to the private `media/` folder) for
+    `file://` items, or reuse the existing `content://` URI directly for legacy items.
+    Export uses `ActivityResultContracts.CreateDocument` (no persisted destination). Delete
+    always removes the DB row, even if the file is already gone — never leaves an orphaned
+    record — and best-effort deletes the file (`File.delete()` or
+    `DocumentsContract.deleteDocument()` depending on scheme). Rename sanitizes the new
+    title (reused, shared `sanitizeFileName`/`nextAvailableFileName` — promoted out of the
+    download engine into `app/util/FileNaming.kt` — the same collision-safety and
+    path-traversal protection as new downloads) and does a real `File.renameTo()`.
+    **Verified live**: renamed a completed test download, confirmed the new title
+    appeared immediately; deleted it and confirmed both the Library row disappeared and
+    `adb shell du -sh` on the app's external data directory dropped to 11 KB (nothing
+    left behind).
+  - **Media3 player** (`app/player/Media3PlayerEngine.kt`): the first real implementation
+    of the pre-existing `PlayerEngine` abstraction (defined, unused, in an earlier stage).
+    Play/pause/seek/speed/audio-track/subtitle-track selection all go through the
+    interface; the one deliberate exception is `Media3PlayerEngine.rawPlayer`, an escape
+    hatch `PlayerViewModel.attachVideoSurface()` uses to bind Media3's `PlayerView` to a
+    real `Player` — no player-rendering library can avoid exposing *something*
+    implementation-specific for video output, so this is documented rather than hidden.
+    Audio/subtitle track labels are never guessed: `label ?: languageCode ?: "Track N"`,
+    matching `MediaTrackInfo`'s existing "never invent a language" contract. Playback
+    position is persisted immediately on pause/seek and every 3 seconds while playing (not
+    only at teardown) via `LibraryRepository.updatePlaybackPosition` →
+    `MediaItemEntity.lastPlaybackPositionMs` (a field that already existed, unused, from
+    an earlier stage). A `LastPlayedStore` (DataStore) lets the bottom-tab "Player" entry
+    (reached with no specific item id, unlike a Library drill-in) resume whatever was
+    opened most recently. **Verified live**: played a 19-second test clip to completion,
+    seeked to 0:09, force-stopped the app, relaunched, tapped the bottom-tab Player entry
+    with no Library interaction — it resumed the same item from 0:10 and kept playing.
+  - **A real bug found and fixed during this stage's own device testing**: fullscreen
+    initially gave the video surface `Modifier.fillMaxSize()` inside the controls'
+    `Column`, which let it claim every remaining pixel and push the play/pause/seek/speed/
+    track/exit-fullscreen row entirely off-screen — fullscreen played correctly but its
+    own controls became unreachable. Fixed by using `Modifier.weight(1f)` instead, so the
+    video fills available space above the controls rather than swallowing them.
+  - **Known limitation**: no video-capable test source was available this stage — every
+    format offered on both a legacy playlist and a fresh test video was audio-only (the
+    project's existing muxed-or-audio-only restriction plus the reality that
+    contemporary/older YouTube videos alike now serve exclusively split DASH streams — see
+    §37's 2026-08-24 FFmpeg-scoping decision and the mapper-bug note below it). Multi-track
+    audio/subtitle selection UI was code-reviewed and exercised with 0-and-1-track cases
+    live, but a real multi-track (audio or subtitle) source was never available to verify
+    the actual track-switching call end-to-end on-device.
+  - Unit tests added: `FileNamingTest` (8, sanitize/collision including a literal
+    path-traversal input), `LibraryQueryTest` (7, search/sort/missing-file),
+    `LibraryRepositoryTest` (4, real `File.renameTo()` against a temp directory —
+    Context-free, so genuinely exercises the OS rename rather than a fake),
+    `PlayerViewModelTest` (8, resume-from-saved-position, pause/seek persist immediately,
+    missing-file handling, last-played fallback), plus `buildMediaItemEntity` mapping
+    tests added to `MediaVaultDownloadEngineTest`. `./gradlew build` and the full unit
+    test suite (97 tests across `core:domain` and `:app`, 0 failures) both pass. As with
+    `MediaVaultDownloadEngine` before it, the Android/Context-touching parts of
+    `AndroidLibraryRepository` (the `content://` fallback path, `FileProvider`, Room
+    wiring) and `Media3PlayerEngine` are verified via real-device testing and code review
+    rather than JVM unit tests — this project still has no Robolectric/Mockito.
 * **Playlist downloading is real — a detected playlist queues actual, independent
   downloads, not just a report.** Builds directly on `MediaVaultDownloadEngine` and the
   existing `ExtractorEngine`/Room/SAF/`NetworkPolicyManager` stack; no new engine, no
@@ -1081,7 +1182,9 @@ _Prior state, before the real DownloadEngine stage:_
   (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
 Not yet started: media processing/FFmpeg — i.e. merged video+audio downloads (still
-deliberately avoided — see above), torrent downloading, media playback, library scanning,
+deliberately avoided — see above), torrent downloading, user-selected-folder/full-device
+media scanning (the Library only indexes MediaVault-managed downloads so far — see this
+stage's private-storage note above), app lock/biometric security, picture-in-picture,
 source search (beyond the Supported Sources catalog itself — §17's "tapping an item opens
 the appropriate analysis/download flow" is satisfied by returning to Home, not a
 source-aware analyzer), and update checking.
@@ -1287,6 +1390,46 @@ the Pixel 7a test device now holds genuine downloads and media rows from previou
 Skipping a real migration here would have either force-uninstalled the app (losing that
 data) or crashed on the next launch. Verified live: the existing Big Buck Bunny download
 and a previously-cancelled task both survived the version-2 app update untouched.
+
+---
+
+### 2026-08-25 — Downloads default to app-private storage; the SAF folder picker is gone
+
+**Decision:** `MediaVaultDownloadEngine` now copies every finished download into a new
+`MediaVaultStorage`-managed app-private directory (`context.getExternalFilesDir(null)/media`)
+by default. The `ACTION_OPEN_DOCUMENT_TREE` folder-picker step that used to gate every
+download in `HomeViewModel` was removed outright, along with `DownloadDestinationStore`
+and its DI binding — not left disabled or dead-coded. `DownloadRequest`/
+`PlaylistDownloadRequest.destinationTreeUri` were deleted from the domain layer;
+`DownloadTaskEntity.destinationTreeUri` (the Room column) stays, now permanently unused,
+since dropping a Room column cleanly requires a full table rebuild migration and the
+milestone's instructions were explicit about reusing the schema and adding only what's
+needed — an unused nullable column is a smaller footprint than that rebuild.
+
+**Why:** This milestone's explicit goal was "completed downloads become managed
+MediaVault Library items, playable inside the app" — which only works cleanly if
+MediaVault actually owns where the file lives. The previous SAF flow let a download land
+anywhere the user picked (often a public Downloads folder), meaning MediaVault could
+never fully guarantee rename/delete/metadata consistency for it, and every first-ever
+download paid a folder-picker permission-grant tax before it could even start. Files a
+user explicitly wants outside the app remain fully reachable via the new Library
+"Export to device" and "Share" actions — SAF is still used there, just at export time
+instead of download time, which is a more precise fit for what SAF's document-picker
+model is actually for (one deliberate hand-off of one file), rather than a
+permanently-held write grant to an entire folder.
+
+**Consequence — Gallery exposure:** app-private external storage
+(`getExternalFilesDir`) is never indexed by MediaStore/Gallery and is removed
+automatically on uninstall, satisfying the "do not automatically expose downloads to the
+public Gallery" requirement by construction rather than by a scanning opt-out. Verified
+live via `adb shell run-as` (file only readable as the app's own UID) and a MediaStore
+content query (no match).
+
+**Consequence — backward compatibility:** downloads completed by the prior SAF-based
+milestone keep their `content://` URIs and remain fully valid, playable Library rows —
+see the private-storage note in §34's Current Project State for how `LibraryRepository`
+handles both URI schemes. Nothing already on a user's device breaks or disappears; only
+the default for *new* downloads changed.
 
 ---
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Matches MediaVaultStorage.mediaDirectory() (getExternalFilesDir(null)/media) — the only
+         directory FileProvider is allowed to serve files from. -->
+    <external-files-path name="media" path="media/" />
+</paths>

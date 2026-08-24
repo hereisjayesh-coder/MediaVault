@@ -1,0 +1,268 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "88202d41a2ea5e9cafe4ba0fbeb0ba48",
+    "entities": [
+      {
+        "tableName": "download_tasks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sourceUrl` TEXT NOT NULL, `title` TEXT, `sourceName` TEXT, `thumbnailUrl` TEXT, `mediaType` TEXT NOT NULL, `formatId` TEXT, `container` TEXT, `destinationTreeUri` TEXT, `destinationUri` TEXT, `localCachePath` TEXT, `status` TEXT NOT NULL, `bytesTransferred` INTEGER NOT NULL, `totalBytes` INTEGER, `canResume` INTEGER NOT NULL, `errorMessage` TEXT, `sourceMediaId` TEXT, `playlistId` TEXT, `playlistItemIndex` INTEGER, `playlistTitle` TEXT, `playlistThumbnailUrl` TEXT, `qualityResolutionLabel` TEXT, `qualityContainer` TEXT, `qualityHasVideo` INTEGER, `qualityHasAudio` INTEGER, `durationSeconds` INTEGER, `resolutionLabel` TEXT, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUrl",
+            "columnName": "sourceUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceName",
+            "columnName": "sourceName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "thumbnailUrl",
+            "columnName": "thumbnailUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "mediaType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "formatId",
+            "columnName": "formatId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "container",
+            "columnName": "container",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "destinationTreeUri",
+            "columnName": "destinationTreeUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "destinationUri",
+            "columnName": "destinationUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "localCachePath",
+            "columnName": "localCachePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTransferred",
+            "columnName": "bytesTransferred",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalBytes",
+            "columnName": "totalBytes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "canResume",
+            "columnName": "canResume",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "errorMessage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceMediaId",
+            "columnName": "sourceMediaId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "playlistId",
+            "columnName": "playlistId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "playlistItemIndex",
+            "columnName": "playlistItemIndex",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "playlistTitle",
+            "columnName": "playlistTitle",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "playlistThumbnailUrl",
+            "columnName": "playlistThumbnailUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "qualityResolutionLabel",
+            "columnName": "qualityResolutionLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "qualityContainer",
+            "columnName": "qualityContainer",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "qualityHasVideo",
+            "columnName": "qualityHasVideo",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "qualityHasAudio",
+            "columnName": "qualityHasAudio",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "resolutionLabel",
+            "columnName": "resolutionLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "media_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `mediaUri` TEXT NOT NULL, `mediaType` TEXT NOT NULL, `durationMs` INTEGER, `sizeBytes` INTEGER, `container` TEXT, `resolutionLabel` TEXT, `thumbnailUrl` TEXT, `isImported` INTEGER NOT NULL, `sourceDownloadTaskId` TEXT, `lastPlaybackPositionMs` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, `addedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaUri",
+            "columnName": "mediaUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "mediaType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "container",
+            "columnName": "container",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "resolutionLabel",
+            "columnName": "resolutionLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "thumbnailUrl",
+            "columnName": "thumbnailUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isImported",
+            "columnName": "isImported",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceDownloadTaskId",
+            "columnName": "sourceDownloadTaskId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastPlaybackPositionMs",
+            "columnName": "lastPlaybackPositionMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAtEpochMs",
+            "columnName": "addedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '88202d41a2ea5e9cafe4ba0fbeb0ba48')"
+    ]
+  }
+}

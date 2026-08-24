@@ -48,6 +48,10 @@ data class DownloadTaskEntity(
     val qualityContainer: String? = null,
     val qualityHasVideo: Boolean? = null,
     val qualityHasAudio: Boolean? = null,
+    /** Media duration, known from analysis — carried through to the completed `MediaItemEntity`. */
+    val durationSeconds: Long? = null,
+    /** The resolved format's resolution label (e.g. "1080p"), for Library display. Null for audio. */
+    val resolutionLabel: String? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
 )

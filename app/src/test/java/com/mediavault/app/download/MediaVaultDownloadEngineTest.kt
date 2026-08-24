@@ -32,7 +32,6 @@ class MediaVaultDownloadEngineTest {
         playlistThumbnailUrl = "https://example.com/thumb.jpg",
         sourceName = "Youtube",
         qualityDescriptor = descriptor,
-        destinationTreeUri = "content://tree/primary%3ADownload",
         skipAlreadyDownloaded = skipAlreadyDownloaded,
         items = items,
     )
@@ -181,5 +180,52 @@ class MediaVaultDownloadEngineTest {
         val tasks = listOf(sampleTask(DownloadStatus.DOWNLOADING, playlistId = "p1"), sampleTask(DownloadStatus.COMPLETED, playlistId = "p2"))
 
         assertTrue(tasks.playlistIdsNeedingResolution().isEmpty())
+    }
+
+    // --- Completed download -> Library insertion ------------------------------------------
+
+    @Test
+    fun `a completed task maps to a library item carrying its real metadata`() {
+        val task = sampleTask(DownloadStatus.COMPLETED, formatId = "f1").copy(
+            title = "My Video",
+            container = "mp4",
+            bytesTransferred = 12_345L,
+            durationSeconds = 125,
+            resolutionLabel = "1080p",
+            thumbnailUrl = "https://example.com/thumb.jpg",
+        )
+
+        val item = buildMediaItemEntity(task, mediaUri = "file:///private/media/My Video.mp4", id = "media-1", nowMs = 999L)
+
+        assertEquals("media-1", item.id)
+        assertEquals("My Video", item.title)
+        assertEquals("file:///private/media/My Video.mp4", item.mediaUri)
+        assertEquals(MediaType.VIDEO, item.mediaType)
+        assertEquals(125_000L, item.durationMs)
+        assertEquals(12_345L, item.sizeBytes)
+        assertEquals("mp4", item.container)
+        assertEquals("1080p", item.resolutionLabel)
+        assertEquals("https://example.com/thumb.jpg", item.thumbnailUrl)
+        assertEquals("t1", item.sourceDownloadTaskId)
+        assertEquals(0L, item.lastPlaybackPositionMs)
+        assertEquals(999L, item.addedAtEpochMs)
+    }
+
+    @Test
+    fun `a task with no known duration maps to a null duration, never a guess`() {
+        val task = sampleTask(DownloadStatus.COMPLETED).copy(durationSeconds = null)
+
+        val item = buildMediaItemEntity(task, mediaUri = "file:///private/media/x.mp4", id = "media-1", nowMs = 0L)
+
+        assertNull(item.durationMs)
+    }
+
+    @Test
+    fun `an untitled task falls back to a generic title, never a blank one`() {
+        val task = sampleTask(DownloadStatus.COMPLETED).copy(title = null)
+
+        val item = buildMediaItemEntity(task, mediaUri = "file:///private/media/x.mp4", id = "media-1", nowMs = 0L)
+
+        assertEquals("Untitled", item.title)
     }
 }

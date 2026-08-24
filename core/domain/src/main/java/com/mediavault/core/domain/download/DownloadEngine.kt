@@ -61,10 +61,12 @@ data class DownloadRequest(
     val thumbnailUrl: String?,
     /** File extension/container of the selected format, e.g. "mp4" — used to name the saved file. */
     val container: String,
-    /** SAF tree URI of the user-selected destination folder. */
-    val destinationTreeUri: String,
     val mediaType: MediaType,
     val expectedSizeBytes: Long?,
+    /** From `MediaAnalysisResult.durationSeconds`, for Library display — null when unknown. */
+    val durationSeconds: Long? = null,
+    /** From the selected `MediaFormat.resolutionLabel`, for Library display — null for audio. */
+    val resolutionLabel: String? = null,
     /** Carried from the selected [com.mediavault.core.model.MediaFormat.supportsResume]. */
     val canResume: Boolean,
     /** The extractor-assigned id of the media being downloaded, for future dedup/"already downloaded" checks. */
@@ -88,7 +90,6 @@ data class PlaylistDownloadRequest(
     val sourceName: String?,
     /** The single quality every item is downloaded at; see [QualityDescriptor]. */
     val qualityDescriptor: QualityDescriptor,
-    val destinationTreeUri: String,
     /** When true, an item already completed successfully (by [DownloadEngine.isAlreadyDownloaded]) is skipped, not re-downloaded. */
     val skipAlreadyDownloaded: Boolean,
     /** In playlist order. */
@@ -104,6 +105,7 @@ data class PlaylistDownloadItem(
     val itemIndex: Int,
     val title: String,
     val thumbnailUrl: String?,
+    val durationSeconds: Long? = null,
 )
 
 data class DownloadProgress(
