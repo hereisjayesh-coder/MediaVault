@@ -5,6 +5,47 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Supported Sources catalog
+
+- New Supported Sources screen and detail screen (`app/ui/screens/sources/`), reachable
+  from Home's Popular Sources section ("See all" / tapping a chip) and two new nav routes
+  — search field, category filter chips, a live "N of M sources" count, an A→Z indexed
+  list with sticky letter headers, and a favicon-or-generated-initials icon per source.
+- The catalog is generated from the actual installed yt-dlp extractor registry by a new
+  offline script, `core/extractor-ytdlp/scripts/generate_source_catalog.py` — not
+  hand-typed. It groups yt-dlp's ~1,740 extractor classes into **1,027 real services**
+  (deduplicating variants like `youtube`/`youtube:tab`/`youtube:search` into one `YouTube`
+  entry while keeping every underlying extractor id for future analysis routing),
+  substantially more than the 5 names previously shown on Home. Output is a committed
+  JSON asset, not fetched from a server and not regenerated on app launch — see
+  PROJECT_MASTER.md §37 for the full generation/regeneration approach.
+- New `Source`/`SourceCategory` domain model (`core:model`) and
+  `SourceCatalogRepository`/`SourceCatalogIndex` (`core:domain`) — the UI depends only on
+  these, never on yt-dlp internals. Search/category-filter/A→Z-grouping is a plain
+  precomputed-lowercase-blob + linear scan, fast enough for ~1,000 records without
+  needing SQLite FTS.
+- Favicons are fetched via a public favicon-lookup URL and cached locally by Coil's
+  normal disk cache (no bundled image assets); a source with no known domain, or whose
+  favicon fails to load, falls back to a generated initials avatar so the catalog never
+  looks broken.
+- The catalog and detail screen are explicit that support isn't guaranteed forever:
+  wording reads "Supported by current extraction engine (yt-dlp `<version>`)" rather than
+  claiming a permanent count or that every listed service currently works.
+- **Bug found and fixed during this stage's own QA, before device testing:** an initial
+  domain-grouping heuristic (`domain.split(".")[0]`) mis-merged unrelated services that
+  share a generic subdomain label — e.g. NRK (`tv.nrk.no`), JTBC (`tv.jtbc.co.kr`), and
+  Sohu (`tv.sohu.com`) were all collapsing into one bogus "tv" catalog entry. Fixed with
+  public-suffix-aware domain-label parsing.
+- **Bug found and fixed during on-device testing:** the bottom navigation bar's tab-switch
+  helper could land on the wrong screen when returning to a tab (e.g. Home) from the new
+  drill-in Sources/detail routes, because its `popUpTo`/`saveState`/`restoreState` pattern
+  — designed for switching between sibling tabs — got confused by the extra routes above
+  a tab on the back stack. Fixed by preferring a direct `popBackStack` to an already-open
+  tab before falling back to the save/restore pattern for a tab never visited yet.
+- Verified live on a physical device (Pixel 7a): searched YouTube, Reddit, TikTok, Vimeo,
+  and Facebook (all found, including alias matches like `youtu.be`), tested category
+  filtering, and navigated into source detail and back to Home. No crashes.
+
 ### Added — Real DownloadEngine
 
 - `DownloadEngine` now has a real implementation, `MediaVaultDownloadEngine`

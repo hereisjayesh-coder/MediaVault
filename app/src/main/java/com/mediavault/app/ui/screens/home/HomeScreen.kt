@@ -80,6 +80,7 @@ import java.time.LocalTime
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onNavigateToDestination: (MediaVaultDestination) -> Unit = {},
+    onNavigateToSources: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -124,6 +125,7 @@ fun HomeScreen(
         onDownloadEntirePlaylist = viewModel::downloadEntirePlaylist,
         onDownloadSelected = viewModel::downloadSelectedItems,
         onNavigateToDestination = onNavigateToDestination,
+        onNavigateToSources = onNavigateToSources,
     )
 }
 
@@ -141,6 +143,7 @@ private fun HomeScreenContent(
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
     onNavigateToDestination: (MediaVaultDestination) -> Unit,
+    onNavigateToSources: () -> Unit,
 ) {
     val showDiscovery = uiState.result == null && !uiState.isAnalyzing
 
@@ -209,7 +212,7 @@ private fun HomeScreenContent(
         }
 
         if (showDiscovery) {
-            item { PopularSourcesSection() }
+            item { PopularSourcesSection(onClick = onNavigateToSources) }
             item { QuickActionsSection(onNavigateToDestination) }
             item { RecentActivitySection() }
             item { DeviceStatusRow(uiState.freeStorageBytes, uiState.networkStatus) }
@@ -297,15 +300,26 @@ private fun UrlAnalyzeCard(
 private val popularSourceNames = listOf("YouTube", "Instagram", "TikTok", "Facebook", "Vimeo")
 
 @Composable
-private fun PopularSourcesSection() {
+private fun PopularSourcesSection(onClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionLabel(text = stringResource(R.string.home_popular_sources))
+        SectionLabel(
+            text = stringResource(R.string.home_popular_sources),
+            trailing = {
+                Text(
+                    text = stringResource(R.string.sources_see_all),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(onClick = onClick),
+                )
+            },
+        )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(popularSourceNames) { name ->
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.clickable(onClick = onClick),
                 ) {
                     Text(
                         text = name,

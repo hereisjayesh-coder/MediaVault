@@ -771,8 +771,62 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-24, after the real DownloadEngine stage._
+_Last updated: 2026-08-24, after the Supported Sources catalog stage._
 
+* **Supported Sources catalog is real, not a placeholder.** A new `Source`/`SourceCategory`
+  domain model (`core:model`) and `SourceCatalogRepository`/`SourceCatalog`/
+  `SourceCatalogIndex` (`core:domain/source/`) sit behind a generated, bundled JSON asset —
+  the UI never touches yt-dlp internals or Chaquopy for this.
+  - **Generation**: `core/extractor-ytdlp/scripts/generate_source_catalog.py` is a
+    controlled, offline script (not run by Gradle or the app) that reads the *installed*
+    yt-dlp's own extractor registry (`yt_dlp.extractor.gen_extractor_classes()`, ~1740
+    classes) and groups extractor variants into one row per real service — e.g. `youtube`,
+    `youtube:tab`, `youtube:search`, ... all collapse into one `YouTube` entry, keeping
+    every underlying extractor id (`extractorIds`) for future analysis routing. Grouping
+    keys off each extractor's own real test-case URL domain (registrable-label aware, so
+    `tv.nrk.no` groups under `nrk` not `tv`) with a small curated override map for the
+    handful of top services worth correcting by hand (YouTube, TikTok, Twitch, ...);
+    category comes from a short keyword-rule table plus `age_limit` for Adult, falling
+    back to `VIDEO`. Run it by hand after any yt-dlp version bump:
+    `python core/extractor-ytdlp/scripts/generate_source_catalog.py`, then commit the
+    regenerated `core/extractor-ytdlp/src/main/assets/source_catalog.json` (~290KB).
+    Current catalog: **1,027 grouped services** from 1,741 raw extractor classes,
+    `engineVersion` "2026.08.19" recorded alongside the sources so the UI's "Supported by
+    current extraction engine" wording stays honest and never claims a permanent count
+    (see §16).
+  - **Runtime loading**: `YtDlpSourceCatalogRepository` (`core:extractor-ytdlp`) reads the
+    asset once via `Context.assets`, parses it with the same `kotlinx.serialization` setup
+    already used for yt-dlp's own JSON, and caches the result in memory — not refetched
+    from a server, not regenerated on launch.
+  - **Search/filter/index**: `SourceCatalogIndex` (`core:domain`, pure Kotlin/JVM, no
+    Android dependency) precomputes a lowercased "name + domain + aliases" blob per source
+    once, then does a plain case-insensitive substring scan per query — deliberately not
+    SQLite FTS or a trie; a linear scan over ~1,000 short strings is comfortably fast
+    enough and avoids the schema/migration overhead a Room-backed catalog would add.
+    Category filtering and A→Z bucketing (with a `#` bucket for non-letter-starting names)
+    live on the same class.
+  - **UI**: new `SourcesScreen`/`SourceDetailScreen`
+    (`app/ui/screens/sources/`) reachable via a "See all"/chip tap on Home's existing
+    Popular Sources section (`PopularSourcesSection`, now a real shortcut rather than
+    inert chips) and two new NavHost routes (`sources`, `sources/{sourceId}`) — not bottom
+    tabs. Search field, category filter chips (`SourceCategory.entries` + "All"), a live
+    "N of M sources" count, an A→Z sticky-header list, and a favicon-or-initials icon per
+    row (`SourceIcon`: Coil `SubcomposeAsyncImage` fetches `faviconUrl`
+    — Google's public `s2/favicons` endpoint — falling back to a generated initials
+    avatar on load failure or when no domain is known; Coil's normal disk cache means
+    icons are fetched once, not on every screen visit). Detail screen shows
+    name/logo/domain/categories/supported-status/engine-version and a "Go to Analyzer"
+    button that returns to Home — deliberately does not invent per-source functionality
+    (no auto-filled URL, no site-specific options).
+  - **A real bug found and fixed during this stage's own device testing**: the bottom
+    navigation bar's tab-switch helper (`navigateToDestination` in `MediaVaultNavHost`)
+    used the standard `popUpTo(start){saveState=true} + restoreState=true` pattern, which
+    works for switching between sibling bottom tabs but got confused once the new
+    `sources`/`sources/{id}` drill-in routes sat above a tab on the back stack — tapping
+    "Home" (from the bottom bar *or* the detail screen's "Go to Analyzer" button) would
+    silently land back on the Sources screen instead. Fixed by trying a direct
+    `popBackStack(route, false)` first and only falling back to the save/restore dance for
+    a tab never visited yet.
 * **`DownloadEngine` now has a real implementation:** `MediaVaultDownloadEngine`
   (`app/download/`), bound via Hilt in `DownloadModule`. Source-agnostic — it consumes
   `ExtractorEngine.download()` for the actual byte transfer (implemented this stage in
@@ -930,7 +984,9 @@ _Prior state, before the real DownloadEngine stage:_
 Not yet started: playlist downloading (queuing multiple `DownloadTask`s — the domain
 model already carries `playlistContext`/`sourceMediaId` for this), media
 processing/FFmpeg (still deliberately avoided — see above), torrent downloading, media
-playback, library scanning, supported-source index, and update checking.
+playback, library scanning, source search (beyond the Supported Sources catalog itself —
+§17's "tapping an item opens the appropriate analysis/download flow" is satisfied by
+returning to Home, not a source-aware analyzer), and update checking.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -1059,6 +1115,41 @@ Project State section above), this initially meant a typical modern YouTube vide
 muxed. Fixed by including audio-only formats in the selectable list; video-only formats
 correctly remain disabled. Users can download the best available audio-only stream today;
 merged video+audio downloads remain a future, separately-scoped decision.
+
+---
+
+### 2026-08-24 — Supported Sources catalog: generated offline, grouped by real domain
+
+**Decision:** The ~1,700-service catalog is produced by a standalone Python script
+(`core/extractor-ytdlp/scripts/generate_source_catalog.py`) run by hand against the
+pinned yt-dlp install, committed as a static JSON asset
+(`core/extractor-ytdlp/src/main/assets/source_catalog.json`) and loaded into memory once
+at runtime. It is not generated by Gradle, not regenerated on app launch, and not fetched
+from a server.
+
+**Why:** The catalog only changes when yt-dlp itself is upgraded — regenerating it on
+every build or every launch would be pure waste, and a server round-trip would make the
+list dependent on connectivity for a screen whose whole point is "what can I download
+right now with what's installed." A committed asset keeps it reproducible, diffable in
+code review, and instant to load.
+
+**Grouping approach:** yt-dlp exposes ~1,740 extractor *classes*, not ~1,740 *services* —
+most real services (YouTube, Vimeo, ...) register several variant extractors internally.
+The generator groups variants by the registrable domain label parsed from each
+extractor's own first real test-case URL (not `_VALID_URL`'s regex source, which is far
+harder to parse reliably), with public-suffix-aware handling so a subdomain like
+`tv.nrk.no` groups under `nrk`, not the generic-looking `tv` label — an earlier, naive
+`domain.split(".")[0]` approach was caught wrongly merging unrelated services (e.g. NRK,
+JTBC, and Sohu all collapsing into one bogus "tv" entry) during this stage's own QA pass
+before it ever reached device testing.
+
+**Accuracy tradeoff accepted:** category assignment is a short keyword-rule table plus a
+small curated override map for the handful of top services users are likely to search
+for (YouTube, TikTok, Instagram, ...) — not a hand-classification of all ~1,700 entries,
+which isn't practical or maintainable. Everything unmatched defaults to `VIDEO` (yt-dlp's
+core purpose). The UI never claims a fixed count or that every listed service currently
+works — see §16 and the "Supported by current extraction engine (yt-dlp `<version>`)"
+wording on the detail screen.
 
 ---
 

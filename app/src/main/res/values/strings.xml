@@ -85,4 +85,34 @@
 
     <string name="settings_title">Settings</string>
     <string name="settings_placeholder_body">Network policy, storage, and app preferences will appear here once implemented.</string>
+
+    <string name="sources_title">Supported Sources</string>
+    <string name="sources_search_hint">Search sources</string>
+    <string name="sources_count">%1$d supported sources</string>
+    <string name="sources_count_filtered">%1$d of %2$d sources</string>
+    <string name="sources_engine_footer">Supported by current extraction engine (yt-dlp %1$s)</string>
+    <string name="sources_category_all">All</string>
+    <string name="sources_empty_title">No sources found</string>
+    <string name="sources_empty_body">Try a different search term or category.</string>
+    <string name="sources_see_all">See all</string>
+
+    <string name="source_category_social_media">Social Media</string>
+    <string name="source_category_video">Video</string>
+    <string name="source_category_music">Music</string>
+    <string name="source_category_audio">Audio</string>
+    <string name="source_category_education">Education</string>
+    <string name="source_category_news">News</string>
+    <string name="source_category_live_streaming">Live Streaming</string>
+    <string name="source_category_podcasts">Podcasts</string>
+    <string name="source_category_sports">Sports</string>
+    <string name="source_category_anime">Anime</string>
+    <string name="source_category_cloud_hosting">Cloud/Hosting</string>
+    <string name="source_category_adult">Adult</string>
+    <string name="source_category_other">Other</string>
+
+    <string name="source_detail_supported">Supported by the current extraction engine</string>
+    <string name="source_detail_unsupported">Not currently reported as working by the extraction engine</string>
+    <string name="source_detail_domain">Domain: %1$s</string>
+    <string name="source_detail_go_to_analyzer">Go to Analyzer</string>
+    <string name="source_detail_not_found">This source couldn\'t be found.</string>
 </resources>
