@@ -17,7 +17,7 @@ enum class VideoResizeMode {
 
 enum class SleepTimerOption(val minutes: Int?) {
     OFF(null),
-    MIN_10(10),
+    MIN_15(15),
     MIN_30(30),
     MIN_60(60),
     /** Pauses when the current item finishes instead of looping/auto-advancing, rather than firing after a fixed delay. */

@@ -5,6 +5,32 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Player Controls & Gestures Polish
+
+- Popup menus (Speed, Audio, Subtitle, Aspect-ratio, Sleep timer) now open anchored
+  directly next to the button that opened them, with a proper trailing checkmark icon
+  for the selected option — instead of every menu opening at the same fixed position
+  regardless of which icon was tapped.
+- Fullscreen now rotates the device to landscape for landscape/square videos (like
+  mainstream video apps), and rotates back to portrait automatically when fullscreen is
+  exited — playback never stops or glitches through the rotation. Portrait videos are
+  never forced into a landscape frame. The fullscreen controls now also stay clear of
+  notches, camera cutouts, and gesture-navigation areas in both orientations.
+- New YouTube-style touch gestures on the video itself: tap the left third to rewind 10
+  seconds, tap the right third to skip forward 10 seconds (both with a brief on-screen
+  "-10s"/"+10s" bubble), and hold anywhere to play at 2x — releasing restores the exact
+  speed that was active before the hold, not just a default 1x.
+- Sleep timer options changed to 15/30/60 minutes, "End of this video," or Off.
+- Slightly more breathing room around all controls so nothing sits flush against the
+  screen edge.
+- **Verified live on a physical device (Pixel 7a)**: three different popup menus each
+  opened next to their own icon; left/right seek gestures measured pixel-exact (10
+  seconds each way); the hold-for-2x gesture engaged and released correctly, restoring a
+  genuinely non-default prior speed; fullscreen rotation to landscape and back to
+  portrait both worked with playback uninterrupted; Picture-in-Picture still works after
+  the gesture rewrite. Not exercised this session (no suitable test file): a 9:16
+  portrait source, and multi-audio-track/subtitle menus.
+
 ### Added — Player Redesign
 
 - The Player is now a dedicated, immersive playback screen instead of a sixth piece of

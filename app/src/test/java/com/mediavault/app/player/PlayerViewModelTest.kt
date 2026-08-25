@@ -392,12 +392,80 @@ class PlayerViewModelTest {
         val viewModel = viewModel("a")
         dispatcher.scheduler.runCurrent()
 
-        viewModel.onSleepTimerSelected(SleepTimerOption.MIN_10)
-        dispatcher.scheduler.advanceTimeBy(10 * 60_000L + 1_000L)
+        viewModel.onSleepTimerSelected(SleepTimerOption.MIN_15)
+        dispatcher.scheduler.advanceTimeBy(15 * 60_000L + 1_000L)
         dispatcher.scheduler.runCurrent()
 
         assertTrue(engine.pauseCalled)
         assertEquals(SleepTimerOption.OFF, viewModel.uiState.value.sleepTimer)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Long-press-to-2x gesture ------------------------------------------------------------
+
+    @Test
+    fun `engaging the long-press gesture jumps to 2x speed`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(playbackSpeed = 1.5f)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onLongPressSpeedEngaged()
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(2f, engine.state.value.playbackSpeed)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `releasing the long-press gesture restores the exact speed from before it, not just 1x`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(playbackSpeed = 1.5f)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onLongPressSpeedEngaged()
+        dispatcher.scheduler.runCurrent()
+        viewModel.onLongPressSpeedReleased()
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(1.5f, engine.state.value.playbackSpeed)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `engaging the long-press gesture twice in a row does not overwrite the remembered speed with 2x`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(playbackSpeed = 0.75f)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onLongPressSpeedEngaged()
+        dispatcher.scheduler.runCurrent()
+        viewModel.onLongPressSpeedEngaged() // e.g. a duplicate call — must not clobber the remembered pre-boost speed with the current (2x) one
+        dispatcher.scheduler.runCurrent()
+        viewModel.onLongPressSpeedReleased()
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(0.75f, engine.state.value.playbackSpeed)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `releasing without a prior engage is a no-op`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(playbackSpeed = 1f)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onLongPressSpeedReleased()
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(1f, engine.state.value.playbackSpeed)
         viewModel.cancelBackgroundWorkForTesting()
     }
 }

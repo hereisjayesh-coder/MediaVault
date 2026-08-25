@@ -48,6 +48,8 @@ class PlayerViewModel @Inject constructor(
 
     private var appliedPreferredAudioThisLoad = false
     private var pauseAtEndOfMedia = false
+    /** Speed to restore when a long-press-to-2x gesture releases; null when no long-press is active. */
+    private var speedBeforeLongPress: Float? = null
 
     /** The whole load-and-observe session, so a single cancel (real teardown or test cleanup) stops every child coroutine below. */
     private val sessionJob: Job
@@ -97,6 +99,7 @@ class PlayerViewModel @Inject constructor(
         playerEngine?.release()
         appliedPreferredAudioThisLoad = false
         pauseAtEndOfMedia = false
+        speedBeforeLongPress = null
         sleepTimerJob?.cancel()
         sleepTimerJob = null
 
@@ -195,6 +198,19 @@ class PlayerViewModel @Inject constructor(
 
     fun onSpeedSelected(speed: Float) {
         playerEngine?.setPlaybackSpeed(speed)
+    }
+
+    /** YouTube-style hold-for-2x gesture: remembers whatever speed was active so release can restore it exactly, not just reset to 1x. */
+    fun onLongPressSpeedEngaged() {
+        if (speedBeforeLongPress != null) return
+        speedBeforeLongPress = _uiState.value.playback?.playbackSpeed ?: 1f
+        playerEngine?.setPlaybackSpeed(2f)
+    }
+
+    fun onLongPressSpeedReleased() {
+        val previousSpeed = speedBeforeLongPress ?: return
+        speedBeforeLongPress = null
+        playerEngine?.setPlaybackSpeed(previousSpeed)
     }
 
     fun onAudioTrackSelected(trackId: String) {

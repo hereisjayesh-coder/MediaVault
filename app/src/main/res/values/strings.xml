@@ -145,11 +145,14 @@
     <string name="player_resize_original">Original</string>
     <string name="player_sleep_timer">Sleep timer</string>
     <string name="player_sleep_timer_off">Off</string>
-    <string name="player_sleep_timer_10">10 minutes</string>
+    <string name="player_sleep_timer_15">15 minutes</string>
     <string name="player_sleep_timer_30">30 minutes</string>
     <string name="player_sleep_timer_60">60 minutes</string>
     <string name="player_sleep_timer_end_of_media">End of this video</string>
     <string name="player_sleep_timer_remaining">Sleep in %1$s</string>
+    <string name="player_seek_feedback_back">-10s</string>
+    <string name="player_seek_feedback_forward">+10s</string>
+    <string name="player_speed_boost_active">2.0x speed</string>
     <string name="player_hub_title">Player</string>
     <string name="player_hub_continue_watching">Continue watching</string>
     <string name="player_hub_resume">Resume</string>

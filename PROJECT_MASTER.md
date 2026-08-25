@@ -771,7 +771,7 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the Player Redesign stage (including its on-device verification pass)._
+_Last updated: 2026-08-25, after the Player Controls & Gestures Polish stage (including its on-device verification pass)._
 
 * **Completed downloads are now managed MediaVault Library items, playable inside the
   app.** New downloads land in app-private storage by default (no SAF folder picker in
@@ -1349,6 +1349,62 @@ _Prior state, before the real DownloadEngine stage:_
     Speed/Loop/sleep-timer selection were code-reviewed and unit-tested but not
     individually tap-verified this pass, having already spent considerable device-testing
     time isolating and fixing the two layout bugs above.
+* **Player controls, popup positioning, and touch gestures polished** — a focused
+  follow-up to the Player Redesign stage above, fixing five specific UX gaps without
+  touching the download/library/FFmpeg engines.
+  - **Popup menus now anchor to their own trigger button** (Speed/Audio/Subtitle/
+    Aspect-ratio/Sleep-timer), instead of a shared, fixed screen position. Root cause:
+    each menu's `IconButton` and `DropdownMenu` were declared as loose siblings inside a
+    shared scrollable `Row`, so `DropdownMenu`'s `Popup` anchored to whatever position its
+    own composable slot happened to land at rather than the specific button pressed. Fixed
+    by a new `PopupMenuButton` composable that wraps a trigger + its `DropdownMenu` in one
+    `Box` each — the standard, documented Compose pattern for this — plus a shared
+    `MenuCheckItem` row (label + trailing check icon, replacing an appended `"✓"` string)
+    used by all five menus for consistent formatting. `DropdownMenu`'s built-in fade/scale
+    transition and in-bounds clamping were already there; nothing new was added for those.
+  - **Fullscreen now rotates to landscape for landscape/square content** (`ApplyLandscapeLock`,
+    `Activity.requestedOrientation` = `SCREEN_ORIENTATION_SENSOR_LANDSCAPE` on enter,
+    `SCREEN_ORIENTATION_UNSPECIFIED` on exit), matching mainstream video apps — safe
+    against Activity recreation since `orientation` is already in `MainActivity`'s
+    `android:configChanges` (added earlier for PiP). Portrait-aspect content is
+    deliberately never forced into landscape (would misuse the frame). The fullscreen
+    overlay controls (top bar + bottom controls) now also carry
+    `systemBarsPadding()`/`displayCutoutPadding()`, so they stay clear of a notch, punch
+    hole, or gesture-nav area in both orientations — the video surface itself stays true
+    edge-to-edge; only the *controls* are inset-safe.
+  - **YouTube-style gestures on the video surface**: tapping the left/right third
+    seeks -10s/+10s with a transient on-screen "-10s"/"+10s" bubble (auto-dismissing after
+    650ms); tapping the center third toggles the fullscreen overlay (unchanged); holding
+    anywhere jumps to 2x for the duration of the hold and restores the *exact* prior speed
+    (not just 1x) on release, with a "2.0x speed" pill shown while held. All three resolve
+    from a single `awaitEachGesture` per touch (never a separate tap detector layered under
+    a long-press one), so a real long-press can never also fire a stray seek/toggle
+    underneath it. `PlayerViewModel.onLongPressSpeedEngaged`/`onLongPressSpeedReleased`
+    remember whichever speed was active before the hold, including a non-default one.
+  - **Spacing polish**: base padding around the controls increased (12→16dp top bar,
+    16→20dp controls row) so nothing sits flush against a screen edge even before insets
+    are added; sleep timer options changed from 10/30/60/off/end-of-media to
+    15/30/60/off/end-of-video per this stage's explicit spec.
+  - **Verified live** (Pixel 7a, same Sintel file): Speed, Aspect-ratio, and Sleep-timer
+    menus each opened directly next to their own icon (not a shared corner) — confirmed
+    across three different icon positions in the same row. Sleep timer menu showed exactly
+    "Off / 15 minutes / 30 minutes / 60 minutes / End of this video". Left/right region
+    taps were verified pixel-exact while paused (2:54→2:44 on a left tap, 2:44→2:54 on the
+    following right tap), each with its feedback bubble visible on the correct side.
+    Holding the video showed the "2.0x speed" pill and audibly/visibly sped up playback;
+    releasing removed the pill and — confirmed via the Speed menu's own checkmark —
+    restored the exact pre-hold speed (1.25x, itself the result of an earlier real tap,
+    not a scripted 1x baseline), matching the "remember the real prior speed" requirement
+    more rigorously than a clean-1x test would have. Tapping fullscreen on the landscape
+    video rotated the device to landscape live, with playback continuing unbroken through
+    the rotation and both overlay bars showing correct margin from every screen edge;
+    exiting fullscreen rotated the device back to portrait and returned to the exact
+    embedded layout, also with playback unbroken throughout. Picture-in-Picture was
+    re-verified working after the gesture-detection rewrite (real floating system window,
+    correct content, no crash). **Not exercised live this session** (same missing-source
+    limitation as the prior stage): a 9:16/portrait source's fullscreen behavior, and
+    multi-audio-track/subtitle menus — Sintel still offers only one audio track and no
+    subtitles.
 
 Not yet started: torrent downloading, user-selected-folder/full-device media scanning
 (the Library only indexes MediaVault-managed downloads so far — see the private-library
@@ -1683,6 +1739,56 @@ State bullet for exactly what "verified live" and "not exercised live" mean for 
 stage (a 9:16 source, multi-audio-track switching, and embedded subtitles had no
 available test file this session and were not exercised on-device, unlike everything
 else in the checklist).
+
+---
+
+### 2026-08-25 — Player popup anchoring, fullscreen rotation, and gesture polish
+
+**Decision:** This stage is a scoped follow-up to the Player Redesign entry above,
+targeting five specific UX gaps rather than further architecture — wrapping each popup
+menu's trigger and `DropdownMenu` in a shared `Box` so it anchors to the actual button
+pressed, locking device orientation to landscape when fullscreen is entered on
+landscape/square content (restoring free rotation on exit), adding YouTube-style
+region-tap seek (-10s/+10s) and hold-for-2x gestures directly on the video surface, and
+tightening control spacing. No changes were made to `DownloadEngine`, `ExtractorEngine`,
+FFmpeg, or the Library data model — this stage touched only `app/ui/screens/player/`,
+`PlayerViewModel`, and `MainActivity`'s already-existing PiP-driven `configChanges`.
+
+**Why the popup anchoring bug happened:** `DropdownMenu` positions its `Popup` relative
+to whatever composable node hosts it, not "the sibling that was tapped." With each
+`IconButton`/`DropdownMenu` pair declared as loose siblings inside one shared scrollable
+`Row`, every menu's popup anchored to a position determined by the Row's own layout
+rather than the specific icon the user pressed — which one testing session generalized
+as "everything opens at a fixed corner." Wrapping trigger and menu together in one `Box`
+each is the standard, documented fix, confirmed live across three different icon
+positions in the same control row (Speed, Aspect-ratio, Sleep-timer each opened directly
+under their own icon, not a shared position).
+
+**Why orientation-locking instead of leaving rotation to the OS default:** the milestone
+asked for fullscreen to "behave correctly for both portrait and landscape" and for
+exiting fullscreen to "restore the previous orientation/state cleanly" — read as a
+request for the same auto-rotate-to-landscape behavior mainstream video apps already
+have, not just tolerating whatever orientation the device happens to be in. Portrait
+content is deliberately excluded from the lock (forcing a 9:16 video into a landscape
+frame would be wrong), matching how `VideoArea`'s own aspect-ratio branching already
+treats portrait content as "use available height in place" rather than "always
+letterbox like landscape does."
+
+**Why gestures resolve from one `awaitEachGesture` rather than two separate detectors:**
+a tap detector and a long-press detector layered on the same pointer input region can
+both react to the same touch stream unless one explicitly wins, risking a seek AND a
+speed-boost firing off the same finger-down. Racing `waitForUpOrCancellation()` against
+the long-press timeout inside a single gesture loop makes the two outcomes structurally
+exclusive — confirmed live: holding the video engaged 2x and only 2x (no stray seek),
+and quick left/right taps seeked exactly 10 seconds with no speed-boost side effect.
+
+**Consequence — verified live on a physical device (Pixel 7a), same session:** every
+item above was confirmed working with real taps/holds and real device rotation — see
+§34's Current Project State for the full walkthrough, including the two "the tap missed
+the actual button" false alarms this session's own testing hit (auto-hidden fullscreen
+controls being tapped after they'd already faded, and a scale-factor slip converting a
+landscape screenshot's on-screen position to a device coordinate) that turned out to be
+testing-methodology errors, not app bugs, once re-tested with correct timing/coordinates.
 
 ---
 
