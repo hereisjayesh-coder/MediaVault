@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
+import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.model.MediaFormat
 
 /** "596" -> "9:56", "3725" -> "1:02:05". Returns null when there's nothing to show. */
@@ -53,3 +54,39 @@ fun formatFormatSummary(format: MediaFormat): String {
     )
     return parts.joinToString(" • ")
 }
+
+/**
+ * e.g. "1080p60 • MP4 • avc1 • 92 MB • + audio [en]" for a paired option, or the same shape as
+ * [formatFormatSummary] for a direct one. [DownloadOption.combinedEstimatedSizeBytes] is already
+ * the video+audio sum for paired options — never re-derived here.
+ */
+fun downloadOptionSummary(option: DownloadOption): String {
+    val video = option.videoFormat
+    val audio = option.audioFormat
+
+    val resolutionAndFps = listOfNotNull(
+        video?.resolutionLabel,
+        video?.fps?.takeIf { it > 0 }?.let { "${it}fps" },
+    ).joinToString(" ").ifBlank { null }
+
+    val codec = video?.videoCodec ?: audio?.audioCodec
+
+    val audioLabel = when {
+        video != null && audio != null -> "+ audio" + languageSuffix(audio.languageCode)
+        video == null && audio != null -> "audio only" + (audio.audioCodec?.let { " ($it)" } ?: "") + languageSuffix(audio.languageCode)
+        video != null && audio == null -> "video only"
+        else -> null
+    }
+
+    val parts = listOfNotNull(
+        resolutionAndFps,
+        option.outputContainer.takeIf { it != "unknown" }?.uppercase(),
+        codec,
+        formatFileSizeLabel(option.combinedEstimatedSizeBytes),
+        audioLabel,
+    )
+    return parts.joinToString(" • ")
+}
+
+/** Never invents a language name — just shows the raw code the source reported, exactly like [com.mediavault.core.model.MediaTrackInfo]'s own contract. */
+private fun languageSuffix(languageCode: String?): String = languageCode?.let { " [$it]" }.orEmpty()

@@ -54,8 +54,14 @@ data class DownloadRequest(
     val taskId: String,
     /** Webpage URL to (re-)extract from — not a raw CDN URL, which may be short-lived/signed. */
     val sourceUrl: String,
-    /** Which of the analyzed formats to fetch. */
+    /** Which of the analyzed formats to fetch — the video-only format id when [audioFormatId] is set, otherwise the direct (muxed or audio-only) format. */
     val formatId: String,
+    /**
+     * Set only when [formatId] is a video-only format that needs a separate audio stream
+     * remuxed in afterward — see `DownloadOption.requiresProcessing` and `MediaProcessor`. Null
+     * means this is a direct download exactly as before FFmpeg existed.
+     */
+    val audioFormatId: String? = null,
     val title: String,
     val sourceName: String?,
     val thumbnailUrl: String?,

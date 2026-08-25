@@ -32,3 +32,16 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         db.execSQL("ALTER TABLE media_items ADD COLUMN thumbnailUrl TEXT")
     }
 }
+
+/**
+ * Adds the second (audio) stream's format id and cache path a split video+audio download needs
+ * to remux with FFmpeg — see `MediaProcessor`/`DownloadOption`. Purely additive; both columns
+ * are null for every pre-existing task, which is exactly the "direct download" behavior those
+ * rows already had.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN audioFormatId TEXT")
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN audioLocalCachePath TEXT")
+    }
+}

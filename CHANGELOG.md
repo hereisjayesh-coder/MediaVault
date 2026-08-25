@@ -5,6 +5,33 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — FFmpeg Merge Support
+
+- Video-only formats (the common case for high-quality streams) are no longer shown
+  disabled with "Requires merging — not available yet." A new `MediaProcessor`
+  abstraction, backed by a maintained FFmpegKit fork (LGPL v3), remuxes a
+  separately-downloaded video-only and audio-only stream into one file — always a
+  stream-copy (`-c copy`), never a re-encode, so there's no quality loss and no
+  transcode time/battery cost.
+- The single-item format list now offers one selectable option per resolution *and*
+  per available audio language, never just "the best" language — no track is silently
+  dropped. A video-only format with genuinely no audio track anywhere is still shown,
+  with its real resolution and size, but marked unavailable rather than hidden.
+- Output container is chosen automatically and never guessed: MP4 video pairs to MP4,
+  WEBM to WEBM, any other combination falls back to MKV — always a safe remux target,
+  never a transcode.
+- Downloads screen gained a distinct "Merging" status for the brief remux step after
+  both streams finish downloading; a split video+audio download can be cancelled but
+  not paused mid-merge (a stream-copy remux is normally seconds long), and a task
+  interrupted mid-merge by an app kill safely restarts both downloads and re-merges
+  rather than being left stuck.
+- Room database bumped to schema version 4 with another real, additive migration (the
+  second stream's format id and cache path) — every pre-existing download row is
+  unaffected, exactly as before this feature existed.
+- **Not yet verified on a physical device this session** — verified via
+  `./gradlew assembleDebug` and the full unit test suite (143 tests, 0 failures) only;
+  see `PROJECT_MASTER.md` §34/§37 for the outstanding on-device verification step.
+
 ### Added — Private Library + In-App Playback Foundation
 
 - Completed downloads now become real, playable Library items instead of just files on

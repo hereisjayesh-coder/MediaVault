@@ -16,4 +16,9 @@ data class MediaFormat(
     val hasAudio: Boolean,
     /** False for streaming protocols (HLS/DASH segments, ...) where a paused download can't safely continue from a byte offset. */
     val supportsResume: Boolean = false,
+    /** Numeric height/width, when the source reports them — used to sort/group resolutions (4K/1440p/1080p/...) reliably, unlike [resolutionLabel] which is just display text. Null for audio-only formats. */
+    val heightPx: Int? = null,
+    val widthPx: Int? = null,
+    /** Only ever what the source reports — never guessed. See [MediaTrackInfo]'s same contract. */
+    val languageCode: String? = null,
 )

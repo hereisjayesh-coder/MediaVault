@@ -25,6 +25,9 @@ import com.mediavault.core.domain.extractor.ExtractionStage
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.network.NetworkPolicyDecision
 import com.mediavault.core.domain.network.NetworkPolicyManager
+import com.mediavault.core.domain.processing.MediaProcessor
+import com.mediavault.core.domain.processing.MergeRequest
+import com.mediavault.core.domain.processing.ProcessingEvent
 import com.mediavault.core.model.DownloadStatus
 import com.mediavault.core.model.MediaType
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -63,6 +66,7 @@ class MediaVaultDownloadEngine @Inject constructor(
     private val deviceStatusProvider: DeviceStatusProvider,
     private val foregroundServiceStarter: DownloadForegroundServiceStarter,
     private val mediaVaultStorage: MediaVaultStorage,
+    private val mediaProcessor: MediaProcessor,
 ) : DownloadEngine {
 
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -70,14 +74,16 @@ class MediaVaultDownloadEngine @Inject constructor(
     private val queueMutex = Mutex()
 
     /**
-     * Resets anything left DOWNLOADING/PROCESSING by a killed process back to PAUSED, resumes
-     * any playlist whose format resolution was interrupted mid-flight (ANALYZING tasks with no
-     * live coroutine behind them any more), then resumes the queue.
+     * Resets anything left DOWNLOADING/PROCESSING/MERGING by a killed process back to PAUSED
+     * (a split-stream task interrupted mid-merge just re-downloads both streams and re-merges
+     * on resume — wasteful but safe, same as any other non-resumable task restarting clean),
+     * resumes any playlist whose format resolution was interrupted mid-flight (ANALYZING tasks
+     * with no live coroutine behind them any more), then resumes the queue.
      */
     fun recoverAfterProcessDeath() {
         engineScope.launch {
             dao.reassignStatus(
-                fromStatuses = listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING),
+                fromStatuses = listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING, DownloadStatus.MERGING),
                 newStatus = DownloadStatus.PAUSED,
                 nowMs = System.currentTimeMillis(),
             )
@@ -99,6 +105,7 @@ class MediaVaultDownloadEngine @Inject constructor(
                     thumbnailUrl = request.thumbnailUrl,
                     mediaType = request.mediaType,
                     formatId = request.formatId,
+                    audioFormatId = request.audioFormatId,
                     container = request.container,
                     destinationTreeUri = null,
                     destinationUri = null,
@@ -206,13 +213,26 @@ class MediaVaultDownloadEngine @Inject constructor(
         extractorEngine.cancel(task.id)
         // Guards against a race where the transfer finishes (or fails) in the moment between
         // the user tapping Pause and this running — a terminal status must never be clobbered.
+        // MERGING isn't pausable (a stream-copy remux of already-downloaded files is normally a
+        // few seconds) — Pause is a no-op there; Cancel (below) still works mid-merge.
         if (task.status != DownloadStatus.DOWNLOADING && task.status != DownloadStatus.PROCESSING) return
         if (!task.canResume) {
             // This format's protocol can't safely continue from a byte offset (e.g. HLS/DASH
             // segments) — discard the partial file now so a later "resume" is an honest clean
-            // restart instead of silently corrupting a half-written file.
+            // restart instead of silently corrupting a half-written file. A split video+audio
+            // task is never resumable (see enqueue()'s canResume=false for paired requests), so
+            // this branch also always applies to those, clearing both cache files.
             task.localCachePath?.let { runCatching { File(it).delete() } }
-            dao.update(task.copy(status = DownloadStatus.PAUSED, bytesTransferred = 0, localCachePath = null, updatedAtEpochMs = System.currentTimeMillis()))
+            task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+            dao.update(
+                task.copy(
+                    status = DownloadStatus.PAUSED,
+                    bytesTransferred = 0,
+                    localCachePath = null,
+                    audioLocalCachePath = null,
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ),
+            )
         } else {
             dao.update(task.copy(status = DownloadStatus.PAUSED, updatedAtEpochMs = System.currentTimeMillis()))
         }
@@ -243,10 +263,18 @@ class MediaVaultDownloadEngine @Inject constructor(
 
     private suspend fun cancelTask(task: DownloadTaskEntity) {
         extractorEngine.cancel(task.id)
+        mediaProcessor.cancel(task.id)
         activeJobs[task.id]?.cancel()
         if (task.status == DownloadStatus.COMPLETED || task.status == DownloadStatus.CANCELLED) return
         task.localCachePath?.let { runCatching { File(it).delete() } }
-        dao.update(task.copy(status = DownloadStatus.CANCELLED, updatedAtEpochMs = System.currentTimeMillis()))
+        task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+        dao.update(
+            task.copy(
+                status = DownloadStatus.CANCELLED,
+                audioLocalCachePath = null,
+                updatedAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
     }
 
     override fun retry(taskId: String) {
@@ -288,7 +316,7 @@ class MediaVaultDownloadEngine @Inject constructor(
 
     private suspend fun processQueue() {
         val next = queueMutex.withLock {
-            val running = dao.getByStatuses(listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING))
+            val running = dao.getByStatuses(listOf(DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING, DownloadStatus.MERGING))
             if (running.isNotEmpty()) return
             dao.getByStatuses(listOf(DownloadStatus.QUEUED)).firstOrNull()
         } ?: return
@@ -324,6 +352,15 @@ class MediaVaultDownloadEngine @Inject constructor(
             return
         }
 
+        if (task.audioFormatId != null) {
+            runSplitStreamDownload(task)
+        } else {
+            runSingleStreamDownload(task)
+        }
+    }
+
+    /** The original, unmodified direct-download path — a muxed or audio-only format downloaded straight to its final container, no processing. */
+    private suspend fun runSingleStreamDownload(task: DownloadTaskEntity) {
         val cachePath = task.localCachePath
             ?: File(context.cacheDir, "downloads/${task.id}.${task.container ?: "bin"}").path
         updateTask(task.id) { it.copy(status = DownloadStatus.DOWNLOADING, localCachePath = cachePath) }
@@ -354,6 +391,143 @@ class MediaVaultDownloadEngine @Inject constructor(
         // status those already set (PAUSED/CANCELLED) stands; there's nothing more to do here.
     }
 
+    /**
+     * Downloads the video-only stream, then the audio-only stream, then hands both to
+     * [mediaProcessor] to remux — see `DownloadOption.requiresProcessing`/`MediaProcessor`.
+     * Combined progress is reported throughout: [DownloadTaskEntity.totalBytes] is the combined
+     * estimate set at enqueue time and never overwritten mid-flight, so the bar doesn't jump
+     * around as each phase reports its own (smaller) total.
+     */
+    private suspend fun runSplitStreamDownload(task: DownloadTaskEntity) {
+        val videoCachePath = task.localCachePath
+            ?: File(context.cacheDir, "downloads/${task.id}.video.tmp").path
+        val audioCachePath = task.audioLocalCachePath
+            ?: File(context.cacheDir, "downloads/${task.id}.audio.tmp").path
+        updateTask(task.id) {
+            it.copy(status = DownloadStatus.DOWNLOADING, localCachePath = videoCachePath, audioLocalCachePath = audioCachePath)
+        }
+
+        val videoOutcome = collectStream(task.id, task.sourceUrl, task.formatId.orEmpty(), videoCachePath, baseBytesTransferred = 0L)
+        when (videoOutcome) {
+            is StreamOutcome.Failed -> {
+                fail(task.id, videoOutcome.error)
+                cleanupSplitCache(videoCachePath, audioCachePath)
+                return
+            }
+            StreamOutcome.Stopped -> return // pause()/cancel() already set the terminal DB state
+            StreamOutcome.Completed -> Unit
+        }
+
+        val videoBytes = runCatching { File(videoCachePath).length() }.getOrDefault(0L)
+        val audioOutcome = collectStream(task.id, task.sourceUrl, task.audioFormatId.orEmpty(), audioCachePath, baseBytesTransferred = videoBytes)
+        when (audioOutcome) {
+            is StreamOutcome.Failed -> {
+                fail(task.id, audioOutcome.error)
+                cleanupSplitCache(videoCachePath, audioCachePath)
+                return
+            }
+            StreamOutcome.Stopped -> return
+            StreamOutcome.Completed -> Unit
+        }
+
+        mergeAndFinish(task.id, videoCachePath, audioCachePath)
+    }
+
+    private sealed class StreamOutcome {
+        object Completed : StreamOutcome()
+        object Stopped : StreamOutcome()
+        data class Failed(val error: AppError) : StreamOutcome()
+    }
+
+    /** Downloads one stream, reporting combined progress as `baseBytesTransferred + this stream's own bytes`. */
+    private suspend fun collectStream(
+        taskId: String,
+        sourceUrl: String,
+        formatId: String,
+        cachePath: String,
+        baseBytesTransferred: Long,
+    ): StreamOutcome {
+        var outcome: StreamOutcome = StreamOutcome.Completed
+        val request = ExtractionRequest(taskId = taskId, sourceUrl = sourceUrl, formatId = formatId, destinationPath = cachePath)
+
+        extractorEngine.download(request).collect { event ->
+            when (event) {
+                is ExtractionEvent.Progress -> updateTask(taskId) {
+                    it.copy(
+                        status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
+                        bytesTransferred = baseBytesTransferred + event.bytesTransferred,
+                        totalBytes = it.totalBytes ?: event.totalBytes,
+                    )
+                }
+
+                is ExtractionEvent.Completed -> outcome = StreamOutcome.Completed
+                is ExtractionEvent.Failed -> outcome = StreamOutcome.Failed(AppError.Unknown(event.message, event.cause))
+            }
+        }
+
+        val current = dao.getById(taskId)
+        if (current != null && current.status != DownloadStatus.DOWNLOADING && current.status != DownloadStatus.PROCESSING) {
+            return StreamOutcome.Stopped
+        }
+        return outcome
+    }
+
+    private fun cleanupSplitCache(videoCachePath: String, audioCachePath: String) {
+        runCatching { File(videoCachePath).delete() }
+        runCatching { File(audioCachePath).delete() }
+    }
+
+    /** Remuxes the two downloaded streams, then hands the merged file to the same [finish] every direct download already uses to reach the Library. */
+    private suspend fun mergeAndFinish(taskId: String, videoCachePath: String, audioCachePath: String) {
+        val task = dao.getById(taskId) ?: return
+        updateTask(taskId) { it.copy(status = DownloadStatus.MERGING) }
+
+        val outputContainer = task.container ?: "mkv"
+        val mergedPath = File(context.cacheDir, "downloads/$taskId.merged.$outputContainer").path
+
+        val mergeRequest = MergeRequest(
+            taskId = taskId,
+            videoPath = videoCachePath,
+            audioPath = audioCachePath,
+            outputPath = mergedPath,
+            outputContainer = outputContainer,
+            estimatedDurationSeconds = task.durationSeconds,
+        )
+
+        var result: AppResult<String>? = null
+        mediaProcessor.merge(mergeRequest).collect { event ->
+            when (event) {
+                is ProcessingEvent.Progress -> updateTask(taskId) { it.copy(status = DownloadStatus.MERGING) }
+                is ProcessingEvent.Completed -> result = AppResult.Success(event.outputPath)
+                is ProcessingEvent.Failed -> result = AppResult.Failure(AppError.Unknown(event.message, event.cause))
+            }
+        }
+
+        val current = dao.getById(taskId)
+        if (current != null && current.status != DownloadStatus.MERGING) {
+            // pause()/cancel() raced the merge and already set a terminal state — leave it.
+            runCatching { File(mergedPath).delete() }
+            return
+        }
+
+        when (val outcome = result) {
+            null -> {
+                fail(taskId, AppError.Unknown("Merging was interrupted before it could finish."))
+                cleanupSplitCache(videoCachePath, audioCachePath)
+                runCatching { File(mergedPath).delete() }
+            }
+            is AppResult.Failure -> {
+                fail(taskId, outcome.error)
+                cleanupSplitCache(videoCachePath, audioCachePath)
+                runCatching { File(mergedPath).delete() }
+            }
+            is AppResult.Success -> {
+                cleanupSplitCache(videoCachePath, audioCachePath)
+                finish(taskId, outcome.data)
+            }
+        }
+    }
+
     private suspend fun finish(taskId: String, cacheOutputPath: String) {
         updateTask(taskId) { it.copy(status = DownloadStatus.PROCESSING) }
         val task = dao.getById(taskId) ?: return
@@ -370,6 +544,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             status = DownloadStatus.COMPLETED,
             destinationUri = finalUri,
             localCachePath = null,
+            audioLocalCachePath = null,
             errorMessage = null,
             updatedAtEpochMs = now,
         )

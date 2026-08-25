@@ -97,6 +97,8 @@ dependencies {
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.datasource)
 
+    implementation(libs.ffmpeg.kit)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 

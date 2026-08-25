@@ -66,6 +66,7 @@ import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.util.NetworkStatus
+import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
@@ -93,7 +94,7 @@ fun HomeScreen(
         onUrlChanged = viewModel::onUrlChanged,
         onAnalyzeClick = viewModel::analyze,
         onCancelClick = viewModel::cancelInFlightAnalysis,
-        onFormatSelected = viewModel::onFormatSelected,
+        onDownloadOptionSelected = viewModel::onDownloadOptionSelected,
         onDownloadClicked = viewModel::onDownloadClicked,
         onPlaylistItemTapped = viewModel::onPlaylistItemTapped,
         onBeginRangeSelection = viewModel::beginRangeSelection,
@@ -115,7 +116,7 @@ private fun HomeScreenContent(
     onUrlChanged: (String) -> Unit,
     onAnalyzeClick: () -> Unit,
     onCancelClick: () -> Unit,
-    onFormatSelected: (MediaFormat) -> Unit,
+    onDownloadOptionSelected: (DownloadOption) -> Unit,
     onDownloadClicked: () -> Unit,
     onPlaylistItemTapped: (PlaylistItem) -> Unit,
     onBeginRangeSelection: () -> Unit,
@@ -166,8 +167,9 @@ private fun HomeScreenContent(
             is ExtractionResult.Single -> item {
                 AnalysisResultCard(
                     result = result.media,
+                    downloadOptions = uiState.downloadOptions,
                     selectedFormatId = uiState.selectedFormatId,
-                    onFormatSelected = onFormatSelected,
+                    onDownloadOptionSelected = onDownloadOptionSelected,
                     onDownloadClicked = onDownloadClicked,
                 )
             }
@@ -503,8 +505,9 @@ private fun MessageCard(message: String, isError: Boolean) {
 @Composable
 private fun AnalysisResultCard(
     result: MediaAnalysisResult,
+    downloadOptions: List<DownloadOption>,
     selectedFormatId: String?,
-    onFormatSelected: (MediaFormat) -> Unit,
+    onDownloadOptionSelected: (DownloadOption) -> Unit,
     onDownloadClicked: () -> Unit,
 ) {
     MediaVaultCard {
@@ -524,21 +527,19 @@ private fun AnalysisResultCard(
             }
         }
 
-        if (result.formats.isNotEmpty()) {
+        if (downloadOptions.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.home_select_format),
                 style = MaterialTheme.typography.labelLarge,
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                result.formats
-                    .sortedByDescending { it.estimatedSizeBytes ?: 0L }
-                    .forEach { format ->
-                        FormatRow(
-                            format = format,
-                            isSelected = format.formatId == selectedFormatId,
-                            onClick = { onFormatSelected(format) },
-                        )
-                    }
+                downloadOptions.forEach { option ->
+                    DownloadOptionRow(
+                        option = option,
+                        isSelected = option.id == selectedFormatId,
+                        onClick = { onDownloadOptionSelected(option) },
+                    )
+                }
             }
 
             Button(
@@ -811,6 +812,36 @@ private fun FormatRow(format: MediaFormat, isSelected: Boolean, onClick: () -> U
                     text = stringResource(R.string.home_format_requires_merge),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = option.isSelectable, onClick = onClick)
+            .alpha(if (option.isSelectable) 1f else 0.5f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = isSelected, onClick = onClick, enabled = option.isSelectable)
+        Column {
+            Text(
+                text = downloadOptionSummary(option),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            val reason = option.unavailableReason
+            if (reason != null) {
+                Text(text = reason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+            } else if (option.requiresProcessing) {
+                Text(
+                    text = stringResource(R.string.home_format_will_merge),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         }

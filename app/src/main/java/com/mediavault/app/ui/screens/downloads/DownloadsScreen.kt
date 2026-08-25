@@ -322,7 +322,7 @@ private fun DownloadTaskCard(
                     color = statusColor(task.status),
                 )
 
-                if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.PROCESSING) {
+                if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.PROCESSING || task.status == DownloadStatus.MERGING) {
                     val progressFraction = task.totalBytes?.takeIf { it > 0 }
                         ?.let { total -> (task.bytesTransferred.toFloat() / total).coerceIn(0f, 1f) }
                     if (progressFraction != null) {
@@ -352,6 +352,14 @@ private fun DownloadTaskCard(
                             OutlinedButton(onClick = { onPause(task.taskId) }) {
                                 Text(stringResource(R.string.downloads_action_pause))
                             }
+                            OutlinedButton(onClick = { onCancel(task.taskId) }) {
+                                Text(stringResource(R.string.downloads_action_cancel))
+                            }
+                        }
+
+                        // Not pausable — a stream-copy remux of already-downloaded files is
+                        // normally a few seconds — but still cancellable mid-merge.
+                        DownloadStatus.MERGING -> {
                             OutlinedButton(onClick = { onCancel(task.taskId) }) {
                                 Text(stringResource(R.string.downloads_action_cancel))
                             }
@@ -411,7 +419,8 @@ private fun statusLabel(status: DownloadStatus): String = when (status) {
     DownloadStatus.QUEUED -> "Queued"
     DownloadStatus.ANALYZING -> "Checking quality…"
     DownloadStatus.DOWNLOADING -> "Downloading"
-    DownloadStatus.PROCESSING, DownloadStatus.MERGING -> "Processing"
+    DownloadStatus.PROCESSING -> "Processing"
+    DownloadStatus.MERGING -> "Merging"
     DownloadStatus.COMPLETED -> "Completed"
     DownloadStatus.PAUSED -> "Paused"
     DownloadStatus.CANCELLED -> "Cancelled"

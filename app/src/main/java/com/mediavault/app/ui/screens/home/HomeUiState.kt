@@ -1,6 +1,7 @@
 package com.mediavault.app.ui.screens.home
 
 import com.mediavault.app.util.NetworkStatus
+import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.model.MediaFormat
@@ -16,7 +17,9 @@ data class HomeUiState(
     /** Real device status (storage free space, network transport) — read once when Home loads. */
     val freeStorageBytes: Long? = null,
     val networkStatus: NetworkStatus? = null,
-    /** The one format id the user has chosen for a [ExtractionResult.Single] result, if any. */
+    /** [ExtractionResult.Single.media.formats] paired/flattened into what the screen actually shows — see `buildDownloadOptions`. */
+    val downloadOptions: List<DownloadOption> = emptyList(),
+    /** The [DownloadOption.id] the user has chosen for a [ExtractionResult.Single] result, if any. */
     val selectedFormatId: String? = null,
     /** True once a download has just been queued, so the screen can offer to jump to Downloads. */
     val justQueued: Boolean = false,

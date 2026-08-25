@@ -101,6 +101,7 @@ class MediaVaultDownloadEngineTest {
         status: DownloadStatus,
         playlistId: String? = null,
         formatId: String? = "f1",
+        audioFormatId: String? = null,
     ) = DownloadTaskEntity(
         id = "t1",
         sourceUrl = "https://example.com/a",
@@ -109,6 +110,7 @@ class MediaVaultDownloadEngineTest {
         thumbnailUrl = null,
         mediaType = MediaType.VIDEO,
         formatId = formatId,
+        audioFormatId = audioFormatId,
         container = "mp4",
         destinationTreeUri = "content://tree/x",
         destinationUri = null,
@@ -156,6 +158,23 @@ class MediaVaultDownloadEngineTest {
         assertNull(sampleTask(DownloadStatus.COMPLETED).retryNextStatusOrNull())
         assertNull(sampleTask(DownloadStatus.DOWNLOADING).retryNextStatusOrNull())
         assertNull(sampleTask(DownloadStatus.QUEUED).retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a failed split video+audio task retries straight into QUEUED, same as any other direct task`() {
+        // Not a playlist task, so retryNextStatusOrNull() only looks at playlistId/formatId —
+        // audioFormatId being set doesn't change which status a retry lands on. The engine's
+        // runSplitStreamDownload then re-downloads both streams and re-merges from QUEUED.
+        val task = sampleTask(DownloadStatus.FAILED, playlistId = null, formatId = "v1", audioFormatId = "a1")
+
+        assertEquals(DownloadStatus.QUEUED, task.retryNextStatusOrNull())
+    }
+
+    @Test
+    fun `a task stuck MERGING when the process died is not retryable until it's paused`() {
+        // MERGING isn't FAILED or CANCELLED — retryNextStatusOrNull() correctly refuses it;
+        // recoverAfterProcessDeath() is what reassigns a stuck MERGING task to PAUSED first.
+        assertNull(sampleTask(DownloadStatus.MERGING, formatId = "v1", audioFormatId = "a1").retryNextStatusOrNull())
     }
 
     // --- Process-death recovery ---------------------------------------------------------

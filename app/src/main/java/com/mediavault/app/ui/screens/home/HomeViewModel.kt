@@ -5,10 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
+import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.download.DownloadRequest
 import com.mediavault.core.domain.download.PlaylistDownloadItem
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
+import com.mediavault.core.domain.download.buildDownloadOptions
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
@@ -72,6 +74,7 @@ class HomeViewModel @Inject constructor(
                 errorMessage = null,
                 infoMessage = null,
                 result = null,
+                downloadOptions = emptyList(),
                 playlistSelection = PlaylistSelectionState(),
                 selectedFormatId = null,
                 justQueued = false,
@@ -81,7 +84,8 @@ class HomeViewModel @Inject constructor(
         analyzeJob = viewModelScope.launch {
             when (val outcome = extractorEngine.analyze(url, taskId)) {
                 is AppResult.Success -> _uiState.update {
-                    it.copy(isAnalyzing = false, result = outcome.data, errorMessage = null)
+                    val options = (outcome.data as? ExtractionResult.Single)?.media?.formats?.let(::buildDownloadOptions).orEmpty()
+                    it.copy(isAnalyzing = false, result = outcome.data, downloadOptions = options, errorMessage = null)
                 }
 
                 is AppResult.Failure -> _uiState.update {
@@ -104,9 +108,9 @@ class HomeViewModel @Inject constructor(
 
     // --- Single-item format selection & download --------------------------------------
 
-    fun onFormatSelected(format: MediaFormat) {
-        if (!format.isSelectableForDownload()) return
-        _uiState.update { it.copy(selectedFormatId = format.formatId, justQueued = false) }
+    fun onDownloadOptionSelected(option: DownloadOption) {
+        if (!option.isSelectable) return
+        _uiState.update { it.copy(selectedFormatId = option.id, justQueued = false) }
     }
 
     /** Called by the screen when Download is tapped. Downloads are app-private by default — no folder picker needed. */
@@ -121,24 +125,30 @@ class HomeViewModel @Inject constructor(
 
     private fun enqueueSelectedFormat() {
         val media = (_uiState.value.result as? ExtractionResult.Single)?.media ?: return
-        val formatId = _uiState.value.selectedFormatId ?: return
-        val format = media.formats.firstOrNull { it.formatId == formatId } ?: return
+        val optionId = _uiState.value.selectedFormatId ?: return
+        val option = _uiState.value.downloadOptions.firstOrNull { it.id == optionId } ?: return
+        // Direct: whichever of the two is present (a muxed format sets only videoFormat; an
+        // audio-only format sets only audioFormat). Paired: always the video-only format —
+        // DownloadRequest.formatId is documented as "the video format when audioFormatId is set".
+        val primaryFormat = option.videoFormat ?: option.audioFormat ?: return
         val sourceUrl = media.webpageUrl ?: _uiState.value.url.trim()
 
         downloadEngine.enqueue(
             DownloadRequest(
                 taskId = UUID.randomUUID().toString(),
                 sourceUrl = sourceUrl,
-                formatId = format.formatId,
+                formatId = primaryFormat.formatId,
+                audioFormatId = option.audioFormat?.formatId.takeIf { option.requiresProcessing },
                 title = media.title,
                 sourceName = media.sourceName,
                 thumbnailUrl = media.thumbnailUrl,
-                container = format.container,
-                mediaType = if (format.hasVideo) MediaType.VIDEO else MediaType.AUDIO,
-                expectedSizeBytes = format.estimatedSizeBytes,
+                container = option.outputContainer,
+                mediaType = if (option.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
+                expectedSizeBytes = option.combinedEstimatedSizeBytes,
                 durationSeconds = media.durationSeconds,
-                resolutionLabel = format.resolutionLabel,
-                canResume = format.supportsResume,
+                resolutionLabel = option.videoFormat?.resolutionLabel,
+                // A split video+audio task is never byte-offset-resumable — see MediaVaultDownloadEngine's pause/cancel handling.
+                canResume = if (option.requiresProcessing) false else primaryFormat.supportsResume,
                 sourceMediaId = media.id,
             ),
         )

@@ -19,6 +19,7 @@ planned.
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) (pinned `2026.8.19`) | Media extraction backend behind `ExtractorEngine`, run via Chaquopy | Unlicense |
 | [Chaquopy](https://chaquo.com/chaquopy/) (`17.0.0`) | Embeds a Python interpreter in the app so yt-dlp (a Python project) can run on Android | MIT License (open-sourced as of v12.0.1) |
 | [Coil](https://coil-kt.github.io/coil/) | Thumbnail image loading in Compose | Apache License 2.0 |
+| [FFmpegKit](https://github.com/moizhassankh/ffmpeg-kit-android-16KB) (`com.moizhassan.ffmpeg:ffmpeg-kit-16kb`, `6.1.1`) | Remuxes a separately-downloaded video-only and audio-only stream into one playable file (`-c copy` only — MediaVault never transcodes) behind `MediaProcessor`/`FFmpegMediaProcessor` | GNU Lesser General Public License v3.0 |
 
 MediaVault deliberately chose Chaquopy over the more common `youtubedl-android` wrapper
 (a ready-made Kotlin API around a bundled yt-dlp binary) because that wrapper is
@@ -38,7 +39,6 @@ their code is vendored or depended upon.
 
 | Project | Planned purpose | License |
 |---|---|---|
-| [FFmpeg](https://ffmpeg.org/) | Media processing/transcoding/muxing backend | LGPL v2.1+ / GPL v2+ depending on build configuration |
 | [libtorrent](https://www.libtorrent.org/) | Torrent/magnet backend behind `TorrentEngine` | BSD 3-Clause |
 
 MediaVault does not redistribute modified copies of the above projects' source code.
@@ -48,7 +48,12 @@ license text.
 
 ## A note on FFmpeg licensing
 
-FFmpeg's effective license depends on which components are compiled in. If GPL-licensed
-components are ever enabled, this project's distribution terms for the affected binaries
-will be updated to comply with the GPL. This will be documented here before any such
-build is shipped.
+MediaVault depends on FFmpegKit (see the table above) purely as a prebuilt Maven `.aar`
+dependency — no FFmpeg source is vendored or modified in this repository. The specific
+build MediaVault pulls in (`ffmpeg-kit-16kb`) is published under the LGPL v3, which
+FFmpegKit's underlying FFmpeg build satisfies without requiring any GPL-licensed
+components, and MediaVault's own usage (`FFmpegMediaProcessor`) only ever calls FFmpeg
+with `-c copy` — a stream-copy remux, never a re-encode — so no GPL-only codec or filter
+is invoked. If a future stage ever needs a GPL-only FFmpeg component, this project's
+distribution terms for the affected binaries will be updated to comply with the GPL
+first, and that change will be documented here before any such build is shipped.

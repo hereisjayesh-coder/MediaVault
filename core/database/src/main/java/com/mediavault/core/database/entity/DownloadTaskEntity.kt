@@ -16,14 +16,22 @@ data class DownloadTaskEntity(
     val thumbnailUrl: String?,
     val mediaType: MediaType,
     val formatId: String?,
+    /**
+     * Set only when [formatId] is a video-only format needing a separate audio stream remuxed
+     * in — see `MediaProcessor`. Null means this task downloads directly, exactly as before
+     * FFmpeg existed.
+     */
+    val audioFormatId: String? = null,
     /** File extension/container of the selected format, e.g. "mp4" — used to name the saved file. */
     val container: String?,
     /** SAF tree URI of the user-selected destination folder, chosen once up front. */
     val destinationTreeUri: String?,
     /** SAF file URI of the finished file — set only once [status] is COMPLETED. */
     val destinationUri: String?,
-    /** Real filesystem path in app-private storage the bytes are/were written to mid-transfer. */
+    /** Real filesystem path in app-private storage the video (or, for a direct task, the only) stream's bytes are/were written to mid-transfer. */
     val localCachePath: String?,
+    /** Cache path for the separately-downloaded audio stream, when [audioFormatId] is set. Null for direct tasks. */
+    val audioLocalCachePath: String? = null,
     val status: DownloadStatus,
     val bytesTransferred: Long,
     val totalBytes: Long?,

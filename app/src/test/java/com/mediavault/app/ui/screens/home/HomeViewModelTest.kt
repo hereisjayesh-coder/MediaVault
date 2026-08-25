@@ -281,14 +281,15 @@ class HomeViewModelTest {
     // --- Format selection & download -------------------------------------------------
 
     @Test
-    fun `video-only formats cannot be selected`() = runTest {
+    fun `a video-only format with no compatible audio cannot be selected`() = runTest {
         val videoOnly = sampleFormat("v1", hasVideo = true, hasAudio = false)
         fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(videoOnly))))
         viewModel.onUrlChanged("https://example.com/video")
         viewModel.analyze()
         dispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.onFormatSelected(videoOnly)
+        val option = viewModel.uiState.value.downloadOptions.single()
+        viewModel.onDownloadOptionSelected(option)
 
         assertNull(viewModel.uiState.value.selectedFormatId)
     }
@@ -301,7 +302,8 @@ class HomeViewModelTest {
         viewModel.analyze()
         dispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.onFormatSelected(muxed)
+        val option = viewModel.uiState.value.downloadOptions.single { it.id == "m1" }
+        viewModel.onDownloadOptionSelected(option)
 
         assertEquals("m1", viewModel.uiState.value.selectedFormatId)
     }
@@ -315,7 +317,8 @@ class HomeViewModelTest {
         viewModel.onUrlChanged("https://example.com/video")
         viewModel.analyze()
         dispatcher.scheduler.advanceUntilIdle()
-        viewModel.onFormatSelected(muxed)
+        val option = viewModel.uiState.value.downloadOptions.single { it.id == "m1" }
+        viewModel.onDownloadOptionSelected(option)
 
         viewModel.onDownloadClicked()
 
@@ -323,6 +326,32 @@ class HomeViewModelTest {
         assertEquals("m1", request.formatId)
         assertEquals("https://example.com/video", request.sourceUrl)
         assertEquals(MediaType.VIDEO, request.mediaType)
+        assertTrue(viewModel.uiState.value.justQueued)
+    }
+
+    @Test
+    fun `selecting a paired video+audio option enqueues a split-stream download request`() = runTest {
+        val video = sampleFormat("v1080", hasVideo = true, hasAudio = false, container = "mp4")
+        val audio = sampleFormat("a1", hasVideo = false, hasAudio = true, container = "m4a")
+        fakeEngine.nextResult = AppResult.Success(
+            ExtractionResult.Single(sampleMedia(formats = listOf(video, audio), webpageUrl = "https://example.com/video")),
+        )
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val paired = viewModel.uiState.value.downloadOptions.single { it.requiresProcessing }
+        assertEquals("v1080+a1", paired.id)
+        viewModel.onDownloadOptionSelected(paired)
+        viewModel.onDownloadClicked()
+
+        val request = fakeDownloadEngine.enqueued.single()
+        assertEquals("v1080", request.formatId)
+        assertEquals("a1", request.audioFormatId)
+        assertEquals("mp4", request.container)
+        assertEquals(MediaType.VIDEO, request.mediaType)
+        // A split-stream task is never byte-offset-resumable, regardless of the source format's own supportsResume.
+        assertTrue(!request.canResume)
         assertTrue(viewModel.uiState.value.justQueued)
     }
 

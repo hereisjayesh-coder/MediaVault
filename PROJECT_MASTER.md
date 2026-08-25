@@ -771,7 +771,7 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the Private Library + In-App Playback Foundation stage._
+_Last updated: 2026-08-25, after the FFmpeg Merge Support stage._
 
 * **Completed downloads are now managed MediaVault Library items, playable inside the
   app.** New downloads land in app-private storage by default (no SAF folder picker in
@@ -1181,9 +1181,74 @@ _Prior state, before the real DownloadEngine stage:_
 * Git repository initialized locally and pushed to GitHub
   (`https://github.com/hereisjayesh-coder/MediaVault`, branch `master`).
 
-Not yet started: media processing/FFmpeg — i.e. merged video+audio downloads (still
-deliberately avoided — see above), torrent downloading, user-selected-folder/full-device
-media scanning (the Library only indexes MediaVault-managed downloads so far — see this
+* **FFmpeg is now integrated — merged video+audio downloads are real, ending the
+  deliberate restriction described in §37's 2026-08-24 and 2026-08-25 scoping entries.**
+  A selected video-only format is no longer shown-but-disabled; it is paired with a
+  compatible audio-only track and downloaded as a real, selectable option.
+  - **New `MediaProcessor` abstraction** (`core:domain/processing/`), mirroring how
+    `ExtractorEngine` keeps yt-dlp out of the rest of the app: a `merge(MergeRequest):
+    Flow<ProcessingEvent>` contract plus `cancel(taskId)`, with no FFmpeg type leaking
+    above this layer. `FFmpegMediaProcessor` (`app/processing/`) is the only
+    implementation, backed by the [FFmpegKit](https://github.com/moizhassankh/ffmpeg-kit-android-16KB)
+    Maven dependency (`com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1` — a maintained,
+    16KB-page-size-compliant repackaging of the now-archived `arthenica/ffmpeg-kit`,
+    LGPL v3 — see `THIRD-PARTY-NOTICES.md`). Every invocation is `-c copy`
+    (`-map 0:v:0 -map 1:a:0`) — a pure stream-copy remux, **never** a re-encode/
+    transcode, which is both what the milestone requires (no quality loss, no
+    re-encoding time/battery cost) and keeps FFmpeg usage inside the LGPL-only
+    portion of FFmpegKit with no GPL-only codec ever invoked.
+  - **`DownloadOption`/`buildDownloadOptions`** (`core:domain/download/`, pure and
+    unit-tested) replaces the old flat `MediaFormat` list on the single-item screen. A
+    muxed or audio-only format still becomes one direct, already-selectable option,
+    unchanged from before. Every video-only format becomes one selectable paired option
+    per distinct audio *language* available (never just "the best" one — no language
+    silently dropped), with only the largest same-language variant offered per language
+    to avoid bitrate-noise. A video-only format with genuinely no audio track anywhere
+    still gets exactly one row, shown with its real resolution but marked
+    `unavailableReason` — "never silently hide," matching this project's existing
+    playlist/mapper conventions. No resolution tier is hardcoded; whatever heights the
+    extractor reports become whatever rows exist.
+  - **Output container is chosen, never guessed**: MP4 video + M4A/MP4 audio remuxes to
+    MP4; WEBM + WEBM remuxes to WEBM; any other pairing falls back to MKV, the universal
+    stream-copy-safe container — still never a transcode.
+  - **`MediaVaultDownloadEngine.runSplitStreamDownload()`**: downloads the video-only
+    stream, then the audio-only stream (combined progress reported throughout via a new
+    `MERGING` `DownloadStatus`, added to the existing enum rather than overloading
+    `PROCESSING`), then hands both cache files to `MediaProcessor.merge()` and reuses the
+    exact same `finish()` path every direct download already uses to reach the Library —
+    no separate merged-file code path. A split-stream task is never byte-offset-resumable
+    (`canResume = false`, regardless of the underlying format's own `supportsResume`);
+    Pause is a no-op while `MERGING` (a stream-copy remux of already-downloaded files is
+    normally seconds long) but Cancel still works mid-merge. Process-death recovery
+    (`recoverAfterProcessDeath()`) now also resets a stuck `MERGING` task to `PAUSED`,
+    same as `DOWNLOADING`/`PROCESSING` — resuming re-downloads both streams and re-merges
+    from clean, which is wasteful but safe, identical to how every other
+    non-resumable task already restarts.
+  - **Room migration**: `MediaVaultDatabase` version 3→4, with a real, additive
+    `Migration(3,4)` (two new nullable `download_tasks` columns — `audioFormatId`/
+    `audioLocalCachePath` — both null for every pre-existing row, which is exactly the
+    "direct download" behavior those rows already had).
+  - **`MediaFormat` gained `heightPx`/`widthPx`/`languageCode`**, populated in
+    `YtDlpResultMapper` from yt-dlp's own reported `height`/`width`/`language` fields
+    (never guessed) — needed for reliable resolution sorting/grouping and per-language
+    audio pairing, since the existing `resolutionLabel` is display text only.
+  - **UI**: `HomeScreen`'s format list now renders `DownloadOption` rows via
+    `downloadOptionSummary()` (e.g. "1080p60 • MP4 • avc1 • 92 MB • + audio [en]"), with
+    a "Video + audio will be combined automatically after downloading" hint on paired
+    rows; `DownloadsScreen` shows a distinct "Merging" status label and a Cancel-only
+    action while `MERGING`.
+  - **Known limitation — not yet verified live on a physical device**: this stage's
+    work was verified via `./gradlew :app:assembleDebug` (succeeds) and the full JVM
+    unit test suite (143 tests across `core:domain` and `:app`, 0 failures, including new
+    `DownloadOptionTest` and split-stream-specific `MediaVaultDownloadEngineTest`/
+    `HomeViewModelTest` cases) — no device was available in this session to confirm an
+    actual on-device merge (real video-only + audio-only DASH streams, real FFmpeg
+    execution, real Library playback of the merged file). Per this project's own
+    Quality Standard (§32), that on-device pass is still required before this feature is
+    considered fully done, and should be the very next session's first step.
+
+Not yet started: torrent downloading, user-selected-folder/full-device media scanning
+(the Library only indexes MediaVault-managed downloads so far — see the private-library
 stage's private-storage note above), app lock/biometric security, picture-in-picture,
 source search (beyond the Supported Sources catalog itself — §17's "tapping an item opens
 the appropriate analysis/download flow" is satisfied by returning to Home, not a
@@ -1430,6 +1495,56 @@ milestone keep their `content://` URIs and remain fully valid, playable Library 
 see the private-storage note in §34's Current Project State for how `LibraryRepository`
 handles both URI schemes. Nothing already on a user's device breaks or disappears; only
 the default for *new* downloads changed.
+
+---
+
+### 2026-08-25 — FFmpeg added: a real `MediaProcessor` abstraction, wired via a maintained FFmpegKit fork
+
+**Decision:** This stage lifts the FFmpeg restriction that §37's 2026-08-24 and prior
+entries deliberately imposed. A new `MediaProcessor` interface (`core:domain/processing/`)
+is bound to `FFmpegMediaProcessor`, backed by the
+[`ffmpeg-kit-android-16KB`](https://github.com/moizhassankh/ffmpeg-kit-android-16KB)
+Maven dependency (`com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1`). `MediaVaultDownloadEngine`
+now downloads a video-only and audio-only stream separately and hands both to
+`MediaProcessor.merge()`, which always runs FFmpeg with `-c copy` — a stream-copy remux,
+never a re-encode. See §34's Current Project State for the full implementation
+breakdown (`DownloadOption`/`buildDownloadOptions`, the `MERGING` status, the v3→v4
+migration, etc.).
+
+**Why FFmpegKit's `arthenica/ffmpeg-kit` fork instead of the original:** the original
+`arthenica/ffmpeg-kit` project (the de facto standard FFmpeg wrapper for Android/Kotlin)
+was archived by its author in 2024 and its last published binaries predate Android 15's
+16 KB memory-page-size requirement for native libraries, which would make it fail to
+load on newer devices/App Bundle targets going forward. `moizhassankh/ffmpeg-kit-android-16KB`
+republishes the same FFmpeg build recompiled with 16 KB page alignment, under the same
+LGPL v3 terms as the original's LGPL package variant, so this project gets a
+still-maintained artifact without changing the licensing analysis §26/`THIRD-PARTY-NOTICES.md`
+already committed to for FFmpeg.
+
+**Why `-c copy` only, never a transcode:** the milestone's requirement (and this
+project's general "never silently substitute/degrade quality" principle — see the
+2026-08-24 Supported Sources and playlist decisions) is to combine two
+already-downloaded streams, not to re-encode them. Stream-copy is lossless and far
+cheaper (seconds, not minutes, of device CPU/battery) than a real transcode would be, and
+it also keeps this project's FFmpeg usage inside the LGPL-only portion of FFmpegKit —
+transcoding into some codecs would require GPL-only encoders, which §26/
+`THIRD-PARTY-NOTICES.md`'s existing "FFmpeg licensing" note already flagged as a decision
+this project has not made and does not need to make for this feature.
+
+**Why a new `MERGING` status instead of reusing `PROCESSING`:** `PROCESSING` already
+means "finished downloading, being copied into the Library" (see the private-storage
+stage). Overloading it for "FFmpeg is remuxing two files" would make `DownloadsScreen`
+and process-death recovery unable to tell the two apart, so a new, distinct terminal-
+adjacent status was added to the existing enum instead.
+
+**Consequence — not yet verified on a physical device:** unlike every prior stage's
+decision log entries, this one was completed and verified only via `./gradlew
+assembleDebug` and the full JVM unit test suite (no Robolectric/Mockito in this project,
+same limitation as `MediaVaultDownloadEngine`/`Media3PlayerEngine` before it) — no
+physical device was available in this session. Per §32's Quality Standard, a live
+on-device pass (a real video-only + audio-only source, an actual FFmpeg merge, and
+playback of the resulting file from the Library) is still outstanding and should be the
+first thing the next session does, before this feature is considered fully verified.
 
 ---
 

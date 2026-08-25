@@ -126,6 +126,9 @@ private fun YtDlpFormatJson.toMediaFormat(): MediaFormat {
         hasVideo = isVideo,
         hasAudio = isAudio,
         supportsResume = protocol == "http" || protocol == "https",
+        heightPx = height?.takeIf { isVideo },
+        widthPx = width?.takeIf { isVideo },
+        languageCode = language,
     )
 }
 
