@@ -8,6 +8,7 @@ import com.mediavault.app.util.nextAvailableFileName
 import com.mediavault.app.util.sanitizeFileName
 import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
+import com.mediavault.core.database.dao.DownloadTaskDao
 import com.mediavault.core.database.dao.MediaItemDao
 import com.mediavault.core.database.entity.MediaItemEntity
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,12 +51,22 @@ interface LibraryRepository {
     suspend fun exportTo(id: String, targetUri: Uri): AppResult<Unit>
 
     suspend fun updatePlaybackPosition(id: String, positionMs: Long)
+
+    /**
+     * Every Library item downloaded as part of the same playlist as [item], in original
+     * playlist order (including [item] itself) — the basis for the Player's Previous/Next
+     * controls. Empty when [item] wasn't a playlist download, or when it was the only item
+     * from that playlist to actually finish into the Library; callers should only show
+     * Previous/Next when this has more than one entry.
+     */
+    suspend fun getPlaylistSiblings(item: MediaItemEntity): List<MediaItemEntity>
 }
 
 @Singleton
 class AndroidLibraryRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val dao: MediaItemDao,
+    private val downloadTaskDao: DownloadTaskDao,
 ) : LibraryRepository {
 
     override fun observeAll(): Flow<List<MediaItemEntity>> = dao.observeAll()
@@ -143,6 +154,17 @@ class AndroidLibraryRepository @Inject constructor(
     override suspend fun updatePlaybackPosition(id: String, positionMs: Long) {
         val item = dao.getById(id) ?: return
         dao.update(item.copy(lastPlaybackPositionMs = positionMs))
+    }
+
+    override suspend fun getPlaylistSiblings(item: MediaItemEntity): List<MediaItemEntity> {
+        val taskId = item.sourceDownloadTaskId ?: return emptyList()
+        val playlistId = downloadTaskDao.getById(taskId)?.playlistId ?: return emptyList()
+        // Already ordered by playlistItemIndex; some entries may have no matching Library row
+        // (failed/cancelled/still downloading), so map through a lookup rather than assuming a 1:1 join.
+        val orderedTasks = downloadTaskDao.getByPlaylistId(playlistId)
+        val libraryItemsByTaskId = dao.getBySourceDownloadTaskIds(orderedTasks.map { it.id })
+            .associateBy { it.sourceDownloadTaskId }
+        return orderedTasks.mapNotNull { libraryItemsByTaskId[it.id] }
     }
 }
 

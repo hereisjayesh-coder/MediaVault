@@ -8,6 +8,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import com.mediavault.core.domain.player.PlaybackState
 import com.mediavault.core.domain.player.PlayerEngine
@@ -90,6 +91,10 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         }
     }
 
+    override fun setLooping(enabled: Boolean) {
+        player.repeatMode = if (enabled) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+
     private fun applyOverride(trackType: Int, trackId: String) {
         val (groupIndex, trackIndex) = trackId.split(":").map { it.toInt() }
         val group = player.currentTracks.groups.filter { it.type == trackType }.getOrNull(groupIndex) ?: return
@@ -104,6 +109,12 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
 
         fun snapshot(): PlaybackState {
             val tracks = player.currentTracks
+            val videoSize = player.videoSize
+            val aspectRatio = if (videoSize.width > 0 && videoSize.height > 0) {
+                (videoSize.width * videoSize.pixelWidthHeightRatio) / videoSize.height
+            } else {
+                null
+            }
             return PlaybackState(
                 isPlaying = player.isPlaying,
                 positionMs = player.currentPosition,
@@ -115,6 +126,9 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
                 selectedSubtitleTrackId = tracks.selectedTrackId(C.TRACK_TYPE_TEXT),
                 playbackSpeed = player.playbackParameters.speed,
                 errorMessage = lastError,
+                videoAspectRatio = aspectRatio,
+                isLooping = player.repeatMode == Player.REPEAT_MODE_ONE,
+                isEnded = player.playbackState == Player.STATE_ENDED,
             )
         }
 
@@ -132,6 +146,14 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                trySend(snapshot())
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                trySend(snapshot())
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
                 trySend(snapshot())
             }
 

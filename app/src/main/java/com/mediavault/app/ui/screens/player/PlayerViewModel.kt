@@ -5,9 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.ui.PlayerView
 import com.mediavault.app.library.LibraryRepository
+import com.mediavault.app.player.AudioPreferenceProvider
 import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.app.player.Media3PlayerEngine
 import com.mediavault.app.player.PlayerEngineFactory
+import com.mediavault.core.domain.player.PlaybackState
 import com.mediavault.core.domain.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -27,6 +29,7 @@ class PlayerViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
     private val playerEngineFactory: PlayerEngineFactory,
     private val lastPlayedProvider: LastPlayedProvider,
+    private val audioPreferenceProvider: AudioPreferenceProvider,
 ) : ViewModel() {
 
     private val requestedMediaItemId: String? = savedStateHandle[MEDIA_ITEM_ID_ARG]
@@ -35,6 +38,16 @@ class PlayerViewModel @Inject constructor(
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var playerEngine: PlayerEngine? = null
+
+    // Tracked individually (rather than relying on structured-concurrency parentage alone) so
+    // cancelBackgroundWorkForTesting() can stop every background loop regardless of which
+    // caller (init, onNext/onPrevious, auto-advance) started the current one.
+    private var stateCollectJob: Job? = null
+    private var sleepTimerJob: Job? = null
+    private var controlsHideJob: Job? = null
+
+    private var appliedPreferredAudioThisLoad = false
+    private var pauseAtEndOfMedia = false
 
     /** The whole load-and-observe session, so a single cancel (real teardown or test cleanup) stops every child coroutine below. */
     private val sessionJob: Job
@@ -47,22 +60,8 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
 
-            val item = libraryRepository.getById(id)
-            if (item == null || !libraryRepository.fileExists(item)) {
-                _uiState.update { it.copy(isLoading = false, errorMessage = "This file is no longer available. It may have been moved or deleted.") }
-                return@launch
-            }
-
-            lastPlayedProvider.setId(id)
-            _uiState.update { it.copy(isLoading = false, item = item) }
-
-            val engine = playerEngineFactory.create()
-            playerEngine = engine
-            engine.prepare(item.mediaUri)
-            if (item.lastPlaybackPositionMs > 0) engine.seekTo(item.lastPlaybackPositionMs)
-            engine.play()
-
-            launch { engine.observeState().collect { state -> _uiState.update { it.copy(playback = state) } } }
+            loadItem(id)
+            if (_uiState.value.item == null) return@launch
 
             launch {
                 while (isActive) {
@@ -73,6 +72,84 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Loads [id] as the active item — used for the initial load, Previous/Next, and end-of-media auto-advance alike. */
+    private suspend fun loadItem(id: String) {
+        val item = libraryRepository.getById(id)
+        if (item == null || !libraryRepository.fileExists(item)) {
+            stateCollectJob?.cancel()
+            playerEngine?.release()
+            playerEngine = null
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    item = null,
+                    playback = null,
+                    errorMessage = "This file is no longer available. It may have been moved or deleted.",
+                )
+            }
+            return
+        }
+
+        lastPlayedProvider.setId(id)
+        val playlistItems = libraryRepository.getPlaylistSiblings(item)
+
+        stateCollectJob?.cancel()
+        playerEngine?.release()
+        appliedPreferredAudioThisLoad = false
+        pauseAtEndOfMedia = false
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                item = item,
+                playlistItems = playlistItems,
+                playback = null,
+                errorMessage = null,
+                sleepTimer = SleepTimerOption.OFF,
+                sleepTimerRemainingMs = null,
+            )
+        }
+
+        val engine = playerEngineFactory.create()
+        playerEngine = engine
+        engine.prepare(item.mediaUri)
+        if (item.lastPlaybackPositionMs > 0) engine.seekTo(item.lastPlaybackPositionMs)
+        engine.play()
+
+        stateCollectJob = viewModelScope.launch {
+            engine.observeState().collect { state -> onPlaybackState(state) }
+        }
+    }
+
+    private suspend fun onPlaybackState(state: PlaybackState) {
+        _uiState.update { it.copy(playback = state) }
+
+        if (!appliedPreferredAudioThisLoad && state.availableAudioTracks.isNotEmpty()) {
+            appliedPreferredAudioThisLoad = true
+            val preferred = audioPreferenceProvider.preferredLanguage()
+            val match = preferred?.let { code -> state.availableAudioTracks.firstOrNull { it.languageCode == code } }
+            if (match != null && match.id != state.selectedAudioTrackId) {
+                playerEngine?.selectAudioTrack(match.id)
+            }
+        }
+
+        if (state.isEnded) handlePlaybackEnded()
+    }
+
+    private fun handlePlaybackEnded() {
+        if (pauseAtEndOfMedia) {
+            pauseAtEndOfMedia = false
+            _uiState.update { it.copy(sleepTimer = SleepTimerOption.OFF) }
+            return
+        }
+        val state = _uiState.value
+        val currentIndex = state.playlistItems.indexOfFirst { it.id == state.item?.id }
+        val nextItem = state.playlistItems.getOrNull(currentIndex + 1) ?: return
+        viewModelScope.launch { loadItem(nextItem.id) }
+    }
+
     private suspend fun persistPosition() {
         val item = _uiState.value.item ?: return
         val position = _uiState.value.playback?.positionMs ?: return
@@ -81,12 +158,20 @@ class PlayerViewModel @Inject constructor(
 
     fun onPlayPauseToggled() {
         val engine = playerEngine ?: return
-        if (_uiState.value.playback?.isPlaying == true) {
-            engine.pause()
-            viewModelScope.launch { persistPosition() }
-        } else {
-            engine.play()
+        val playback = _uiState.value.playback
+        when {
+            playback?.isEnded == true -> {
+                // Player.STATE_ENDED already stopped playback on its own — "resume" here means replay from the start.
+                engine.seekTo(0)
+                engine.play()
+            }
+            playback?.isPlaying == true -> {
+                engine.pause()
+                viewModelScope.launch { persistPosition() }
+            }
+            else -> engine.play()
         }
+        scheduleControlsAutoHide()
     }
 
     /** Called when the screen leaves composition (tab switch, back navigation) — stop audio even if the ViewModel itself survives a saved back-stack entry. */
@@ -98,6 +183,14 @@ class PlayerViewModel @Inject constructor(
     fun onSeek(positionMs: Long) {
         playerEngine?.seekTo(positionMs)
         viewModelScope.launch { persistPosition() }
+        scheduleControlsAutoHide()
+    }
+
+    /** Powers the -10s/+10s controls — clamps to the item's own bounds, never seeks past either end. */
+    fun seekBy(deltaMs: Long) {
+        val playback = _uiState.value.playback ?: return
+        val duration = playback.durationMs ?: Long.MAX_VALUE
+        onSeek((playback.positionMs + deltaMs).coerceIn(0L, duration))
     }
 
     fun onSpeedSelected(speed: Float) {
@@ -106,14 +199,92 @@ class PlayerViewModel @Inject constructor(
 
     fun onAudioTrackSelected(trackId: String) {
         playerEngine?.selectAudioTrack(trackId)
+        val languageCode = _uiState.value.playback?.availableAudioTracks?.firstOrNull { it.id == trackId }?.languageCode
+        if (languageCode != null) {
+            viewModelScope.launch { audioPreferenceProvider.setPreferredLanguage(languageCode) }
+        }
     }
 
     fun onSubtitleTrackSelected(trackId: String?) {
         playerEngine?.selectSubtitleTrack(trackId)
     }
 
+    fun onLoopToggled() {
+        val newValue = !(_uiState.value.playback?.isLooping ?: false)
+        playerEngine?.setLooping(newValue)
+    }
+
+    fun onResizeModeSelected(mode: VideoResizeMode) {
+        _uiState.update { it.copy(resizeMode = mode) }
+    }
+
+    fun onDetailsToggled(show: Boolean) {
+        _uiState.update { it.copy(showDetails = show) }
+    }
+
+    fun onNext() {
+        val state = _uiState.value
+        val index = state.playlistItems.indexOfFirst { it.id == state.item?.id }
+        val next = state.playlistItems.getOrNull(index + 1) ?: return
+        viewModelScope.launch { loadItem(next.id) }
+    }
+
+    fun onPrevious() {
+        val state = _uiState.value
+        val index = state.playlistItems.indexOfFirst { it.id == state.item?.id }
+        if (index <= 0) return
+        val previous = state.playlistItems.getOrNull(index - 1) ?: return
+        viewModelScope.launch { loadItem(previous.id) }
+    }
+
+    fun onSleepTimerSelected(option: SleepTimerOption) {
+        sleepTimerJob?.cancel()
+        pauseAtEndOfMedia = false
+        _uiState.update { it.copy(sleepTimer = option, sleepTimerRemainingMs = null) }
+
+        when (option) {
+            SleepTimerOption.OFF -> Unit
+            SleepTimerOption.END_OF_MEDIA -> pauseAtEndOfMedia = true
+            else -> {
+                val totalMs = (option.minutes ?: return) * 60_000L
+                sleepTimerJob = viewModelScope.launch {
+                    var remainingMs = totalMs
+                    while (remainingMs > 0) {
+                        _uiState.update { it.copy(sleepTimerRemainingMs = remainingMs) }
+                        delay(1_000)
+                        remainingMs -= 1_000
+                    }
+                    playerEngine?.pause()
+                    persistPosition()
+                    _uiState.update { it.copy(sleepTimer = SleepTimerOption.OFF, sleepTimerRemainingMs = null) }
+                }
+            }
+        }
+    }
+
     fun onFullscreenToggled() {
-        _uiState.update { it.copy(isFullscreen = !it.isFullscreen) }
+        _uiState.update { it.copy(isFullscreen = !it.isFullscreen, controlsVisible = true) }
+        scheduleControlsAutoHide()
+    }
+
+    /** Tapping the video surface toggles the overlay controls while fullscreen; a no-op otherwise (controls are always visible in the embedded layout). */
+    fun onSurfaceTapped() {
+        if (!_uiState.value.isFullscreen) return
+        _uiState.update { it.copy(controlsVisible = !it.controlsVisible) }
+        scheduleControlsAutoHide()
+    }
+
+    private fun scheduleControlsAutoHide() {
+        controlsHideJob?.cancel()
+        val state = _uiState.value
+        if (state.isFullscreen && state.controlsVisible) {
+            controlsHideJob = viewModelScope.launch {
+                delay(3_500)
+                if (_uiState.value.playback?.isPlaying == true) {
+                    _uiState.update { it.copy(controlsVisible = false) }
+                }
+            }
+        }
     }
 
     /** Binds the video surface — see [Media3PlayerEngine.rawPlayer] for why this one call steps outside the [PlayerEngine] contract. */
@@ -122,17 +293,21 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * Stops the load session (state-observing collector + periodic position-save loop) without
-     * a real Android `ViewModelStore` teardown. `internal` is module-wide in Kotlin, so JVM unit
-     * tests (same `:app` module) can call this to let `runTest` finish cleanly instead of
-     * tripping its "uncompleted coroutines" check on these intentionally-infinite background jobs.
+     * Stops every background loop (state-observing collector, periodic position-save loop,
+     * sleep timer, controls auto-hide) without a real Android `ViewModelStore` teardown.
+     * `internal` is module-wide in Kotlin, so JVM unit tests (same `:app` module) can call this
+     * to let `runTest` finish cleanly instead of tripping its "uncompleted coroutines" check on
+     * these intentionally-long-lived background jobs.
      */
     internal fun cancelBackgroundWorkForTesting() {
         sessionJob.cancel()
+        stateCollectJob?.cancel()
+        sleepTimerJob?.cancel()
+        controlsHideJob?.cancel()
     }
 
     override fun onCleared() {
-        sessionJob.cancel()
+        cancelBackgroundWorkForTesting()
         // viewModelScope is torn down around the same time onCleared runs, so a fire-and-forget
         // launch here isn't reliable — this is the one deliberate blocking call in the app,
         // covering a fast single-row Room UPDATE during a real teardown, not the steady state.

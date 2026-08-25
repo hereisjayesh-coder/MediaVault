@@ -26,4 +26,7 @@ class FakeMediaItemDao : MediaItemDao {
     override fun observeAll() = state
 
     override fun observeFavorites() = MutableStateFlow(state.value.filter { it.isFavorite })
+
+    override suspend fun getBySourceDownloadTaskIds(taskIds: List<String>): List<MediaItemEntity> =
+        state.value.filter { it.sourceDownloadTaskId in taskIds }
 }

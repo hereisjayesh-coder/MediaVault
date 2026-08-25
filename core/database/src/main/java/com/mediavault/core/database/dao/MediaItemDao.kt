@@ -29,4 +29,8 @@ interface MediaItemDao {
 
     @Query("SELECT * FROM media_items WHERE isFavorite = 1 ORDER BY addedAtEpochMs DESC")
     fun observeFavorites(): Flow<List<MediaItemEntity>>
+
+    /** Used to resolve a playlist's sibling Library items from their download tasks' ids — see `LibraryRepository.getPlaylistSiblings`. */
+    @Query("SELECT * FROM media_items WHERE sourceDownloadTaskId IN (:taskIds)")
+    suspend fun getBySourceDownloadTaskIds(taskIds: List<String>): List<MediaItemEntity>
 }

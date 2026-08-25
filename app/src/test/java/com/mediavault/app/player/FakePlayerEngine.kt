@@ -58,6 +58,10 @@ class FakePlayerEngine : PlayerEngine {
         state.update { it.copy(selectedSubtitleTrackId = trackId) }
     }
 
+    override fun setLooping(enabled: Boolean) {
+        state.update { it.copy(isLooping = enabled) }
+    }
+
     override fun observeState(): Flow<PlaybackState> = state
 
     override fun release() {

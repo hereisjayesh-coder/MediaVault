@@ -11,6 +11,7 @@ class FakeLibraryRepository : LibraryRepository {
     private val state = MutableStateFlow<List<MediaItemEntity>>(emptyList())
     var existingIds: Set<String> = emptySet()
     val updatedPositions = mutableListOf<Pair<String, Long>>()
+    var playlistSiblings: List<MediaItemEntity> = emptyList()
 
     fun setItems(items: List<MediaItemEntity>) {
         state.value = items
@@ -37,4 +38,6 @@ class FakeLibraryRepository : LibraryRepository {
         updatedPositions.add(id to positionMs)
         state.value = state.value.map { if (it.id == id) it.copy(lastPlaybackPositionMs = positionMs) else it }
     }
+
+    override suspend fun getPlaylistSiblings(item: MediaItemEntity): List<MediaItemEntity> = playlistSiblings
 }

@@ -771,7 +771,7 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the FFmpeg Merge Support stage (including its on-device verification pass)._
+_Last updated: 2026-08-25, after the Player Redesign stage (including its on-device verification pass)._
 
 * **Completed downloads are now managed MediaVault Library items, playable inside the
   app.** New downloads land in app-private storage by default (no SAF folder picker in
@@ -1254,13 +1254,108 @@ _Prior state, before the real DownloadEngine stage:_
     `com.mediavault.app` at the same time, confirming audio was actually decoding and
     playing, not just a silent video. This closes out the on-device verification gap
     called out when this stage's code was first committed.
+* **The Player is now a dedicated, immersive playback experience, not a sixth piece of
+  five-tab content.** Tapping a Library item or the Player tab's "Continue watching" card
+  opens a separate `player/{mediaItemId}` route with no bottom navigation bar at all
+  (rather than the old design, where `PlayerScreen` was just another tab page inside the
+  same `Scaffold` as Home/Downloads/Library/Settings).
+  - **Player tab vs. dedicated screen split**: the `Player` bottom-tab route now renders a
+    new, lightweight `PlayerHubScreen`/`PlayerHubViewModel` — a "Continue watching" card
+    (thumbnail, title, progress bar, Resume) for whatever was last played, or an honest
+    empty state — that never creates a real `PlayerEngine`/`ExoPlayer` instance just from
+    visiting the tab (the old design did, meaning simply tapping the Player tab silently
+    started audio playback in the background — a real behavior bug this redesign fixes by
+    construction). Tapping the card navigates to the same dedicated `player/{id}` route a
+    Library item opens.
+  - **Aspect-correct video surface**: `PlaybackState` gained `videoAspectRatio` (derived
+    from Media3's own `player.videoSize`, rotation and pixel-aspect already applied) and
+    `isLooping`/`isEnded`. Landscape/square content sizes its container by width
+    (`fillMaxWidth().aspectRatio(ratio)` — no space reserved beyond what the video itself
+    occupies); portrait content and true fullscreen both fit within whatever height is
+    actually available, centered (`BoxWithConstraints` + a `fitWithinBounds` helper).
+    Fit/Fill/Zoom/Original map 1:1 to Media3 `PlayerView`'s own `AspectRatioFrameLayout`
+    resize modes, selectable from a new control.
+  - **A real bug found and fixed during this stage's own device testing**: the very first
+    on-device pass reproduced the reported "giant black empty area" almost immediately —
+    relocated, not fixed, by an early version of the aspect-fit work. Root cause: the
+    outer container had an unconditional `Color.Black` background while its `Column`
+    children were never `weight`-filled in embedded mode, so any leftover vertical space
+    below the compact video+controls rendered as a stray black void. Fixed by making the
+    root background match the fullscreen/PiP state (light theme background when embedded,
+    black only when truly fullscreen) and scoping `Color.Black` to the video's own
+    aspect-fit box specifically. A second, related bug surfaced right after: fullscreen
+    still showed a persistent light-gray strip where the status bar used to be, because
+    `Scaffold`'s shared `innerPadding` doesn't reactively shrink when this screen
+    imperatively hides system bars. Fixed by having `MediaVaultNavHost` give the dedicated
+    player route none of `Scaffold`'s inset padding at all, and having the Player manage
+    its own `statusBarsPadding()`/`navigationBarsPadding()` off its own `isFullscreen`
+    state instead — both verified live afterward with no stray empty regions in either
+    mode.
+  - **Fullscreen redesigned as true immersive playback**: controls now float over the
+    video as a semi-transparent overlay (top bar + bottom controls, `AnimatedVisibility`
+    fade) instead of the old design, which pushed the video into a smaller `weight(1f)`
+    box below a still-visible top bar. Controls auto-hide ~3.5s into playback and
+    reappear on tapping the video; verified live (letterboxed correctly, auto-hide/tap
+    both worked).
+  - **New controls**: -10s/+10s (`PlayerViewModel.seekBy`, clamped to the item's real
+    duration), Loop (`PlayerEngine.setLooping`, backed by Media3 `REPEAT_MODE_ONE`),
+    Picture-in-picture (`Activity.enterPictureInPictureMode`, manifest now declares
+    `android:supportsPictureInPicture="true"`; a new `LocalIsInPictureInPicture`
+    composition local, set from `MainActivity.onPictureInPictureModeChanged`, swaps the
+    custom Compose controls for Media3 `PlayerView`'s own minimal controller while in PiP,
+    since Compose's touch targets aren't usable at PiP's tiny window size), a sleep timer
+    (fixed 10/30/60-minute durations, or "end of this video" — pauses instead of
+    auto-advancing at the next natural stop), and a media details dialog. The details
+    dialog is the same `MediaDetailsDialog` composable the Library's three-dot menu
+    already used — extracted out of `LibraryScreen.kt` into `ui/components/` so both
+    screens share one implementation rather than duplicating it.
+  - **Playlist Previous/Next**: `LibraryRepository.getPlaylistSiblings()` (new) resolves a
+    Library item's playlist order by joining `MediaItemEntity.sourceDownloadTaskId` →
+    `DownloadTaskEntity.playlistId` → that playlist's other `DownloadTaskEntity` rows
+    (already ordered by `playlistItemIndex`) → their own Library rows, skipping any
+    sibling that never finished downloading. Previous/Next only render when this resolves
+    to more than one item — never shown for standalone media. Reaching the end of an item
+    with a next sibling auto-advances to it; reaching the end of standalone media (or the
+    last item in a playlist) leaves it stopped, with Play now meaning "replay from the
+    start" rather than doing nothing.
+  - **Preferred audio language remembered**: a new `AudioPreferenceStore` (DataStore)
+    records the language code of the last audio track a user explicitly picked; the next
+    file offering a track in that same language auto-selects it on load. Only ever applied
+    when a real, source-reported language code matches — never guessed, consistent with
+    this project's existing "never invent a language" rule for `MediaTrackInfo`.
+  - **External subtitle support**: deliberately not built this stage (still embedded
+    tracks only), but `PlayerEngine.selectSubtitleTrack`'s id-based contract already
+    generalizes to it without a breaking change — documented inline as the extension point
+    rather than half-built.
+  - **Verified live** (Pixel 7a, the same downloaded Sintel file from this milestone's own
+    device pass): Library → Player and Player tab "Resume" → Player both opened the
+    dedicated screen correctly with the bottom nav absent in both cases; the 1920x818
+    (2.35:1) landscape video rendered aspect-correct with no stray empty space in both
+    embedded and fullscreen layouts (the two bugs above, found and fixed live); seeking
+    via the timeline and the +10s button were confirmed pixel-exact (0:29 → 0:39); the
+    "replay from start" completed-playback path was triggered live by letting the film run
+    to its real end (14:48/14:48, Play icon shown, tapping it correctly restarted at
+    0:01); app force-stop/relaunch correctly resumed mid-file every time; real system
+    Picture-in-Picture was entered and exited cleanly with no crash; the media details
+    dialog showed correct, real file data; and the aspect-ratio menu opened, listed
+    Fit/Fill/Zoom/Original, and applied a selection without error (Fit vs. Zoom render
+    identically in this specific embedded layout, since the container is already sized to
+    the video's own aspect ratio with nothing to crop — expected, not a bug). **Not
+    exercised live this session**: a 9:16/portrait source, multi-audio-track switching,
+    and embedded subtitles — no test file with any of those properties was available:
+    Sintel is 2.35:1 with a single English audio track and no subtitles, so the
+    audio-track and subtitle menus correctly stayed hidden (matching their own
+    `if (tracks.size > 1)`/`if (tracks.isNotEmpty())` gating) rather than being exercised.
+    Speed/Loop/sleep-timer selection were code-reviewed and unit-tested but not
+    individually tap-verified this pass, having already spent considerable device-testing
+    time isolating and fixing the two layout bugs above.
 
 Not yet started: torrent downloading, user-selected-folder/full-device media scanning
 (the Library only indexes MediaVault-managed downloads so far — see the private-library
-stage's private-storage note above), app lock/biometric security, picture-in-picture,
-source search (beyond the Supported Sources catalog itself — §17's "tapping an item opens
-the appropriate analysis/download flow" is satisfied by returning to Home, not a
-source-aware analyzer), and update checking.
+stage's private-storage note above), app lock/biometric security, source search (beyond
+the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
+analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
+and update checking.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -1551,6 +1646,43 @@ source, real FFmpeg merge (confirmed via logcat and by parsing the resulting fil
 box structure for both a video and an audio track), and real playback of the merged file
 from the Library through the Media3 player, with a genuine `AudioTrack` audio session
 confirmed via `dumpsys audio`. See §34's Current Project State for the full walkthrough.
+
+---
+
+### 2026-08-25 — Player rebuilt as a dedicated immersive screen, split from the Player tab
+
+**Decision:** The Player tab no longer *is* the player. It now renders a lightweight
+`PlayerHubScreen` (a "continue watching" card, no `PlayerEngine` created) inside the
+normal five-tab layout; opening either that card or a Library item instead navigates to
+a separate `player/{mediaItemId}` route that `MediaVaultNavHost` renders with zero
+`Scaffold` chrome — no bottom nav, no shared inset padding. The dedicated screen sizes
+its video surface to the source's real aspect ratio (via a new `videoAspectRatio` on
+`PlaybackState`) rather than assuming 16:9, and fullscreen now overlays floating,
+auto-hiding controls over the full screen instead of squeezing the video into a smaller
+box above a still-visible top bar.
+
+**Why:** The milestone's brief was explicit that a five-tab content page and a dedicated
+playback experience are different things, and the previous design conflated them — the
+Player tab and a Library item opened the literal same composable, and merely *visiting*
+the tab silently started an `ExoPlayer` instance and began playing audio in the
+background, which is a real behavior bug, not just a UX preference. Splitting the two
+fixes that by construction (the hub never touches `PlayerEngine`), and matches how every
+mainstream video app treats "now playing" (a small resumable card) versus "watching"
+(a full, chrome-free surface) as separate screens.
+
+**Consequence — two real layout bugs found and fixed during this stage's own device
+testing:** see §34's Current Project State for the full root-cause writeup. In short: (1)
+an unconditional black background on the screen's root `Box` bled into whatever vertical
+space its non-`weight`-filled `Column` left unused in embedded mode, relocating rather
+than fixing the "giant black empty area" this stage was meant to eliminate; (2)
+`Scaffold`'s `innerPadding` doesn't reactively shrink when a screen imperatively hides
+system bars, leaving a persistent light-gray strip where the status bar used to be in
+fullscreen. Both were caught live on a Pixel 7a within the same session, fixed, and
+re-verified with screenshots before this entry was written — see the Current Project
+State bullet for exactly what "verified live" and "not exercised live" mean for this
+stage (a 9:16 source, multi-audio-track switching, and embedded subtitles had no
+available test file this session and were not exercised on-device, unlike everything
+else in the checklist).
 
 ---
 

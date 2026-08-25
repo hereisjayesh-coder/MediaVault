@@ -64,13 +64,12 @@ import coil3.compose.AsyncImage
 import com.mediavault.app.R
 import com.mediavault.app.library.LibrarySortOrder
 import com.mediavault.app.ui.components.EmptyStateCard
+import com.mediavault.app.ui.components.MediaDetailsDialog
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.screens.home.formatDurationLabel
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.model.MediaType
-import java.text.DateFormat
-import java.util.Date
 import kotlinx.coroutines.delay
 
 @Composable
@@ -155,7 +154,7 @@ fun LibraryScreen(
 
     val detailsTarget = uiState.detailsTarget
     if (detailsTarget != null) {
-        DetailsDialog(item = detailsTarget, onDismiss = viewModel::onDetailsDismissed)
+        MediaDetailsDialog(item = detailsTarget, onDismiss = viewModel::onDetailsDismissed)
     }
 }
 
@@ -415,31 +414,3 @@ private fun RenameDialog(initialTitle: String, onConfirm: (String) -> Unit, onDi
     )
 }
 
-@Composable
-private fun DetailsDialog(item: MediaItemEntity, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.library_details_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DetailRow(stringResource(R.string.library_details_type), if (item.mediaType == MediaType.AUDIO) "Audio" else "Video")
-                formatDurationLabel(item.durationMs?.let { it / 1000 })?.let { DetailRow(stringResource(R.string.library_details_duration), it) }
-                item.resolutionLabel?.let { DetailRow(stringResource(R.string.library_details_resolution), it) }
-                formatFileSizeLabel(item.sizeBytes)?.let { DetailRow(stringResource(R.string.library_details_size), it) }
-                item.container?.let { DetailRow(stringResource(R.string.library_details_format), it.uppercase()) }
-                DetailRow(stringResource(R.string.library_details_downloaded), DateFormat.getDateTimeInstance().format(Date(item.addedAtEpochMs)))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.library_details_close)) }
-        },
-    )
-}
-
-@Composable
-private fun DetailRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(text = label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text = value)
-    }
-}

@@ -1,5 +1,7 @@
 package com.mediavault.app.di
 
+import com.mediavault.app.player.AudioPreferenceProvider
+import com.mediavault.app.player.AudioPreferenceStore
 import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.app.player.LastPlayedStore
 import com.mediavault.app.player.Media3PlayerEngineFactory
@@ -21,4 +23,8 @@ abstract class PlayerModule {
     @Binds
     @Singleton
     abstract fun bindLastPlayedProvider(impl: LastPlayedStore): LastPlayedProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindAudioPreferenceProvider(impl: AudioPreferenceStore): AudioPreferenceProvider
 }

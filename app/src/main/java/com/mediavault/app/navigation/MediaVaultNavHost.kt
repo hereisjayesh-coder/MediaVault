@@ -24,6 +24,7 @@ import androidx.navigation.navArgument
 import com.mediavault.app.ui.screens.downloads.DownloadsScreen
 import com.mediavault.app.ui.screens.home.HomeScreen
 import com.mediavault.app.ui.screens.library.LibraryScreen
+import com.mediavault.app.ui.screens.player.PlayerHubScreen
 import com.mediavault.app.ui.screens.player.PlayerScreen
 import com.mediavault.app.ui.screens.player.PlayerViewModel
 import com.mediavault.app.ui.screens.settings.SettingsScreen
@@ -62,32 +63,39 @@ private fun navigateToDestination(navController: NavHostController, destination:
 @Composable
 fun MediaVaultNavHost() {
     val navController = rememberNavController()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+    // The dedicated Player screen is a full immersive experience, not a fifth tab page — the
+    // bottom nav would only get in the way of playback controls/fullscreen, and it manages its
+    // own status-bar-safe padding (reactively, off its own fullscreen state) rather than the
+    // Scaffold's, since Scaffold's inset padding doesn't react to that screen's own imperative
+    // system-bar hide/show calls.
+    val isOnDedicatedPlayer = currentDestination?.hierarchy?.any { it.route == PLAYER_ITEM_ROUTE } == true
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentDestination = navBackStackEntry?.destination
+            if (!isOnDedicatedPlayer) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    bottomBarDestinations.forEach { destination ->
+                        val selected = currentDestination?.hierarchy?.any {
+                            it.route == destination.route
+                        } == true
 
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                bottomBarDestinations.forEach { destination ->
-                    val selected = currentDestination?.hierarchy?.any {
-                        it.route == destination.route
-                    } == true
-
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { navigateToDestination(navController, destination) },
-                        icon = { Icon(destination.icon, contentDescription = null) },
-                        label = { Text(stringResource(destination.labelRes)) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
-                    )
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { navigateToDestination(navController, destination) },
+                            icon = { Icon(destination.icon, contentDescription = null) },
+                            label = { Text(stringResource(destination.labelRes)) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
                 }
             }
         },
@@ -95,7 +103,7 @@ fun MediaVaultNavHost() {
         NavHost(
             navController = navController,
             startDestination = MediaVaultDestination.HOME.route,
-            modifier = Modifier.padding(innerPadding),
+            modifier = if (isOnDedicatedPlayer) Modifier else Modifier.padding(innerPadding),
         ) {
             composable(MediaVaultDestination.HOME.route) {
                 HomeScreen(
@@ -108,15 +116,20 @@ fun MediaVaultNavHost() {
                 LibraryScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
             }
             composable(MediaVaultDestination.PLAYER.route) {
-                PlayerScreen(onBackToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) })
+                PlayerHubScreen(
+                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                    onOpenLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
+                )
             }
             composable(MediaVaultDestination.SETTINGS.route) { SettingsScreen() }
 
+            // The dedicated, immersive playback screen — always reached with a specific item
+            // id (from Library or the Player tab's "Resume" card), never as a bare tab page.
             composable(
                 route = PLAYER_ITEM_ROUTE,
                 arguments = listOf(navArgument(PlayerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
             ) {
-                PlayerScreen(onBackToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) })
+                PlayerScreen(onBackToLibrary = { navController.popBackStack() })
             }
 
             composable(SOURCES_ROUTE) {

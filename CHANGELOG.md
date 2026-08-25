@@ -5,6 +5,42 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Player Redesign
+
+- The Player is now a dedicated, immersive playback screen instead of a sixth piece of
+  five-tab content. Opening a Library item or the Player tab's "Continue watching" card
+  hides the bottom navigation entirely; the Player tab itself now shows only a
+  lightweight resume card and no longer silently starts audio playing in the background
+  just from being visited (a real bug in the previous design, fixed by construction).
+- Video sizing now matches the source's real aspect ratio instead of assuming 16:9 —
+  landscape/square content is sized compactly to its own shape, portrait content uses the
+  available height centered, and there is no reserved empty space beyond what the video
+  itself occupies. Fullscreen now overlays floating, auto-hiding controls over the full
+  video instead of squeezing it into a smaller box.
+- New controls: -10s/+10s, loop, a sleep timer (fixed durations or "end of this video"),
+  Picture-in-picture, an aspect-ratio picker (Fit/Fill/Zoom/Original), and a media details
+  dialog (shared with the Library's existing one). Previous/Next now appear for playlist
+  items only, preserving playlist order; reaching the end of a playlist item auto-advances
+  to the next, and reaching the end of standalone media offers "replay from the start."
+  The last audio language a user picks is remembered and auto-applied to the next file
+  that offers a track in the same language.
+- **Two real layout bugs found and fixed during this stage's own device testing**: a
+  "giant black empty area" bug the milestone was meant to eliminate initially reappeared,
+  relocated rather than fixed, due to an unconditional black background bleeding into
+  unused layout space; and a separate bug left a persistent gray strip where the status
+  bar used to be in fullscreen, because the shared navigation Scaffold's inset padding
+  doesn't react to this screen's own system-bar hide/show calls. Both were caught and
+  fixed live on a Pixel 7a within this same session — see `PROJECT_MASTER.md` §34/§37 for
+  the full root-cause writeup.
+- **Verified live on a physical device (Pixel 7a)**: Library → Player and Player tab →
+  Player, aspect-correct layout in both embedded and fullscreen (the two bugs above),
+  precise seeking (timeline and +10s), completed-playback replay, app restart/resume,
+  real system Picture-in-Picture entry/exit, the media details dialog, and the
+  aspect-ratio menu. Not exercised live this session (no suitable test file was
+  available): a 9:16/portrait source, multi-audio-track switching, and embedded
+  subtitles — see `PROJECT_MASTER.md` for the full breakdown of what was and wasn't
+  exercised on-device.
+
 ### Added — FFmpeg Merge Support
 
 - Video-only formats (the common case for high-quality streams) are no longer shown

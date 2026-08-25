@@ -2,7 +2,10 @@ package com.mediavault.app.player
 
 import androidx.lifecycle.SavedStateHandle
 import com.mediavault.app.ui.screens.player.PlayerViewModel
+import com.mediavault.app.ui.screens.player.SleepTimerOption
+import com.mediavault.app.ui.screens.player.VideoResizeMode
 import com.mediavault.core.database.entity.MediaItemEntity
+import com.mediavault.core.model.MediaTrackInfo
 import com.mediavault.core.model.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,6 +38,7 @@ class PlayerViewModelTest {
     private lateinit var engine: FakePlayerEngine
     private lateinit var engineFactory: FakePlayerEngineFactory
     private lateinit var lastPlayedProvider: FakeLastPlayedProvider
+    private lateinit var audioPreferenceProvider: FakeAudioPreferenceProvider
 
     @Before
     fun setUp() {
@@ -43,6 +47,7 @@ class PlayerViewModelTest {
         engine = FakePlayerEngine()
         engineFactory = FakePlayerEngineFactory(engine)
         lastPlayedProvider = FakeLastPlayedProvider()
+        audioPreferenceProvider = FakeAudioPreferenceProvider()
     }
 
     @After
@@ -70,6 +75,7 @@ class PlayerViewModelTest {
         libraryRepository = libraryRepository,
         playerEngineFactory = engineFactory,
         lastPlayedProvider = lastPlayedProvider,
+        audioPreferenceProvider = audioPreferenceProvider,
     )
 
     @Test
@@ -174,6 +180,224 @@ class PlayerViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertEquals("a", lastPlayedProvider.id)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- -10s/+10s seek -----------------------------------------------------------------
+
+    @Test
+    fun `seekBy clamps within the item's duration bounds`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(positionMs = 5_000L, durationMs = 10_000L)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.seekBy(10_000L) // would overshoot past the end
+        dispatcher.scheduler.runCurrent()
+        assertEquals(10_000L, engine.seekCalls.last())
+
+        viewModel.seekBy(-100_000L) // would undershoot past zero
+        dispatcher.scheduler.runCurrent()
+        assertEquals(0L, engine.seekCalls.last())
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Loop / resize mode ---------------------------------------------------------------
+
+    @Test
+    fun `toggling loop flips the engine's looping state`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onLoopToggled()
+        dispatcher.scheduler.runCurrent()
+        assertTrue(engine.state.value.isLooping)
+
+        viewModel.onLoopToggled()
+        dispatcher.scheduler.runCurrent()
+        assertTrue(!engine.state.value.isLooping)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `selecting a resize mode updates ui state only, without touching the engine`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onResizeModeSelected(VideoResizeMode.ZOOM)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(VideoResizeMode.ZOOM, viewModel.uiState.value.resizeMode)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Preferred audio language -----------------------------------------------------------
+
+    @Test
+    fun `a stored preferred audio language is applied automatically when a matching track exists`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        audioPreferenceProvider.languageCode = "es"
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(
+            availableAudioTracks = listOf(
+                MediaTrackInfo(id = "0:0", languageCode = "en", label = null, isDefault = true),
+                MediaTrackInfo(id = "0:1", languageCode = "es", label = null, isDefault = false),
+            ),
+            selectedAudioTrackId = "0:0",
+        )
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("0:1", engine.state.value.selectedAudioTrackId)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `selecting an audio track with a language code persists it as the preferred language`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(
+            availableAudioTracks = listOf(MediaTrackInfo(id = "0:0", languageCode = "ja", label = null, isDefault = true)),
+        )
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onAudioTrackSelected("0:0")
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("ja", audioPreferenceProvider.languageCode)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Playlist previous/next -------------------------------------------------------------
+
+    @Test
+    fun `standalone media never exposes previous or next`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(!viewModel.uiState.value.hasPrevious)
+        assertTrue(!viewModel.uiState.value.hasNext)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `a playlist item exposes previous next and preserves order when navigating`() = runTest {
+        val a = item("a")
+        val b = item("b")
+        val c = item("c")
+        libraryRepository.setItems(listOf(a, b, c))
+        libraryRepository.playlistSiblings = listOf(a, b, c)
+
+        val viewModel = viewModel("b")
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(viewModel.uiState.value.hasPrevious)
+        assertTrue(viewModel.uiState.value.hasNext)
+
+        viewModel.onNext()
+        dispatcher.scheduler.runCurrent()
+        assertEquals("c", viewModel.uiState.value.item?.id)
+
+        viewModel.onPrevious()
+        dispatcher.scheduler.runCurrent()
+        assertEquals("b", viewModel.uiState.value.item?.id)
+
+        assertEquals(
+            listOf("file:///private/media/b.mp4", "file:///private/media/c.mp4", "file:///private/media/b.mp4"),
+            engine.prepareCalls,
+        )
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Completed playback -----------------------------------------------------------------
+
+    @Test
+    fun `reaching the end of a playlist item auto-advances to the next one`() = runTest {
+        val a = item("a")
+        val b = item("b")
+        libraryRepository.setItems(listOf(a, b))
+        libraryRepository.playlistSiblings = listOf(a, b)
+
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(isEnded = true, isPlaying = false)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("b", viewModel.uiState.value.item?.id)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `reaching the end of standalone media does not auto-advance`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(isEnded = true, isPlaying = false)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("a", viewModel.uiState.value.item?.id)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `tapping play after standalone media ends replays from the start`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(isEnded = true, isPlaying = false, positionMs = 60_000L)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onPlayPauseToggled()
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(0L, engine.seekCalls.last())
+        assertTrue(engine.playCalled)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Sleep timer -------------------------------------------------------------------------
+
+    @Test
+    fun `selecting the end-of-media sleep timer option pauses without auto-advancing at the end`() = runTest {
+        val a = item("a")
+        val b = item("b")
+        libraryRepository.setItems(listOf(a, b))
+        libraryRepository.playlistSiblings = listOf(a, b)
+
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onSleepTimerSelected(SleepTimerOption.END_OF_MEDIA)
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(isEnded = true, isPlaying = false)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("a", viewModel.uiState.value.item?.id)
+        assertEquals(SleepTimerOption.OFF, viewModel.uiState.value.sleepTimer)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `a fixed-duration sleep timer pauses playback once it elapses`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onSleepTimerSelected(SleepTimerOption.MIN_10)
+        dispatcher.scheduler.advanceTimeBy(10 * 60_000L + 1_000L)
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(engine.pauseCalled)
+        assertEquals(SleepTimerOption.OFF, viewModel.uiState.value.sleepTimer)
         viewModel.cancelBackgroundWorkForTesting()
     }
 }
