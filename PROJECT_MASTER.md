@@ -771,7 +771,7 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the FFmpeg Merge Support stage._
+_Last updated: 2026-08-25, after the FFmpeg Merge Support stage (including its on-device verification pass)._
 
 * **Completed downloads are now managed MediaVault Library items, playable inside the
   app.** New downloads land in app-private storage by default (no SAF folder picker in
@@ -1237,15 +1237,23 @@ _Prior state, before the real DownloadEngine stage:_
     a "Video + audio will be combined automatically after downloading" hint on paired
     rows; `DownloadsScreen` shows a distinct "Merging" status label and a Cancel-only
     action while `MERGING`.
-  - **Known limitation — not yet verified live on a physical device**: this stage's
-    work was verified via `./gradlew :app:assembleDebug` (succeeds) and the full JVM
-    unit test suite (143 tests across `core:domain` and `:app`, 0 failures, including new
-    `DownloadOptionTest` and split-stream-specific `MediaVaultDownloadEngineTest`/
-    `HomeViewModelTest` cases) — no device was available in this session to confirm an
-    actual on-device merge (real video-only + audio-only DASH streams, real FFmpeg
-    execution, real Library playback of the merged file). Per this project's own
-    Quality Standard (§32), that on-device pass is still required before this feature is
-    considered fully done, and should be the very next session's first step.
+  - **Verified live** (Pixel 7a): analyzed a real YouTube source (Blender Foundation's
+    "Sintel" open movie trailer) offering only split video-only/audio-only DASH streams,
+    selected the 1920x818 ("1080p"-tier) MP4 `avc1` paired option (176 MB estimate),
+    downloaded and watched the task move `Downloading` → `Completed` in the Downloads
+    screen (logcat confirmed FFmpegKit's native library actually loaded and ran a merge
+    session — `Loading ffmpeg-kit` / `Loaded ffmpeg-kit-custom-arm64-v8a-6.0-20251215` —
+    between the download finishing and the task completing, with no exceptions). Pulled
+    the finished 184,792,468-byte file off the device and parsed its MP4 box structure
+    directly (no ffprobe needed): both a `vide`- and a `soun`-handler `trak` are present,
+    proving the remux genuinely combined both streams rather than the task completing
+    with only one. The file appeared correctly in the Library (`14:48 • 1920x818 •
+    172 MB`) and played back normally in the internal Media3 player — video frames
+    rendered and the seek position advanced in real time (0:03 → 0:20 over ~4 real
+    seconds), and `dumpsys audio` showed a genuine `AudioTrack` player started by
+    `com.mediavault.app` at the same time, confirming audio was actually decoding and
+    playing, not just a silent video. This closes out the on-device verification gap
+    called out when this stage's code was first committed.
 
 Not yet started: torrent downloading, user-selected-folder/full-device media scanning
 (the Library only indexes MediaVault-managed downloads so far — see the private-library
@@ -1537,14 +1545,12 @@ stage). Overloading it for "FFmpeg is remuxing two files" would make `DownloadsS
 and process-death recovery unable to tell the two apart, so a new, distinct terminal-
 adjacent status was added to the existing enum instead.
 
-**Consequence — not yet verified on a physical device:** unlike every prior stage's
-decision log entries, this one was completed and verified only via `./gradlew
-assembleDebug` and the full JVM unit test suite (no Robolectric/Mockito in this project,
-same limitation as `MediaVaultDownloadEngine`/`Media3PlayerEngine` before it) — no
-physical device was available in this session. Per §32's Quality Standard, a live
-on-device pass (a real video-only + audio-only source, an actual FFmpeg merge, and
-playback of the resulting file from the Library) is still outstanding and should be the
-first thing the next session does, before this feature is considered fully verified.
+**Consequence — verified live on a physical device (Pixel 7a):** the on-device pass this
+entry originally flagged as outstanding has since been completed — real split-stream
+source, real FFmpeg merge (confirmed via logcat and by parsing the resulting file's MP4
+box structure for both a video and an audio track), and real playback of the merged file
+from the Library through the Media3 player, with a genuine `AudioTrack` audio session
+confirmed via `dumpsys audio`. See §34's Current Project State for the full walkthrough.
 
 ---
 

@@ -28,9 +28,13 @@ a tagged release; entries below track development stages instead of version numb
 - Room database bumped to schema version 4 with another real, additive migration (the
   second stream's format id and cache path) — every pre-existing download row is
   unaffected, exactly as before this feature existed.
-- **Not yet verified on a physical device this session** — verified via
-  `./gradlew assembleDebug` and the full unit test suite (143 tests, 0 failures) only;
-  see `PROJECT_MASTER.md` §34/§37 for the outstanding on-device verification step.
+- **Verified live on a physical device (Pixel 7a)**: analyzed a real split-stream
+  YouTube source (Blender Foundation's "Sintel" trailer), downloaded the 1080p-tier
+  paired video+audio option, watched it complete, confirmed via logcat that FFmpegKit
+  actually ran a merge session, confirmed the finished file's MP4 box structure contains
+  both a video and an audio track (parsed directly, no ffprobe needed), and played it
+  back successfully in the internal Media3 player with a real `AudioTrack` audio session
+  — see `PROJECT_MASTER.md` §34/§37 for the full walkthrough.
 
 ### Added — Private Library + In-App Playback Foundation
 
