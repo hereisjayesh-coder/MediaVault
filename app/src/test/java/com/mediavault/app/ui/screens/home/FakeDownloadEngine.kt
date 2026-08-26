@@ -19,6 +19,7 @@ class FakeDownloadEngine : DownloadEngine {
     val pausedPlaylists = mutableListOf<String>()
     val cancelledPlaylists = mutableListOf<String>()
     val retriedFailedInPlaylists = mutableListOf<String>()
+    val removed = mutableListOf<String>()
     var alreadyDownloadedSourceMediaIds: Set<String> = emptySet()
 
     private val tasks = MutableStateFlow<List<DownloadProgress>>(emptyList())
@@ -57,6 +58,10 @@ class FakeDownloadEngine : DownloadEngine {
 
     override fun retryFailedInPlaylist(playlistId: String) {
         retriedFailedInPlaylists.add(playlistId)
+    }
+
+    override fun remove(taskId: String) {
+        removed.add(taskId)
     }
 
     override suspend fun isAlreadyDownloaded(sourceMediaId: String): Boolean =

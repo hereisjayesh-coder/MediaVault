@@ -34,6 +34,15 @@ interface DownloadEngine {
     fun cancel(taskId: String)
     fun retry(taskId: String)
 
+    /**
+     * Deletes this task's own queue record — never the Library media a completed task produced
+     * (that's a separate row in a separate table, only ever removed via the Library's own
+     * delete action). A no-op for anything still active or queued; only a
+     * [com.mediavault.core.model.DownloadStatus.FAILED], [com.mediavault.core.model.DownloadStatus.CANCELLED],
+     * or [com.mediavault.core.model.DownloadStatus.COMPLETED] task can be removed this way.
+     */
+    fun remove(taskId: String)
+
     /** Pauses every currently-active/queued task belonging to [playlistId]; leaves finished ones alone. */
     fun pausePlaylist(playlistId: String)
 

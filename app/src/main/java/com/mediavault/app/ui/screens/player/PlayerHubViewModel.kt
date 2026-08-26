@@ -3,7 +3,6 @@ package com.mediavault.app.ui.screens.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mediavault.app.library.LibraryRepository
-import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.core.database.entity.MediaItemEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -15,20 +14,23 @@ import kotlinx.coroutines.launch
 
 data class PlayerHubUiState(
     val isLoading: Boolean = true,
-    val item: MediaItemEntity? = null,
-)
+    val continueWatching: List<MediaItemEntity> = emptyList(),
+    val recentlyWatched: List<MediaItemEntity> = emptyList(),
+) {
+    val isEmpty: Boolean get() = continueWatching.isEmpty() && recentlyWatched.isEmpty()
+}
 
 /**
- * Backs the Player *tab* — a lightweight "what was last playing" card in the normal five-tab
- * layout, deliberately not a real playback session (no [com.mediavault.core.domain.player.PlayerEngine]
- * is created here). Tapping it opens the dedicated, immersive `player/{id}` route, same as a
- * Library item — see the player redesign's architecture note in PROJECT_MASTER.md for why the
- * tab and the actual player are no longer the same screen.
+ * Backs the Player *tab* — a real multi-item "what have I been watching" experience in the
+ * normal five-tab layout, deliberately not a real playback session (no
+ * [com.mediavault.core.domain.player.PlayerEngine] is created here). Tapping any row opens the
+ * dedicated, immersive `player/{id}` route, same as a Library item — see the player redesign's
+ * architecture note in PROJECT_MASTER.md for why the tab and the actual player are no longer the
+ * same screen.
  */
 @HiltViewModel
 class PlayerHubViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
-    private val lastPlayedProvider: LastPlayedProvider,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerHubUiState())
@@ -42,9 +44,11 @@ class PlayerHubViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            val id = lastPlayedProvider.currentId()
-            val item = id?.let { libraryRepository.getById(it) }?.takeIf { libraryRepository.fileExists(it) }
-            _uiState.update { it.copy(isLoading = false, item = item) }
+            val history = libraryRepository.getWatchHistory().filter { libraryRepository.fileExists(it) }
+            val sections = history.toWatchHistorySections()
+            _uiState.update {
+                it.copy(isLoading = false, continueWatching = sections.continueWatching, recentlyWatched = sections.recentlyWatched)
+            }
         }
     }
 }

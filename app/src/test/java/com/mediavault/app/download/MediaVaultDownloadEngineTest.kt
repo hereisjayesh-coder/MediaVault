@@ -247,4 +247,22 @@ class MediaVaultDownloadEngineTest {
 
         assertEquals("Untitled", item.title)
     }
+
+    // --- Remove eligibility --------------------------------------------------------------
+
+    @Test
+    fun `a completed, failed, or cancelled task can be removed`() {
+        assertTrue(sampleTask(DownloadStatus.COMPLETED).isRemovable())
+        assertTrue(sampleTask(DownloadStatus.FAILED).isRemovable())
+        assertTrue(sampleTask(DownloadStatus.CANCELLED).isRemovable())
+    }
+
+    @Test
+    fun `an active or queued task can never be removed out from under itself`() {
+        assertTrue(!sampleTask(DownloadStatus.DOWNLOADING).isRemovable())
+        assertTrue(!sampleTask(DownloadStatus.PROCESSING).isRemovable())
+        assertTrue(!sampleTask(DownloadStatus.MERGING).isRemovable())
+        assertTrue(!sampleTask(DownloadStatus.QUEUED).isRemovable())
+        assertTrue(!sampleTask(DownloadStatus.PAUSED).isRemovable())
+    }
 }

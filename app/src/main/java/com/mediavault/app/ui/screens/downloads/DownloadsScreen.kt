@@ -8,40 +8,38 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.webkit.MimeTypeMap
-import coil3.compose.AsyncImage
 import com.mediavault.app.R
 import com.mediavault.app.ui.components.EmptyStateCard
+import com.mediavault.app.ui.components.MediaThumbnail
 import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
@@ -54,16 +52,42 @@ import com.mediavault.core.model.DownloadStatus
 fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
 
+    // Only a COMPLETED task's removal needs confirmation — its Library media staying put isn't
+    // obvious from the button alone, and this is the one removal a user could plausibly mistake
+    // for deleting the actual file (see DownloadEngine.remove's contract). Failed/cancelled
+    // removals never touch any media, so they act immediately with no dialog.
+    var pendingCompletedRemoval by remember { mutableStateOf<DownloadProgress?>(null) }
+
     DownloadsScreenContent(
         uiState = uiState,
         onPause = viewModel::pause,
         onResume = viewModel::resume,
         onCancel = viewModel::cancel,
         onRetry = viewModel::retry,
+        onRemove = { task ->
+            if (task.status == DownloadStatus.COMPLETED) pendingCompletedRemoval = task else viewModel.remove(task.taskId)
+        },
         onPausePlaylist = viewModel::pausePlaylist,
         onCancelPlaylist = viewModel::cancelPlaylist,
         onRetryFailedInPlaylist = viewModel::retryFailedInPlaylist,
     )
+
+    val target = pendingCompletedRemoval
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { pendingCompletedRemoval = null },
+            title = { Text(stringResource(R.string.downloads_remove_title)) },
+            text = { Text(stringResource(R.string.downloads_remove_body_completed)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.remove(target.taskId); pendingCompletedRemoval = null }) {
+                    Text(stringResource(R.string.downloads_remove_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCompletedRemoval = null }) { Text(stringResource(R.string.downloads_dialog_cancel)) }
+            },
+        )
+    }
 }
 
 @Composable
@@ -73,6 +97,7 @@ private fun DownloadsScreenContent(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onRemove: (DownloadProgress) -> Unit,
     onPausePlaylist: (String) -> Unit,
     onCancelPlaylist: (String) -> Unit,
     onRetryFailedInPlaylist: (String) -> Unit,
@@ -97,10 +122,7 @@ private fun DownloadsScreenContent(
         return
     }
 
-    val active = uiState.tasks.filter { it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.PROCESSING }
-    val queued = uiState.tasks.filter { it.status == DownloadStatus.QUEUED || it.status == DownloadStatus.PAUSED }
-    val completed = uiState.tasks.filter { it.status == DownloadStatus.COMPLETED }
-    val failed = uiState.tasks.filter { it.status == DownloadStatus.FAILED || it.status == DownloadStatus.CANCELLED }
+    val sections = uiState.tasks.groupBySection()
 
     LazyColumn(
         modifier = Modifier
@@ -121,6 +143,7 @@ private fun DownloadsScreenContent(
                     onResume = onResume,
                     onCancel = onCancel,
                     onRetry = onRetry,
+                    onRemove = onRemove,
                     onPausePlaylist = { onPausePlaylist(playlist.playlistId) },
                     onCancelPlaylist = { onCancelPlaylist(playlist.playlistId) },
                     onRetryFailedInPlaylist = { onRetryFailedInPlaylist(playlist.playlistId) },
@@ -128,25 +151,27 @@ private fun DownloadsScreenContent(
             }
         }
 
-        downloadSection(R.string.downloads_section_active, active, onPause, onResume, onCancel, onRetry)
-        downloadSection(R.string.downloads_section_queued, queued, onPause, onResume, onCancel, onRetry)
-        downloadSection(R.string.downloads_section_failed, failed, onPause, onResume, onCancel, onRetry)
-        downloadSection(R.string.downloads_section_completed, completed, onPause, onResume, onCancel, onRetry)
+        downloadSection(R.string.downloads_section_active, sections[DownloadSection.ACTIVE], onPause, onResume, onCancel, onRetry, onRemove)
+        downloadSection(R.string.downloads_section_queued, sections[DownloadSection.QUEUED], onPause, onResume, onCancel, onRetry, onRemove)
+        downloadSection(R.string.downloads_section_failed, sections[DownloadSection.FAILED], onPause, onResume, onCancel, onRetry, onRemove)
+        downloadSection(R.string.downloads_section_cancelled, sections[DownloadSection.CANCELLED], onPause, onResume, onCancel, onRetry, onRemove)
+        downloadSection(R.string.downloads_section_completed, sections[DownloadSection.COMPLETED], onPause, onResume, onCancel, onRetry, onRemove)
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.downloadSection(
+private fun LazyListScope.downloadSection(
     titleRes: Int,
-    tasks: List<DownloadProgress>,
+    tasks: List<DownloadProgress>?,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onRemove: (DownloadProgress) -> Unit,
 ) {
-    if (tasks.isEmpty()) return
+    if (tasks.isNullOrEmpty()) return
     item { SectionLabel(text = stringResource(titleRes)) }
     items(tasks, key = { it.taskId }) { task ->
-        DownloadTaskCard(task = task, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry)
+        DownloadTaskCard(task = task, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry, onRemove = onRemove)
     }
 }
 
@@ -158,28 +183,14 @@ private fun PlaylistGroupCard(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onRemove: (DownloadProgress) -> Unit,
     onPausePlaylist: () -> Unit,
     onCancelPlaylist: () -> Unit,
     onRetryFailedInPlaylist: () -> Unit,
 ) {
     MediaVaultCard {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                modifier = Modifier
-                    .width(64.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp)),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                if (playlist.playlistThumbnailUrl != null) {
-                    AsyncImage(
-                        model = playlist.playlistThumbnailUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-            }
+            MediaThumbnail(thumbnailUrl = playlist.playlistThumbnailUrl, mediaType = null, width = 64.dp)
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = playlist.playlistTitle ?: stringResource(R.string.downloads_section_playlists),
@@ -224,7 +235,7 @@ private fun PlaylistGroupCard(
 
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             items.forEach { item ->
-                PlaylistItemStatusRow(item = item, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry)
+                PlaylistItemStatusRow(item = item, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry, onRemove = onRemove)
             }
         }
     }
@@ -237,6 +248,7 @@ private fun PlaylistItemStatusRow(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onRemove: (DownloadProgress) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -255,7 +267,7 @@ private fun PlaylistItemStatusRow(
             color = statusColor(item.status),
         )
         when (item.status) {
-            DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING ->
+            DownloadStatus.DOWNLOADING, DownloadStatus.PROCESSING, DownloadStatus.MERGING ->
                 TextButton(onClick = { onPause(item.taskId) }) { Text(stringResource(R.string.downloads_action_pause)) }
 
             DownloadStatus.PAUSED ->
@@ -267,7 +279,8 @@ private fun PlaylistItemStatusRow(
             DownloadStatus.QUEUED, DownloadStatus.ANALYZING ->
                 TextButton(onClick = { onCancel(item.taskId) }) { Text(stringResource(R.string.downloads_action_cancel)) }
 
-            else -> Unit
+            DownloadStatus.CANCELLED, DownloadStatus.COMPLETED ->
+                TextButton(onClick = { onRemove(item) }) { Text(stringResource(R.string.downloads_action_remove)) }
         }
     }
 }
@@ -279,6 +292,7 @@ private fun DownloadTaskCard(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onRemove: (DownloadProgress) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -290,28 +304,7 @@ private fun DownloadTaskCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(
-                modifier = Modifier
-                    .width(80.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp)),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                if (task.thumbnailUrl != null) {
-                    AsyncImage(
-                        model = task.thumbnailUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                } else {
-                    androidx.compose.material3.Icon(
-                        imageVector = Icons.Default.BrokenImage,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            MediaThumbnail(thumbnailUrl = task.thumbnailUrl, mediaType = null)
 
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = task.title ?: task.taskId, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
@@ -380,9 +373,21 @@ private fun DownloadTaskCard(
                             }
                         }
 
-                        DownloadStatus.FAILED, DownloadStatus.CANCELLED -> {
+                        DownloadStatus.FAILED -> {
                             OutlinedButton(onClick = { onRetry(task.taskId) }) {
                                 Text(stringResource(R.string.downloads_action_retry))
+                            }
+                            OutlinedButton(onClick = { onRemove(task) }) {
+                                Text(stringResource(R.string.downloads_action_remove))
+                            }
+                        }
+
+                        DownloadStatus.CANCELLED -> {
+                            OutlinedButton(onClick = { onRetry(task.taskId) }) {
+                                Text(stringResource(R.string.downloads_action_retry))
+                            }
+                            OutlinedButton(onClick = { onRemove(task) }) {
+                                Text(stringResource(R.string.downloads_action_remove))
                             }
                         }
 
@@ -392,6 +397,9 @@ private fun DownloadTaskCard(
                                 OutlinedButton(onClick = { openDownloadedFile(context, destinationUri) }) {
                                     Text(stringResource(R.string.downloads_action_open))
                                 }
+                            }
+                            OutlinedButton(onClick = { onRemove(task) }) {
+                                Text(stringResource(R.string.downloads_action_remove))
                             }
                         }
 
@@ -415,16 +423,17 @@ private fun openDownloadedFile(context: android.content.Context, destinationUri:
     runCatching { context.startActivity(intent) }
 }
 
+@Composable
 private fun statusLabel(status: DownloadStatus): String = when (status) {
-    DownloadStatus.QUEUED -> "Queued"
-    DownloadStatus.ANALYZING -> "Checking quality…"
-    DownloadStatus.DOWNLOADING -> "Downloading"
-    DownloadStatus.PROCESSING -> "Processing"
-    DownloadStatus.MERGING -> "Merging"
-    DownloadStatus.COMPLETED -> "Completed"
-    DownloadStatus.PAUSED -> "Paused"
-    DownloadStatus.CANCELLED -> "Cancelled"
-    DownloadStatus.FAILED -> "Failed"
+    DownloadStatus.QUEUED -> stringResource(R.string.downloads_status_queued)
+    DownloadStatus.ANALYZING -> stringResource(R.string.downloads_status_analyzing)
+    DownloadStatus.DOWNLOADING -> stringResource(R.string.downloads_status_downloading)
+    DownloadStatus.PROCESSING -> stringResource(R.string.downloads_status_processing)
+    DownloadStatus.MERGING -> stringResource(R.string.downloads_status_merging)
+    DownloadStatus.COMPLETED -> stringResource(R.string.downloads_status_completed)
+    DownloadStatus.PAUSED -> stringResource(R.string.downloads_status_paused)
+    DownloadStatus.CANCELLED -> stringResource(R.string.downloads_status_cancelled)
+    DownloadStatus.FAILED -> stringResource(R.string.downloads_status_failed)
 }
 
 @Composable

@@ -27,4 +27,6 @@ data class MediaItemEntity(
     val lastPlaybackPositionMs: Long,
     val isFavorite: Boolean,
     val addedAtEpochMs: Long,
+    /** Set whenever playback activity is recorded (see `LibraryRepository.updatePlaybackPosition`); null until this item is ever played. The basis for the Player tab's Continue Watching/Recently Watched ordering. */
+    val lastWatchedAtEpochMs: Long? = null,
 )

@@ -29,4 +29,7 @@ class FakeMediaItemDao : MediaItemDao {
 
     override suspend fun getBySourceDownloadTaskIds(taskIds: List<String>): List<MediaItemEntity> =
         state.value.filter { it.sourceDownloadTaskId in taskIds }
+
+    override suspend fun getRecentlyWatched(limit: Int): List<MediaItemEntity> =
+        state.value.filter { it.lastWatchedAtEpochMs != null }.sortedByDescending { it.lastWatchedAtEpochMs }.take(limit)
 }

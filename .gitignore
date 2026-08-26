@@ -21,3 +21,6 @@ local.properties
 output.json
 __pycache__/
 *.pyc
+
+# Personal, machine-specific Claude Code settings (e.g. local JDK/SDK paths) — never shared.
+.claude/settings.local.json

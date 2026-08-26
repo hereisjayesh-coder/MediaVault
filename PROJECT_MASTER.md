@@ -1612,13 +1612,73 @@ _Prior state, before the real DownloadEngine stage:_
     `clear()`) rather than calling `ViewModel.clear()` directly — that method is
     `internal` to the `lifecycle-viewmodel` module (confirmed against the pinned 2.11.0
     source), so it isn't callable from app-module test code.
-  - **Verification pending — no physical device available this session** (Pixel 7a
-    unavailable per instruction). This session has no JDK/Android SDK installed either
-    (also per instruction, not installed), so the new tests were reviewed carefully by
-    hand against the exact pinned dependency version but were not compiled or executed.
-    Building, running `PlayerViewModelTest`, and the actual Library↔Player fade/no-black-
-    frame/position-preservation walkthrough on the Pixel 7a all remain to be done in
-    Android Studio before this stage can be called verified.
+  - **Verification completed in a later session, and it found a real bug**: the
+    `TextureView` half of this stage broke actual video rendering (solid black in both
+    embedded and fullscreen layouts, confirmed via the device's own native screenshot
+    mechanism, not just `adb screencap`) and was reverted back to the default
+    `SurfaceView`. `PlayerViewModelTest`'s lifecycle cases and the `NavHost` crossfade
+    itself were unaffected and verified working. See the 2026-08-27 Player/Navigation/
+    Downloads Stabilization entry below for the full pass.
+
+* **Player, Navigation & Downloads UX stabilization**: a milestone fixing a batch of
+  closely-related defects across Downloads, the dedicated Player, the Player tab, and
+  Library, verified live end-to-end on a Pixel 7a using a real Android SDK/JDK/adb
+  toolchain (Android Studio's bundled JBR, the project's own SDK install, and adb —
+  located on-disk and wired into this project's local Claude Code settings rather than
+  installing anything new; see this stage's own decision log entry below).
+  - **Downloads**: `DownloadEngine.remove(taskId)` (new) deletes only a
+    FAILED/CANCELLED/COMPLETED task's own queue row — never touches
+    `mediaItemDao`/Library media, by construction (the two are different tables, and
+    `remove()` doesn't reference the media DAO at all). Wired to a "Remove" button per
+    task and per playlist item, with a confirmation dialog only for removing a
+    COMPLETED task (the one case a user could plausibly mistake for deleting the actual
+    file). Fixed a real bug where a `MERGING` (split video+audio) task matched no
+    section filter at all and vanished from the list mid-merge; `MERGING` now counts as
+    `Active`. `Cancelled` is now its own section, previously merged into `Failed`.
+  - **Player gesture contract rewritten**: single tap only toggles controls and never
+    seeks (previously, tapping the left/right thirds seeked ±10s on a single tap —
+    against this milestone's explicit contract); double-tap left/right now seeks ∓10s,
+    triple-tap ∓30s; long-press-to-2x unchanged. The tap-count/zone decision table
+    (`resolveTapAction`/`tapZoneFor`, `ui/screens/player/PlayerGestures.kt`) is pure and
+    unit-tested (10 cases) separately from the pointer-timing state machine that feeds
+    it, which now counts up to 3 quick taps in the same third within the platform's own
+    double-tap window before committing to an action.
+  - **Player tab real watch history**: `MediaItemEntity.lastWatchedAtEpochMs` (Room
+    migration 4→5, backfilled from `addedAtEpochMs` for any row already mid-playback so
+    existing in-progress items don't vanish on upgrade) drives a genuine Continue
+    Watching / Recently Watched split (`ui/screens/player/WatchHistory.kt`'s pure,
+    unit-tested `toWatchHistorySections()`), replacing the old single-item card.
+  - **Library menu narrowed by origin**: an imported/`content://` item's three-dot menu
+    now hides Save to device and Rename — neither can act meaningfully on a file
+    MediaVault doesn't own (Rename already silently no-ops there; Save to device is a
+    copy of a file already outside MediaVault). MediaVault-owned downloads keep the
+    full menu unchanged.
+  - **`MediaThumbnail`** (`ui/components/AppComponents.kt`) centralizes the
+    thumbnail-with-fallback block Downloads, Library, and the Player tab had each
+    implemented separately.
+  - **Two real defects found only by live device testing, both fixed and re-verified**:
+    (1) the previous stage's `TextureView` change (above) silently broke video
+    rendering entirely; (2) the new watch-history card's `Row` was missing
+    `fillMaxWidth()` beneath a `weight(1f)` title column, and its thumbnail column had
+    no fixed width beneath a `fillMaxWidth()` progress bar — together this starved the
+    title column to zero width, rendering the remaining-time label one character per
+    line instead of as text. Neither was visible from source review alone.
+  - **Verified live on a physical device (Pixel 7a)**: Downloads remove (task
+    disappears from its list; Library entry for the same title independently confirmed
+    untouched); Library→Player→back; the Player tab showing multiple real Continue
+    Watching/Recently Watched entries simultaneously; single-tap confirmed never
+    seeking (position advanced only by real elapsed time); multi-tap confirmed seeking
+    in the correct direction; long-press-2x confirmed via the on-screen "2.0x speed"
+    bubble; portrait and landscape-fullscreen playback with real, correctly-rendered
+    video; the audio-track menu against a legitimate local multi-track test fixture (2
+    real audio tracks, "en"/"es", selection reflected live) rather than claiming
+    untested coverage; rapid tab-switching with no stale state, clipped cards, or
+    visual artifacts. 169 unit tests pass, debug APK builds and installs clean.
+    **Not exercised this session**: exact ±10s/±30s seek magnitudes live (adb-driven
+    tap timing isn't precise enough to isolate a seek from concurrent normal playback
+    advancing the position at the same time — magnitude correctness is instead
+    guaranteed by `PlayerGesturesTest`'s exact-value assertions) and Picture-in-Picture
+    end-to-end.
 
 Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
@@ -2209,7 +2269,10 @@ frame" and "player surface and navigation transition stay synchronized" were bot
 pointing at. `TextureView` is a plain `View` that participates in the ordinary draw
 pipeline (alpha/animation included) at a small extra compositing cost — the standard,
 documented fix for a player embedded in an animated transition, and safe here since no
-part of this codebase uses DRM/secure-surface playback.
+part of this codebase uses DRM/secure-surface playback. **This reasoning turned out
+correct in theory but wrong in practice** — see the Consequence note below: it broke
+real frame rendering outright once tested live, for reasons not fully root-caused, and
+was reverted.
 
 **Why lifecycle/release behavior needed no changes:** Navigation-Compose keeps a popped
 `NavBackStackEntry`'s content (and its `ViewModel`) alive until its own exit transition
@@ -2229,15 +2292,78 @@ so app-module test code cannot call it directly. Putting the `ViewModel` into a 
 which internally calls `viewModel.clear()` for everything it holds — is the standard,
 same-module-agnostic way to exercise `onCleared()` from a JVM unit test.
 
-**Consequence — verification is pending, not done:** this session had no physical
-device available (Pixel 7a unavailable) and, per instruction, no JDK/Android SDK was
-installed to compile or run the new `PlayerViewModelTest` cases. Everything above was
-checked by careful manual source review, including fetching the exact pinned
-`lifecycle-viewmodel:2.11.0` source to confirm `clear()`'s visibility before writing a
-test against it — but the code has not been compiled, the tests have not been run, and
-the actual Library↔Player fade (no black frame, surface/transition sync, position
-preserved) has not been watched on the device. All three remain outstanding, to be done
-in Android Studio.
+**Consequence — the `TextureView` half of this was wrong, found by later device testing:**
+this stage's own verification was deferred (no device, no JDK/SDK available in that
+session — everything above was checked by manual source review only, including fetching
+the exact pinned `lifecycle-viewmodel:2.11.0` source to confirm `clear()`'s visibility
+before writing a test against it). Once a Pixel 7a and a real toolchain became available,
+live testing found the `TextureView` change was silently breaking real video rendering:
+the video area came up solid black — on every source tried, in both embedded and
+fullscreen layouts, confirmed with the device's own native screenshot mechanism (not an
+`adb screencap` artifact) — while audio and position continued advancing normally
+underneath. Reverted to the default `PlayerView(context)` (`SurfaceView`) construction;
+see the 2026-08-27 Player/Navigation/Downloads Stabilization entry below for the full
+device-verification pass. The `NavHost` crossfade itself was unaffected and is unchanged.
+The exact mechanism of the `TextureView` failure was not root-caused beyond this — the
+known-working default was restored rather than debugging the broken path further, since
+correct rendering matters more than the original cosmetic pop it was chasing.
+
+---
+
+### 2026-08-27 — Player, Navigation & Downloads UX stabilization; real device toolchain wired in
+
+**Decision:** Rather than assuming the previous stage's deferred verification was fine,
+this stage located the Android toolchain already installed on this machine (Android
+Studio's bundled JBR at a non-default path, its SDK, and `adb`) and wired
+`JAVA_HOME`/`ANDROID_HOME`/`ANDROID_SDK_ROOT` into this project's own
+`.claude/settings.local.json` (git-ignored, machine-specific) rather than installing
+anything new or touching global Windows environment variables. That unblocked actually
+building, testing, and installing on the connected Pixel 7a — which is what surfaced the
+`TextureView` regression above; source review alone had not. With real verification
+available, this stage then fixed a batch of Downloads/Player/Player-tab/Library defects
+in the same pass — see §34's Current Project State for the itemized list and the full
+device-verification results.
+
+**Why the toolchain was wired into project-local Claude Code settings, not global
+Windows env vars:** explicit instruction to avoid touching global/user Windows
+environment variables unnecessarily. `.claude/settings.local.json`'s `env` block scopes
+`JAVA_HOME`/`ANDROID_HOME`/`ANDROID_SDK_ROOT` to this project's Claude Code sessions only
+— every other application on the machine is unaffected. `PATH` was deliberately left
+alone: a single literal value can't safely extend `PATH` for both the Bash tool (Git
+Bash) and the PowerShell tool at once, and if the underlying mechanism replaces rather
+than merges the variable, it would silently break every other command-line tool for
+every future session in this project. `JAVA_HOME`/`ANDROID_HOME` alone are sufficient —
+they're the actual mechanism Gradle's daemon-JVM criteria and the Android Gradle Plugin
+look for, confirmed by `gradlew -v` reporting the correct launcher/daemon JVM with no
+network fetch.
+
+**Why the gesture rewrite is a bigger change than "add double/triple tap":** the
+previous single-tap-seeks-on-left/right-third behavior was in direct conflict with this
+stage's explicit contract ("single tap = show/hide controls only, never seek"), so this
+wasn't additive — the entire tap-resolution path in `VideoArea`'s `awaitEachGesture`
+block was rewritten. Counting a 2nd/3rd tap requires waiting out the platform's
+double-tap window after every tap before committing to an action (otherwise a double or
+triple tap could never be distinguished from a single one), which is why long-press
+detection still has to win immediately on the *first* tap — a real long-press must never
+be delayed behind tap-counting logic for taps that haven't happened yet.
+
+**Why Continue Watching/Recently Watched needed a schema migration, not just new
+ViewModel logic:** there was no existing signal for "when was this last watched" —
+`lastPlaybackPositionMs` records *where*, not *when*. Migration 4→5 adds
+`lastWatchedAtEpochMs`, stamped by the same `LibraryRepository.updatePlaybackPosition`
+call every playback session already makes. The migration backfills it from
+`addedAtEpochMs` for any row already mid-playback specifically so a user's existing
+in-progress items don't silently vanish from Continue Watching the moment they update —
+confirmed this would otherwise happen by installing over an existing v4 database with
+a "Lua Tools..." item genuinely in progress.
+
+**Consequence — verified live on a physical device (Pixel 7a), including two defects
+device-testing itself surfaced and this session fixed:** see §34's Current Project State
+for the itemized pass/not-exercised list. Both newly-found defects (the `TextureView`
+video-rendering break, and a `Row`/`weight`/`fillMaxWidth` layout bug that rendered the
+watch-history remaining-time label one character per line) were confirmed fixed by
+rebuilding, reinstalling, and re-screenshotting on the same device before this stage was
+called done — neither fix was accepted on code-review confidence alone.
 
 ---
 

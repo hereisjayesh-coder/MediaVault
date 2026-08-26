@@ -5,10 +5,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -18,9 +26,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import com.mediavault.core.model.MediaType
 
 /** Top bar used consistently across screens: the logo mark, a screen title, and an optional trailing action (e.g. Library's "Add media" button). */
 @Composable
@@ -79,6 +92,50 @@ fun MediaVaultCard(
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             content()
+        }
+    }
+}
+
+/**
+ * The 16:9 thumbnail box used by every media row (Downloads, Library, Player tab): a real
+ * image when [thumbnailUrl] is set, otherwise a media-type icon over a neutral surface — never
+ * a blank/broken box. Centralized so the three screens can't drift into subtly different
+ * fallback treatments.
+ */
+@Composable
+fun MediaThumbnail(
+    thumbnailUrl: String?,
+    /** Null when the caller doesn't know the type yet (e.g. an in-flight download) — falls back to a generic "no thumbnail" icon rather than guessing video vs. audio. */
+    mediaType: MediaType?,
+    modifier: Modifier = Modifier,
+    width: Dp = 80.dp,
+) {
+    Surface(
+        modifier = modifier
+            .width(width)
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(6.dp)),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        if (thumbnailUrl != null) {
+            AsyncImage(
+                model = thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    imageVector = when (mediaType) {
+                        MediaType.AUDIO -> Icons.Default.Audiotrack
+                        MediaType.VIDEO -> Icons.Default.VideoLibrary
+                        null -> Icons.Default.BrokenImage
+                    },
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

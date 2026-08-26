@@ -9,22 +9,62 @@ a tagged release; entries below track development stages instead of version numb
 
 - Navigating between the Library and the dedicated Player screen (and between any two
   routes) now crossfades over 220ms instead of cutting instantly.
-- Fixed the video surface visibly popping in/out during that transition a beat behind
-  the rest of the screen: `PlayerView` now renders via a `TextureView` (a themed
-  `ContextThemeWrapper` + new `styles.xml`) instead of the default `SurfaceView`, which
-  composites outside Compose's normal draw/alpha pipeline and can't fade in step with
-  an animated parent.
 - Playback position/state and engine release behavior were already correct and
   untouched — audio/video now keep running through the fade and stop only once it
-  finishes, instead of cutting off the instant back is pressed. Added targeted unit
-  tests for this exact boundary (`PlayerViewModelTest`): leaving the screen pauses and
+  finishes, instead of cutting off the instant back is pressed. Targeted unit tests
+  cover this exact boundary (`PlayerViewModelTest`): leaving the screen pauses and
   persists without releasing the engine, and clearing the ViewModel releases the engine
   and persists the final position.
-- **Verification pending — no physical device available this session** (Pixel 7a
-  unavailable). No JDK/Android SDK was installed this session either, so the new code
-  and tests were reviewed by hand but not compiled or run. Building, running the new
-  tests, and confirming the transition live on-device all remain to be done in Android
-  Studio.
+- **Correction, verified live on a physical device (Pixel 7a):** an earlier version of
+  this change forced `PlayerView` onto a `TextureView` (via a themed
+  `ContextThemeWrapper` + `styles.xml`) to fix the video surface popping during the
+  fade. On-device testing found this silently broke real frame rendering instead — the
+  video area came up solid black on every source tried, in both the embedded and
+  fullscreen layouts, while audio/position continued normally underneath. Reverted to
+  the default `SurfaceView` construction; see the Player/Navigation/Downloads
+  Stabilization entry below for the full verification.
+
+### Added — Player, Navigation & Downloads UX Stabilization
+
+- **Downloads**: added a real Remove action for Failed/Cancelled/Completed tasks
+  (`DownloadEngine.remove` — deletes only the task's own queue row, never the Library
+  media a completed task produced; a completed-task removal asks for confirmation with
+  copy that says so explicitly). Fixed a real bug where an in-progress split
+  video+audio download (`MERGING`) fell into no visible section at all, disappearing
+  from the list while it merged. Cancelled now has its own section, no longer merged
+  into Failed.
+- **Player gestures**: rewritten to the exact required contract — single tap only
+  shows/hides controls and never seeks; double-tap left/right seeks ∓10s; triple-tap
+  seeks ∓30s; long-press still gives temporary 2x, restoring the exact prior speed on
+  release. The zone/tap-count decision is a small, pure, unit-tested function
+  (`resolveTapAction`) separate from the pointer-timing plumbing.
+- **Player tab**: replaced the single-item "Continue watching" card with real Continue
+  Watching / Recently Watched sections showing every in-progress or finished item
+  (thumbnail, title, progress, remaining time, tap-to-resume) — added
+  `lastWatchedAtEpochMs` to the Library schema (migration 4→5, backfilled for
+  already-in-progress rows) to drive it.
+- **Library menu**: an imported/external item's three-dot menu now shows only
+  Play/Share/Details/Remove from Library — Save to device and Rename (neither of which
+  can act meaningfully on a file MediaVault doesn't own) no longer appear for it.
+  MediaVault-owned downloads keep the full menu.
+- Extracted a shared `MediaThumbnail` component (Downloads/Library/Player tab all used
+  near-identical thumbnail-with-fallback code).
+- **Verified live on a physical device (Pixel 7a)**: found and fixed two real defects
+  device-testing surfaced that no amount of code review would have caught — (1) the
+  `TextureView` change from the previous stage was silently breaking video rendering
+  entirely (see the corrected entry above); (2) the new watch-history card's `Row` was
+  missing `fillMaxWidth()` under a `weight(1f)` child, and its thumbnail column had no
+  fixed width under a `fillMaxWidth()` progress bar — together this collapsed the title
+  to zero width, rendering the remaining-time label one character per line. Both fixed
+  and re-verified on-device. Also confirmed: Downloads remove (task disappears, Library
+  media untouched), Library→Player→back, multi-item Continue Watching/Recently
+  Watched, single/double/triple-tap and long-press-2x on real touch input, portrait and
+  landscape-fullscreen playback, audio/subtitle track menus against a legitimate
+  multi-track local test fixture (2 audio + 2 subtitle streams — real content, not
+  claimed), and rapid tab-switching with no stale state or visual artifacts. 169 unit
+  tests pass. **Not exercised this session**: exact ±10s/±30s seek magnitudes live
+  (confirmed instead by unit test, since adb-driven tap timing isn't precise enough to
+  isolate a seek from concurrent playback) and Picture-in-Picture end-to-end.
 
 ### Added — Local Media Import & Privacy-First Storage/Export
 

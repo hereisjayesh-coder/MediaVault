@@ -81,6 +81,13 @@ interface LibraryRepository {
     suspend fun updatePlaybackPosition(id: String, positionMs: Long)
 
     /**
+     * Every ever-played item, most-recently-watched first (see [MediaItemEntity.lastWatchedAtEpochMs]),
+     * capped at [limit] — the Player tab's Continue Watching/Recently Watched source. Empty until
+     * the user has actually played something at least once.
+     */
+    suspend fun getWatchHistory(limit: Int = 30): List<MediaItemEntity>
+
+    /**
      * Every Library item downloaded as part of the same playlist as [item], in original
      * playlist order (including [item] itself) — the basis for the Player's Previous/Next
      * controls. Empty when [item] wasn't a playlist download, or when it was the only item
@@ -268,8 +275,10 @@ class AndroidLibraryRepository @Inject constructor(
 
     override suspend fun updatePlaybackPosition(id: String, positionMs: Long) {
         val item = dao.getById(id) ?: return
-        dao.update(item.copy(lastPlaybackPositionMs = positionMs))
+        dao.update(item.copy(lastPlaybackPositionMs = positionMs, lastWatchedAtEpochMs = System.currentTimeMillis()))
     }
+
+    override suspend fun getWatchHistory(limit: Int): List<MediaItemEntity> = dao.getRecentlyWatched(limit)
 
     override suspend fun getPlaylistSiblings(item: MediaItemEntity): List<MediaItemEntity> {
         val taskId = item.sourceDownloadTaskId ?: return emptyList()

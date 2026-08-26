@@ -45,3 +45,19 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         db.execSQL("ALTER TABLE download_tasks ADD COLUMN audioLocalCachePath TEXT")
     }
 }
+
+/**
+ * Adds the timestamp the Player tab's real Continue Watching / Recently Watched lists are
+ * ordered by, stamped from now on by `LibraryRepository.updatePlaybackPosition`. A pre-existing
+ * row already mid-playback (`lastPlaybackPositionMs > 0`) is backfilled using its own
+ * `addedAtEpochMs` as the best available stand-in for "last watched" — without this, every
+ * in-progress item a user already had would silently vanish from Continue Watching the moment
+ * they update, until they happened to resume it. A never-played row stays null, correctly
+ * excluded from both watch-history sections.
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE media_items ADD COLUMN lastWatchedAtEpochMs INTEGER")
+        db.execSQL("UPDATE media_items SET lastWatchedAtEpochMs = addedAtEpochMs WHERE lastPlaybackPositionMs > 0")
+    }
+}

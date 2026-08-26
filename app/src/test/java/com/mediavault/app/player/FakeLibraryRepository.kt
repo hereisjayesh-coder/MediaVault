@@ -47,5 +47,8 @@ class FakeLibraryRepository : LibraryRepository {
         state.value = state.value.map { if (it.id == id) it.copy(lastPlaybackPositionMs = positionMs) else it }
     }
 
+    override suspend fun getWatchHistory(limit: Int): List<MediaItemEntity> =
+        state.value.filter { it.lastWatchedAtEpochMs != null }.sortedByDescending { it.lastWatchedAtEpochMs }.take(limit)
+
     override suspend fun getPlaylistSiblings(item: MediaItemEntity): List<MediaItemEntity> = playlistSiblings
 }

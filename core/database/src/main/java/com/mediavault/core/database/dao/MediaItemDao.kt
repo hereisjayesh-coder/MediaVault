@@ -33,4 +33,8 @@ interface MediaItemDao {
     /** Used to resolve a playlist's sibling Library items from their download tasks' ids — see `LibraryRepository.getPlaylistSiblings`. */
     @Query("SELECT * FROM media_items WHERE sourceDownloadTaskId IN (:taskIds)")
     suspend fun getBySourceDownloadTaskIds(taskIds: List<String>): List<MediaItemEntity>
+
+    /** Every item ever played, most-recently-watched first — the Player tab's Continue Watching/Recently Watched source. */
+    @Query("SELECT * FROM media_items WHERE lastWatchedAtEpochMs IS NOT NULL ORDER BY lastWatchedAtEpochMs DESC LIMIT :limit")
+    suspend fun getRecentlyWatched(limit: Int): List<MediaItemEntity>
 }

@@ -10,18 +10,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -47,7 +43,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,12 +56,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil3.compose.AsyncImage
 import com.mediavault.app.R
 import com.mediavault.app.library.LibrarySortOrder
 import com.mediavault.app.library.MediaOrigin
@@ -75,11 +68,11 @@ import com.mediavault.app.library.mimeTypeFor
 import com.mediavault.app.library.origin
 import com.mediavault.app.ui.components.EmptyStateCard
 import com.mediavault.app.ui.components.MediaDetailsDialog
+import com.mediavault.app.ui.components.MediaThumbnail
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.screens.home.formatDurationLabel
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import com.mediavault.core.database.entity.MediaItemEntity
-import com.mediavault.core.model.MediaType
 import kotlinx.coroutines.delay
 
 @Composable
@@ -401,30 +394,7 @@ private fun LibraryItemCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                modifier = Modifier
-                    .width(80.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp)),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                if (item.thumbnailUrl != null) {
-                    AsyncImage(
-                        model = item.thumbnailUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                } else {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                        Icon(
-                            imageVector = if (item.mediaType == MediaType.AUDIO) Icons.Default.Audiotrack else Icons.Default.VideoLibrary,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+            MediaThumbnail(thumbnailUrl = item.thumbnailUrl, mediaType = item.mediaType)
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = item.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
@@ -483,18 +453,25 @@ private fun LibraryItemCard(
                         enabled = !libraryItem.isMissing,
                         onClick = { menuExpanded = false; onShare(item) },
                     )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.library_action_save_to_device)) },
-                        leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
-                        enabled = !libraryItem.isMissing,
-                        onClick = { menuExpanded = false; onSaveToDeviceRequested(item) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.library_action_rename)) },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        enabled = !libraryItem.isMissing,
-                        onClick = { menuExpanded = false; onRenameRequested(item) },
-                    )
+                    // Both actions need a real app-private file MediaVault itself owns — neither
+                    // works meaningfully on an imported/content:// item (there's no permission to
+                    // rename someone else's document, and "save to device" is meaningless for a
+                    // file that's already outside MediaVault). Hidden rather than shown-disabled:
+                    // a new user shouldn't have to guess why a control doesn't work.
+                    if (!item.isImported) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.library_action_save_to_device)) },
+                            leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
+                            enabled = !libraryItem.isMissing,
+                            onClick = { menuExpanded = false; onSaveToDeviceRequested(item) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.library_action_rename)) },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            enabled = !libraryItem.isMissing,
+                            onClick = { menuExpanded = false; onRenameRequested(item) },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(stringResource(if (item.isImported) R.string.library_action_remove else R.string.library_action_delete)) },
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },

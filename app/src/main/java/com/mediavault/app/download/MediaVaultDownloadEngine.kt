@@ -303,6 +303,20 @@ class MediaVaultDownloadEngine @Inject constructor(
         dao.update(task.copy(status = nextStatus, errorMessage = null, updatedAtEpochMs = System.currentTimeMillis()))
     }
 
+    override fun remove(taskId: String) {
+        engineScope.launch {
+            val task = dao.getById(taskId) ?: return@launch
+            if (!task.isRemovable()) return@launch
+            // Terminal already (isRemovable() guarantees FAILED/CANCELLED/COMPLETED), but a
+            // stray cache file from an interrupted attempt can still be sitting there — clean
+            // it up same as cancel() does. Never touches mediaItemDao: a COMPLETED task's
+            // Library row is a separate table, deleted only via the Library's own delete action.
+            task.localCachePath?.let { runCatching { File(it).delete() } }
+            task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+            dao.delete(task)
+        }
+    }
+
     override suspend fun isAlreadyDownloaded(sourceMediaId: String): Boolean =
         dao.countBySourceMediaIdAndStatus(sourceMediaId, DownloadStatus.COMPLETED) > 0
 
@@ -656,6 +670,16 @@ internal fun DownloadTaskEntity.retryNextStatusOrNull(): DownloadStatus? {
     if (status != DownloadStatus.FAILED && status != DownloadStatus.CANCELLED) return null
     return if (playlistId != null && formatId == null) DownloadStatus.ANALYZING else DownloadStatus.QUEUED
 }
+
+/**
+ * Whether [DownloadEngine.remove] may delete this task's own queue record — only ever true once
+ * the task is done one way or another. Never true for anything still active or queued: removing
+ * the row out from under a running/scheduled transfer would orphan its cache file and progress
+ * updates. Deliberately never checks anything about the Library — a COMPLETED task's media row
+ * lives in a separate table this function knows nothing about, which is exactly the point.
+ */
+internal fun DownloadTaskEntity.isRemovable(): Boolean =
+    status == DownloadStatus.FAILED || status == DownloadStatus.CANCELLED || status == DownloadStatus.COMPLETED
 
 /** Pure: which playlists have format resolution stuck (an ANALYZING task with no live coroutine behind it — e.g. after process death). */
 internal fun List<DownloadTaskEntity>.playlistIdsNeedingResolution(): List<String> =

@@ -35,6 +35,9 @@ class DownloadsViewModel @Inject constructor(
     fun cancel(taskId: String) = downloadEngine.cancel(taskId)
     fun retry(taskId: String) = downloadEngine.retry(taskId)
 
+    /** Removes a finished/failed/cancelled task's row from the Downloads list only — see [DownloadEngine.remove] for why a COMPLETED task's Library media is never touched by this. */
+    fun remove(taskId: String) = downloadEngine.remove(taskId)
+
     fun pausePlaylist(playlistId: String) = downloadEngine.pausePlaylist(playlistId)
     fun cancelPlaylist(playlistId: String) = downloadEngine.cancelPlaylist(playlistId)
     fun retryFailedInPlaylist(playlistId: String) = downloadEngine.retryFailedInPlaylist(playlistId)

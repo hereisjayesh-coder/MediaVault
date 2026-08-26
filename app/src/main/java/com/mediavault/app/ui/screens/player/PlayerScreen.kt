@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
 import android.util.Rational
-import android.view.ContextThemeWrapper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -396,7 +395,8 @@ private fun PlayerTopBar(title: String, onBackToLibrary: () -> Unit, isOverlay: 
     }
 }
 
-private enum class SeekFeedbackDirection { BACK, FORWARD }
+/** One resolved seek gesture to show transient feedback for; `nonce` forces a fresh auto-hide timer even if the same [deltaMs] fires twice in a row. */
+private data class SeekFeedback(val deltaMs: Long, val nonce: Long)
 
 /**
  * Sizes the video surface to its real aspect ratio instead of a fixed box — see the player
@@ -404,11 +404,14 @@ private enum class SeekFeedbackDirection { BACK, FORWARD }
  * box (no reserved empty space below it); portrait content and fullscreen both use whatever
  * height is actually available, centered, so a 9:16 source never gets squeezed into a 16:9 box.
  *
- * Also owns the YouTube-style touch gestures: tapping the left/right third seeks -10s/+10s
- * (with transient on-screen feedback), tapping the center third toggles the fullscreen overlay
- * controls, and holding anywhere plays at 2x until released. A single `awaitEachGesture` per
- * touch — never a separate tap AND long-press detector — so a gesture can only ever resolve one
- * way, with no risk of also firing a stray seek/toggle underneath a real long-press.
+ * Also owns the player's gesture contract: a single tap anywhere only shows/hides the fullscreen
+ * overlay controls — it never seeks. Double-tapping the left/right third seeks -10s/+10s, triple
+ * seeks -30s/+30s (both with transient on-screen feedback), and holding anywhere plays at 2x
+ * until released, restoring the exact speed from before. One `awaitEachGesture` per touch cycle
+ * — never a separate tap/double-tap/long-press detector — so counting additional taps toward a
+ * double/triple only ever happens after ruling out a long-press on the first touch, and a real
+ * long-press can never also be misread as a stray tap underneath it. See [resolveTapAction] for
+ * the actual (unit-tested) tap-count-and-zone decision table this only feeds timing/position into.
  */
 @Composable
 private fun ColumnScope.VideoArea(
@@ -424,10 +427,10 @@ private fun ColumnScope.VideoArea(
     onLongPressSpeedReleased: () -> Unit,
 ) {
     val useAvailableHeight = isFullscreen || isInPip || ratio < 1f
-    var seekFeedback by remember { mutableStateOf<Pair<SeekFeedbackDirection, Long>?>(null) }
+    var seekFeedback by remember { mutableStateOf<SeekFeedback?>(null) }
     var isSpeedBoosting by remember { mutableStateOf(false) }
 
-    LaunchedEffect(seekFeedback?.second) {
+    LaunchedEffect(seekFeedback?.nonce) {
         if (seekFeedback != null) {
             delay(SEEK_FEEDBACK_DURATION_MS)
             seekFeedback = null
@@ -441,16 +444,16 @@ private fun ColumnScope.VideoArea(
         // time playback position recomposes this composable (every ~500ms while playing).
         Modifier.pointerInput(Unit) {
             awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                val downX = down.position.x
+                val firstDown = awaitFirstDown(requireUnconsumed = false)
+                val zone = tapZoneFor(firstDown.position.x, size.width.toFloat())
                 val downTimeMs = System.currentTimeMillis()
                 val longPressTimeoutMs = viewConfiguration.longPressTimeoutMillis
                 // Races the up-event against the long-press threshold. `withTimeoutOrNull`
                 // returning null is ambiguous by itself (timed out vs. waitForUpOrCancellation
                 // legitimately returning null on a cancelled gesture) — elapsed wall-clock time
                 // disambiguates the two below.
-                val up = withTimeoutOrNull(longPressTimeoutMs) { waitForUpOrCancellation() }
-                val heldPastLongPressThreshold = up == null && (System.currentTimeMillis() - downTimeMs) >= longPressTimeoutMs
+                val firstUp = withTimeoutOrNull(longPressTimeoutMs) { waitForUpOrCancellation() }
+                val heldPastLongPressThreshold = firstUp == null && (System.currentTimeMillis() - downTimeMs) >= longPressTimeoutMs
 
                 if (heldPastLongPressThreshold) {
                     isSpeedBoosting = true
@@ -458,22 +461,35 @@ private fun ColumnScope.VideoArea(
                     waitForUpOrCancellation()
                     isSpeedBoosting = false
                     onLongPressSpeedReleased()
-                } else if (up != null) {
-                    val thirdWidth = size.width / 3f
-                    when {
-                        downX < thirdWidth -> {
-                            onSeekBy(-10_000L)
-                            seekFeedback = SeekFeedbackDirection.BACK to System.nanoTime()
-                        }
-                        downX > thirdWidth * 2 -> {
-                            onSeekBy(10_000L)
-                            seekFeedback = SeekFeedbackDirection.FORWARD to System.nanoTime()
-                        }
-                        else -> onSurfaceTapped()
+                    return@awaitEachGesture
+                }
+                // Cancelled before either the up event or the long-press threshold (e.g. a second
+                // pointer came down) — deliberately not treated as any gesture.
+                if (firstUp == null) return@awaitEachGesture
+
+                // A clean tap landed. Count how many more follow in the same third within the
+                // platform's own double-tap window before committing, so a 2nd/3rd tap can
+                // upgrade a plain toggle into a 10s/30s seek instead of acting the instant the
+                // finger first lifts. Caps at 3 — nothing beyond triple-tap is defined. A next
+                // tap landing in a *different* third, or held past the long-press threshold
+                // itself, ends the count where it stands rather than trying to also start a
+                // second overlapping gesture out of the same touch stream.
+                var tapCount = 1
+                val doubleTapTimeoutMs = viewConfiguration.doubleTapTimeoutMillis
+                while (tapCount < 3) {
+                    val nextDown = withTimeoutOrNull(doubleTapTimeoutMs) { awaitFirstDown(requireUnconsumed = false) } ?: break
+                    if (tapZoneFor(nextDown.position.x, size.width.toFloat()) != zone) break
+                    val nextUp = withTimeoutOrNull(longPressTimeoutMs) { waitForUpOrCancellation() } ?: break
+                    tapCount++
+                }
+
+                when (val action = resolveTapAction(zone, tapCount)) {
+                    PlayerTapAction.ToggleControls -> onSurfaceTapped()
+                    is PlayerTapAction.SeekBy -> {
+                        onSeekBy(action.deltaMs)
+                        seekFeedback = SeekFeedback(action.deltaMs, System.nanoTime())
                     }
                 }
-                // else: cancelled before either the up event or the long-press threshold
-                // (e.g. a second pointer came down) — deliberately not treated as any gesture.
             }
         }
     } else {
@@ -493,7 +509,7 @@ private fun ColumnScope.VideoArea(
                 VideoSurface(resizeMode, isInPip, onAttachSurface, Modifier.width(width).height(height))
                 if (isLoadingFrame) CircularProgressIndicator(color = Color.White)
             }
-            SeekFeedbackOverlay(seekFeedback?.first)
+            SeekFeedbackOverlay(seekFeedback?.deltaMs)
             SpeedBoostOverlay(isSpeedBoosting)
         }
     } else {
@@ -506,19 +522,21 @@ private fun ColumnScope.VideoArea(
         ) {
             VideoSurface(resizeMode, isInPip, onAttachSurface, Modifier.fillMaxSize())
             if (isLoadingFrame) CircularProgressIndicator(color = Color.White)
-            SeekFeedbackOverlay(seekFeedback?.first)
+            SeekFeedbackOverlay(seekFeedback?.deltaMs)
             SpeedBoostOverlay(isSpeedBoosting)
         }
     }
 }
 
+/** [deltaMs] is signed — negative shows a "back" bubble on the left, positive a "forward" bubble on the right. Same Replay10/Forward10 icons for both the 10s and 30s cases (there's no bundled "30" variant of these icons) — the templated text label carries the actual magnitude. */
 @Composable
-private fun BoxScope.SeekFeedbackOverlay(direction: SeekFeedbackDirection?) {
+private fun BoxScope.SeekFeedbackOverlay(deltaMs: Long?) {
+    val isBack = (deltaMs ?: 0L) < 0L
     AnimatedVisibility(
-        visible = direction != null,
+        visible = deltaMs != null,
         enter = fadeIn(),
         exit = fadeOut(),
-        modifier = Modifier.align(if (direction == SeekFeedbackDirection.BACK) Alignment.CenterStart else Alignment.CenterEnd),
+        modifier = Modifier.align(if (isBack) Alignment.CenterStart else Alignment.CenterEnd),
     ) {
         Surface(
             modifier = Modifier.padding(32.dp),
@@ -531,12 +549,13 @@ private fun BoxScope.SeekFeedbackOverlay(direction: SeekFeedbackDirection?) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Icon(
-                    imageVector = if (direction == SeekFeedbackDirection.BACK) Icons.Default.Replay10 else Icons.Default.Forward10,
+                    imageVector = if (isBack) Icons.Default.Replay10 else Icons.Default.Forward10,
                     contentDescription = null,
                     tint = Color.White,
                 )
+                val seconds = kotlin.math.abs(deltaMs ?: 0L) / 1000
                 Text(
-                    text = stringResource(if (direction == SeekFeedbackDirection.BACK) R.string.player_seek_feedback_back else R.string.player_seek_feedback_forward),
+                    text = stringResource(if (isBack) R.string.player_seek_feedback_back else R.string.player_seek_feedback_forward, seconds),
                     color = Color.White,
                     style = MaterialTheme.typography.labelLarge,
                 )
@@ -573,11 +592,16 @@ private fun VideoSurface(
 ) {
     AndroidView(
         factory = { context ->
-            // TextureView, not the default SurfaceView — see styles.xml's PlayerViewTextureView
-            // for why: a SurfaceView composites outside Compose's normal draw/alpha pipeline and
-            // visibly pops/lags during the Library<->Player navigation transition.
-            val textureViewContext = ContextThemeWrapper(context, R.style.PlayerViewTextureView)
-            PlayerView(textureViewContext).apply { useController = false }
+            // Plain default (SurfaceView) construction. A prior attempt at forcing
+            // surface_type="texture_view" via a themed ContextThemeWrapper (to fix a cosmetic
+            // pop during the Library<->Player nav transition) turned out to silently break real
+            // frame rendering instead — verified live on a Pixel 7a: the video area rendered
+            // solid black in both embedded and fullscreen layouts, on multiple different videos
+            // (including a colorful non-black source), while playback/audio/position continued
+            // normally underneath. Correct video rendering matters far more than that cosmetic
+            // pop, so this reverts to the known-working default rather than trying to patch the
+            // TextureView path further. See PROJECT_MASTER.md's decision log for the full story.
+            PlayerView(context).apply { useController = false }
         },
         update = { playerView ->
             onAttachSurface(playerView)
