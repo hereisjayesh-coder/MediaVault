@@ -1,6 +1,7 @@
 package com.mediavault.app.player
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import com.mediavault.app.ui.screens.player.PlayerViewModel
 import com.mediavault.app.ui.screens.player.SleepTimerOption
 import com.mediavault.app.ui.screens.player.VideoResizeMode
@@ -181,6 +182,63 @@ class PlayerViewModelTest {
 
         assertEquals("a", lastPlayedProvider.id)
         viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Player -> Library navigation lifecycle ----------------------------------------------
+
+    @Test
+    fun `leaving the screen pauses playback and persists position but does not release the engine`() = runTest {
+        // Mirrors PlayerScreen's onDispose call: the composable can leave composition (tab
+        // switch, back navigation) while the ViewModel itself survives on a saved back-stack
+        // entry, so this must stop audio/persist progress without tearing down the engine.
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(isPlaying = true, positionMs = 20_000L)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onScreenLeft()
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(engine.pauseCalled)
+        assertEquals(listOf("a" to 20_000L), libraryRepository.updatedPositions)
+        assertTrue(!engine.released)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `clearing the view model releases the engine and persists the final position`() = runTest {
+        // The real teardown (navController.popBackStack() destroying the entry once the
+        // NavHost's exit transition finishes) reaches PlayerViewModel.onCleared via the
+        // NavBackStackEntry's own ViewModelStore.clear() — not onScreenLeft, which only pauses.
+        // ViewModel.clear() itself is internal to the lifecycle-viewmodel module, so a
+        // same-module ViewModelStore is the only way to reach onCleared() from app code.
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        engine.state.value = engine.state.value.copy(positionMs = 33_000L)
+        dispatcher.scheduler.runCurrent()
+
+        val store = ViewModelStore()
+        store.put("player", viewModel)
+        store.clear()
+
+        assertTrue(engine.released)
+        assertEquals(listOf("a" to 33_000L), libraryRepository.updatedPositions)
+    }
+
+    @Test
+    fun `clearing the view model with no active playback does not persist a position`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        libraryRepository.existingIds = emptySet()
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        val store = ViewModelStore()
+        store.put("player", viewModel)
+        store.clear()
+
+        assertTrue(libraryRepository.updatedPositions.isEmpty())
     }
 
     // --- -10s/+10s seek -----------------------------------------------------------------

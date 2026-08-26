@@ -5,6 +5,27 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Changed — Player ↔ Library Transition Polish
+
+- Navigating between the Library and the dedicated Player screen (and between any two
+  routes) now crossfades over 220ms instead of cutting instantly.
+- Fixed the video surface visibly popping in/out during that transition a beat behind
+  the rest of the screen: `PlayerView` now renders via a `TextureView` (a themed
+  `ContextThemeWrapper` + new `styles.xml`) instead of the default `SurfaceView`, which
+  composites outside Compose's normal draw/alpha pipeline and can't fade in step with
+  an animated parent.
+- Playback position/state and engine release behavior were already correct and
+  untouched — audio/video now keep running through the fade and stop only once it
+  finishes, instead of cutting off the instant back is pressed. Added targeted unit
+  tests for this exact boundary (`PlayerViewModelTest`): leaving the screen pauses and
+  persists without releasing the engine, and clearing the ViewModel releases the engine
+  and persists the final position.
+- **Verification pending — no physical device available this session** (Pixel 7a
+  unavailable). No JDK/Android SDK was installed this session either, so the new code
+  and tests were reviewed by hand but not compiled or run. Building, running the new
+  tests, and confirming the transition live on-device all remain to be done in Android
+  Studio.
+
 ### Added — Local Media Import & Privacy-First Storage/Export
 
 - Library gained an explicit "Add media" action (Import a file / Import a folder) using

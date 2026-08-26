@@ -1,5 +1,8 @@
 package com.mediavault.app.navigation
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -104,6 +107,21 @@ fun MediaVaultNavHost() {
             navController = navController,
             startDestination = MediaVaultDestination.HOME.route,
             modifier = if (isOnDedicatedPlayer) Modifier else Modifier.padding(innerPadding),
+            // One coordinated crossfade for every route change (bottom tabs and the dedicated
+            // Player screen alike) — replaces the previous instant cut, which is what made the
+            // Library<->Player transition specifically feel broken: the destination's background
+            // appeared before its content (the video surface) was ready, and — combined with
+            // PlayerView's SurfaceView compositing outside Compose's normal draw pipeline, fixed
+            // separately in PlayerScreen.VideoSurface — the video itself visibly popped in/out
+            // rather than transitioning with the rest of the screen. A short, snappy fade (not a
+            // slide/scale) keeps every other tab transition feeling the same as before, just
+            // smoothed. Navigation-Compose keeps the outgoing entry composed (so PlayerScreen's
+            // own onDispose-driven pause/release) until this exit animation actually finishes —
+            // audio/video keep running through the fade instead of cutting off mid-frame.
+            enterTransition = { fadeIn(animationSpec = tween(220)) },
+            exitTransition = { fadeOut(animationSpec = tween(220)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+            popExitTransition = { fadeOut(animationSpec = tween(220)) },
         ) {
             composable(MediaVaultDestination.HOME.route) {
                 HomeScreen(

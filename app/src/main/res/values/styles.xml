@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Media3's PlayerView defaults to a SurfaceView when constructed with no XML attrs (the
+      constructor Media3PlayerEngine/PlayerScreen actually uses). SurfaceView punches a hole in
+      the window and is composited by SurfaceFlinger on its own layer, outside the normal View
+      draw/alpha pipeline — Google's own PlayerView docs call this out as the reason a
+      SurfaceView-backed player can flicker, pop, or lag behind an animated/transitioning parent
+      (exactly the Library<->Player navigation-transition symptom this style exists to fix).
+      TextureView is a plain View that participates in the normal draw pipeline (alpha/animation
+      included) at a small extra compositing cost — the standard, Google-documented fix for a
+      player embedded in an animated transition. See PlayerScreen.VideoSurface for where this is
+      applied via a themed ContextThemeWrapper (PlayerView exposes no post-construction setter
+      for this, only the constructor-time `surface_type` XML attribute).
+    -->
+    <style name="PlayerViewTextureView">
+        <item name="surface_type">texture_view</item>
+    </style>
+</resources>

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
 import android.util.Rational
+import android.view.ContextThemeWrapper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -571,7 +572,13 @@ private fun VideoSurface(
     modifier: Modifier,
 ) {
     AndroidView(
-        factory = { context -> PlayerView(context).apply { useController = false } },
+        factory = { context ->
+            // TextureView, not the default SurfaceView — see styles.xml's PlayerViewTextureView
+            // for why: a SurfaceView composites outside Compose's normal draw/alpha pipeline and
+            // visibly pops/lags during the Library<->Player navigation transition.
+            val textureViewContext = ContextThemeWrapper(context, R.style.PlayerViewTextureView)
+            PlayerView(textureViewContext).apply { useController = false }
+        },
         update = { playerView ->
             onAttachSurface(playerView)
             // PiP's window is too small for Compose's own controls to be usable — hand

@@ -1575,6 +1575,51 @@ _Prior state, before the real DownloadEngine stage:_
     code; and "Save to Gallery" itself (no test asked for it beyond the architecture
     decision, and the physical device's Gallery app wasn't inspected post-save).
 
+* **Player → Library navigation transition polish**: `MediaVaultNavHost`'s `NavHost` gained
+  a coordinated 220ms crossfade (`enterTransition`/`exitTransition`/`popEnterTransition`/
+  `popExitTransition`) applied uniformly to every route change, replacing the previous
+  instant cut. This specifically fixed the Library↔Player transition: the dedicated
+  Player's `VideoSurface` now constructs its `PlayerView` (`app/ui/screens/player/
+  PlayerScreen.kt`) inside a `ContextThemeWrapper` applying a new
+  `R.style.PlayerViewTextureView` (`res/values/styles.xml`), forcing Media3's
+  `surface_type` to `texture_view` instead of the default `SurfaceView`. A `SurfaceView`
+  composites on its own `SurfaceFlinger` layer outside Compose's normal draw/alpha
+  pipeline — Google's own `PlayerView` docs cite this as the reason a `SurfaceView`-backed
+  player can flicker/pop/lag behind an animated parent, which is exactly what made the
+  Library↔Player fade look broken before this stage: the destination's background faded
+  in smoothly while the video surface itself popped in/out a beat later. `TextureView` is
+  a plain `View` that participates in the normal pipeline (alpha included) at a small
+  extra compositing cost — the standard fix for a player embedded in an animated
+  transition. No DRM/secure-surface usage exists anywhere in this codebase, so the
+  `TextureView` switch has no protected-content downside here.
+  - **Lifecycle/release behavior was already correct, not newly added**: Navigation-
+    Compose keeps a popped `NavBackStackEntry` (and its Composable content) alive until
+    its exit transition actually finishes, so `PlayerScreen`'s `DisposableEffect(Unit) {
+    onDispose { viewModel.onScreenLeft() } }` — which pauses playback and persists the
+    current position without releasing the engine, since the `ViewModel` can still be
+    alive on a saved back-stack entry — fires only once the 220ms fade completes, not at
+    the moment the user taps back. `PlayerViewModel.onCleared()` (real `ViewModelStore`
+    teardown: release the engine, persist the final position via one deliberate blocking
+    call) is unaffected by the animation and continues to fire after `onScreenLeft()`.
+    Audio/video therefore keep running through the fade instead of cutting off mid-frame,
+    a deliberate choice for a smoother transition rather than an abrupt cut the instant
+    the exit animation starts.
+  - **New targeted unit tests** (`PlayerViewModelTest`) covering exactly this boundary,
+    which previously had no test coverage: leaving the screen pauses and persists without
+    releasing the engine; clearing the `ViewModel` releases the engine and persists the
+    final position; clearing with no active playback persists nothing. The clearing tests
+    reach `onCleared()` via a same-module `androidx.lifecycle.ViewModelStore` (`put` +
+    `clear()`) rather than calling `ViewModel.clear()` directly — that method is
+    `internal` to the `lifecycle-viewmodel` module (confirmed against the pinned 2.11.0
+    source), so it isn't callable from app-module test code.
+  - **Verification pending — no physical device available this session** (Pixel 7a
+    unavailable per instruction). This session has no JDK/Android SDK installed either
+    (also per instruction, not installed), so the new tests were reviewed carefully by
+    hand against the exact pinned dependency version but were not compiled or executed.
+    Building, running `PlayerViewModelTest`, and the actual Library↔Player fade/no-black-
+    frame/position-preservation walkthrough on the Pixel 7a all remain to be done in
+    Android Studio before this stage can be called verified.
+
 Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
 analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
@@ -2138,6 +2183,61 @@ Project State for the full device-testing walkthrough of the import side of this
 stage. "Save to Gallery" itself was implemented and reasoned through against the
 storage semantics above but not exercised live this session — flagged there, not
 glossed over.
+
+---
+
+### 2026-08-27 — Player↔Library transition: `TextureView` over `SurfaceView`, plus a coordinated `NavHost` crossfade
+
+**Decision:** A scoped follow-up to the Player Redesign/polish entries above, fixing one
+specific symptom rather than touching player architecture — `MediaVaultNavHost`'s
+`NavHost` now applies one coordinated 220ms fade (`enterTransition`/`exitTransition`/
+`popEnterTransition`/`popExitTransition`) to every route change instead of an instant
+cut, and `PlayerScreen.VideoSurface` constructs its `PlayerView` with a themed
+`ContextThemeWrapper` (`R.style.PlayerViewTextureView`, new `res/values/styles.xml`)
+forcing `surface_type="texture_view"`. No changes to `PlayerViewModel`'s playback,
+position-persistence, or release logic — those were already correct and are now covered
+by new targeted unit tests, not new behavior.
+
+**Why `SurfaceView` was the actual bug, not the fade itself:** `PlayerView` constructed
+with no XML attrs (the constructor `Media3PlayerEngine`/`PlayerScreen` already used)
+defaults to a `SurfaceView`, which is composited by `SurfaceFlinger` on its own layer,
+outside Compose's normal draw/alpha pipeline — Google's own `PlayerView` documentation
+names this as the cause of flicker/pop/lag behind an animated or transitioning parent.
+Adding the crossfade alone would have faded every other pixel on screen while the video
+surface itself kept popping in and out a frame behind, which is what "no black/blank
+frame" and "player surface and navigation transition stay synchronized" were both
+pointing at. `TextureView` is a plain `View` that participates in the ordinary draw
+pipeline (alpha/animation included) at a small extra compositing cost — the standard,
+documented fix for a player embedded in an animated transition, and safe here since no
+part of this codebase uses DRM/secure-surface playback.
+
+**Why lifecycle/release behavior needed no changes:** Navigation-Compose keeps a popped
+`NavBackStackEntry`'s content (and its `ViewModel`) alive until its own exit transition
+finishes, so `PlayerScreen`'s `onDispose { viewModel.onScreenLeft() }` (pause + persist
+position, deliberately *not* release — the `ViewModel` can still be alive on a saved
+back-stack entry) and `PlayerViewModel.onCleared()` (release the engine, persist the
+final position) already fire in the right order relative to the new fade: audio/video
+keep running through the 220ms transition and only stop once it actually completes,
+rather than cutting off the instant back is pressed. This was verified by reading
+Navigation-Compose's animated-`NavHost` entry-lifecycle contract, not by a device test.
+
+**Why the new tests reach `onCleared()` through a `ViewModelStore` instead of calling
+`.clear()` directly:** `androidx.lifecycle.ViewModel.clear()` is `internal` to the
+`lifecycle-viewmodel` module (confirmed against this project's pinned 2.11.0 source),
+so app-module test code cannot call it directly. Putting the `ViewModel` into a plain
+`androidx.lifecycle.ViewModelStore()` and calling that store's own public `clear()` —
+which internally calls `viewModel.clear()` for everything it holds — is the standard,
+same-module-agnostic way to exercise `onCleared()` from a JVM unit test.
+
+**Consequence — verification is pending, not done:** this session had no physical
+device available (Pixel 7a unavailable) and, per instruction, no JDK/Android SDK was
+installed to compile or run the new `PlayerViewModelTest` cases. Everything above was
+checked by careful manual source review, including fetching the exact pinned
+`lifecycle-viewmodel:2.11.0` source to confirm `clear()`'s visibility before writing a
+test against it — but the code has not been compiled, the tests have not been run, and
+the actual Library↔Player fade (no black frame, surface/transition sync, position
+preserved) has not been watched on the device. All three remain outstanding, to be done
+in Android Studio.
 
 ---
 
