@@ -5,6 +5,17 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Supported Sources Search Accessibility
+
+- The search field on the Supported Sources screen no longer permanently scrolls away once
+  the user is deep in the alphabetical list. It now fades/slides back in as a floating bar
+  whenever the user scrolls up, and hides again on scroll down — reachable from anywhere in
+  the list without a forced scroll back to "A".
+- Implemented with `NestedScrollConnection` (observes scroll direction ahead of the
+  `LazyColumn` consuming it, consumes nothing itself) driving an `AnimatedVisibility` overlay
+  that reuses the same `SourcesSearchField` composable as the original inline field — no new
+  dependency, no change to catalog/extractor/filter logic.
+
 ### Fixed — Network Timeout Messaging
 
 - Link-analysis failures caused by a genuine connection timeout (yt-dlp's "... timed out" errors)
