@@ -14,11 +14,16 @@ internal fun PyException.toAppError(): AppError {
         raw.contains("Unsupported URL", ignoreCase = true) ->
             AppError.Unsupported("This link isn't from a source MediaVault's extractor recognizes yet.")
 
+        raw.contains("timed out", ignoreCase = true) ->
+            AppError.Timeout(
+                "Connection timed out. This source may be unavailable or blocked on your current network.",
+                this,
+            )
+
         raw.contains("Unable to download webpage", ignoreCase = true) ||
             raw.contains("urlopen error", ignoreCase = true) ||
             raw.contains("Failed to establish a new connection", ignoreCase = true) ||
-            raw.contains("Network is unreachable", ignoreCase = true) ||
-            raw.contains("timed out", ignoreCase = true) ->
+            raw.contains("Network is unreachable", ignoreCase = true) ->
             AppError.Network("Couldn't reach the source. Check your connection and try again.", this)
 
         raw.contains("Video unavailable", ignoreCase = true) ||

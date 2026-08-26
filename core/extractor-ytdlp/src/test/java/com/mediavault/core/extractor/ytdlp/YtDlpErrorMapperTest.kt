@@ -17,12 +17,34 @@ class YtDlpErrorMapperTest {
     }
 
     @Test
-    fun `network failure message maps to Network`() {
+    fun `non-timeout network failure message maps to Network`() {
+        val error = PyException(
+            "urllib.error.URLError: <urlopen error [Errno 111] Failed to establish a new connection>",
+        ).toAppError()
+
+        assertTrue(error is AppError.Network)
+    }
+
+    @Test
+    fun `timeout message maps to Timeout, not the generic Network error`() {
         val error = PyException(
             "urllib.error.URLError: <urlopen error [Errno 110] Connection timed out>",
         ).toAppError()
 
-        assertTrue(error is AppError.Network)
+        assertTrue(error is AppError.Timeout)
+    }
+
+    @Test
+    fun `timeout message produces the exact expected user-facing text`() {
+        val error = PyException(
+            "ERROR: [PornHub] 6a82805275b6f: Unable to download webpage: timed out (caused by TransportError('timed out'))",
+        ).toAppError()
+
+        assertTrue(error is AppError.Timeout)
+        assertEquals(
+            "Connection timed out. This source may be unavailable or blocked on your current network.",
+            error.message,
+        )
     }
 
     @Test

@@ -1743,6 +1743,16 @@ _Prior state, before the real DownloadEngine stage:_
     pass (3 new for Downloads' `openInPlayer`/`consumeOpenInPlayer`, 3 new for
     `HomeViewModel.resetToCleanState()`), debug APK builds and installs clean.
 
+* **Network timeout errors now classify distinctly from generic network failures.** A new
+  `AppError.Timeout` sits alongside `AppError.Network` in `core:common`'s existing error
+  hierarchy; `YtDlpErrorMapper.toAppError()` checks for yt-dlp's "... timed out" text before
+  its generic network-failure branch and produces "Connection timed out. This source may be
+  unavailable or blocked on your current network." — deliberately hedged, not asserting a
+  specific cause. Found via a real analyze attempt against a URL that hung for ~20s before
+  yt-dlp's own timeout fired; the app previously reported this identically to any other
+  network failure. No extractor/networking/downloader logic changed — classification only.
+  3 unit tests in `YtDlpErrorMapperTest` cover it.
+
 Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
 analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),

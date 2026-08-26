@@ -5,6 +5,22 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Network Timeout Messaging
+
+- Link-analysis failures caused by a genuine connection timeout (yt-dlp's "... timed out" errors)
+  now get their own `AppError.Timeout` classification instead of being folded into the generic
+  `AppError.Network` case. The user-facing message is now: "Connection timed out. This source may
+  be unavailable or blocked on your current network." — worded as a possibility, not an asserted
+  cause (a slow source, an unreachable host, and a network-level block all look identical from the
+  client side).
+- Root cause this fixes: a real timeout (e.g. analyzing a site blocked/unreachable on the current
+  network) previously surfaced the same generic "Couldn't reach the source" text as every other
+  network failure (DNS failure, connection refused, etc.), giving the user no signal that the
+  problem might be their network rather than a transient glitch.
+- `core/extractor-ytdlp/YtDlpErrorMapper.kt`'s `PyException.toAppError()` now checks for "timed
+  out" before the generic network-failure branch; no extractor, networking, or downloader logic
+  changed. Covered by 3 new/updated unit tests in `YtDlpErrorMapperTest`.
+
 ### Fixed — Downloads "Open", Home Tab Reset, Player Back Transition
 
 - **Downloads → Open did nothing**: "Open" on a completed download launched an external

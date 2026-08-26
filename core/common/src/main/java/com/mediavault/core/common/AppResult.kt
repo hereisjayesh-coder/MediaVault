@@ -11,6 +11,10 @@ sealed class AppResult<out T> {
 
 sealed class AppError(open val message: String, open val cause: Throwable? = null) {
     data class Network(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
+    /** The operation exceeded its time budget with no response — distinct from [Network] so the UI can
+     * name the specific failure without asserting *why* (slow source, unreachable host, or a blocked
+     * network path all look identical from here). */
+    data class Timeout(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
     data class Storage(override val message: String, override val cause: Throwable? = null) : AppError(message, cause)
     data class Unsupported(override val message: String) : AppError(message)
     /** The source (site/extractor) itself reported a failure — removed video, blocked, etc. */
