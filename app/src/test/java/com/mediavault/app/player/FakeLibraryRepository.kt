@@ -22,6 +22,9 @@ class FakeLibraryRepository : LibraryRepository {
 
     override suspend fun getById(id: String): MediaItemEntity? = state.value.firstOrNull { it.id == id }
 
+    override suspend fun getBySourceDownloadTaskId(taskId: String): MediaItemEntity? =
+        state.value.firstOrNull { it.sourceDownloadTaskId == taskId }
+
     override fun fileFor(item: MediaItemEntity): File? = null
 
     override fun fileExists(item: MediaItemEntity): Boolean = item.id in existingIds

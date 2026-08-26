@@ -1,5 +1,6 @@
 package com.mediavault.app.navigation
 
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -110,18 +111,28 @@ fun MediaVaultNavHost() {
             // One coordinated crossfade for every route change (bottom tabs and the dedicated
             // Player screen alike) — replaces the previous instant cut, which is what made the
             // Library<->Player transition specifically feel broken: the destination's background
-            // appeared before its content (the video surface) was ready, and — combined with
-            // PlayerView's SurfaceView compositing outside Compose's normal draw pipeline, fixed
-            // separately in PlayerScreen.VideoSurface — the video itself visibly popped in/out
-            // rather than transitioning with the rest of the screen. A short, snappy fade (not a
-            // slide/scale) keeps every other tab transition feeling the same as before, just
-            // smoothed. Navigation-Compose keeps the outgoing entry composed (so PlayerScreen's
-            // own onDispose-driven pause/release) until this exit animation actually finishes —
-            // audio/video keep running through the fade instead of cutting off mid-frame.
+            // appeared before its content (the video surface) was ready. A short, snappy fade
+            // (not a slide/scale) keeps every other tab transition feeling the same as before,
+            // just smoothed. Navigation-Compose keeps the outgoing entry composed (so
+            // PlayerScreen's own onDispose-driven pause/release) until this exit animation
+            // actually finishes — audio/video keep running through the fade instead of cutting
+            // off mid-frame.
             enterTransition = { fadeIn(animationSpec = tween(220)) },
             exitTransition = { fadeOut(animationSpec = tween(220)) },
             popEnterTransition = { fadeIn(animationSpec = tween(220)) },
-            popExitTransition = { fadeOut(animationSpec = tween(220)) },
+            // Deliberately NOT fadeOut() here, unlike every other transition — see the
+            // Player-pop decision log entry. PlayerView is a SurfaceView (kept, not TextureView
+            // — see that same entry for why not): it composites on its own SurfaceFlinger layer
+            // outside Compose's draw/alpha pipeline, so animating *its* alpha via fadeOut() does
+            // nothing to the actual video pixels — the destination fades in on schedule while
+            // the still-fully-opaque video sits there unchanged, then vanishes in one frame the
+            // instant this exit transition's 220ms elapses and Compose actually disposes it.
+            // ExitTransition.None leaves Player's content fully visible and unanimated for the
+            // whole pop (Navigation-Compose still keeps it composed for exactly as long as
+            // popEnterTransition's 220ms, same as before) so the incoming screen's fade-in is
+            // what visually covers it — by the time it's actually removed, it's already hidden
+            // under fully-opaque destination content, with nothing left to visibly pop.
+            popExitTransition = { ExitTransition.None },
         ) {
             composable(MediaVaultDestination.HOME.route) {
                 HomeScreen(
@@ -129,7 +140,9 @@ fun MediaVaultNavHost() {
                     onNavigateToSources = { navController.navigate(SOURCES_ROUTE) },
                 )
             }
-            composable(MediaVaultDestination.DOWNLOADS.route) { DownloadsScreen() }
+            composable(MediaVaultDestination.DOWNLOADS.route) {
+                DownloadsScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
+            }
             composable(MediaVaultDestination.LIBRARY.route) {
                 LibraryScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
             }

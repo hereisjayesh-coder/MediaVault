@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -87,6 +88,17 @@ fun HomeScreen(
     onNavigateToDestination: (MediaVaultDestination) -> Unit = {},
     onNavigateToSources: () -> Unit = {},
 ) {
+    // Home's NavBackStackEntry (and this ViewModel) is never destroyed by a tab switch — it's
+    // the nav graph's start destination, so MediaVaultNavHost's popUpTo always excludes it —
+    // so without this, a stale in-progress/completed link analysis from a previous visit would
+    // still be showing the next time the Home tab is tapped. `remember(Unit)` runs once per
+    // fresh composition entry (cold start, or returning from another destination) and
+    // synchronously, before the collectAsState() read just below, so the very first frame of a
+    // fresh entry already renders clean instead of flashing the stale state for one frame.
+    // Unlike Library/Downloads/the Player tab, Home has no "resume where I left off" — it's
+    // meant to be reset every time.
+    remember(Unit) { viewModel.resetToCleanState() }
+
     val uiState by viewModel.uiState.collectAsState()
 
     LaunchedEffect(uiState.justQueued) {

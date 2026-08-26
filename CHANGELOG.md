@@ -5,6 +5,37 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Downloads "Open", Home Tab Reset, Player Back Transition
+
+- **Downloads → Open did nothing**: "Open" on a completed download launched an external
+  viewer `Intent` on the app's private `file://` URI, which the platform silently rejects
+  (`FileUriExposedException`) before any app chooser ever appears — the button had no
+  working effect. Now resolves the Library row the download produced
+  (`MediaItemEntity.sourceDownloadTaskId`) and navigates to the exact same `player/{id}`
+  route Library itself uses — same playback path, same position-resume behavior, no
+  second implementation.
+- **Home tab didn't reset**: Home is the nav graph's start destination, so switching tabs
+  never actually removed it from the back stack — its ViewModel (and an in-progress or
+  completed link analysis) stayed alive indefinitely. Tapping Home now always shows the
+  clean default screen; device status (storage/network) is kept, not re-fetched.
+- **Player → Back transition popped abruptly**: `PlayerView`'s `SurfaceView` composites
+  outside Compose's draw/alpha pipeline, so the shared `fadeOut()` used for every other
+  pop transition animated everything *except* the actual video pixels — the destination
+  faded in on schedule while the still-fully-opaque video sat frozen, then vanished in
+  one frame the instant the transition's duration elapsed. The Player pop's exit
+  transition no longer tries to fade the video at all (`ExitTransition.None`); it stays
+  fully visible, unanimated, until the incoming screen's fade-in has already covered it,
+  so there's nothing left to visibly pop. `TextureView` was deliberately not
+  reconsidered for this — it previously caused a critical real-video-rendering
+  regression (see below) and stays out of scope here.
+- **Verified live on a physical device (Pixel 7a)**: Downloads → Open → Player with
+  correct resumed position; Home tab showing clean after analyzing a link, navigating
+  away, and back; Library → Player → Back with content visibly intact (not black, not
+  popped) mid-transition, confirmed via a screenshot caught mid-animation; a full
+  Library → Player → Back round trip; rapid tab-switching with no artifacts. 175 unit
+  tests pass (3 new for the Open-in-Player lookup, 3 new for the Home reset), debug APK
+  builds and installs clean.
+
 ### Changed — Player ↔ Library Transition Polish
 
 - Navigating between the Library and the dedicated Player screen (and between any two

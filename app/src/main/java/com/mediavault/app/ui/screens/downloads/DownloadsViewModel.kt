@@ -2,20 +2,26 @@ package com.mediavault.app.ui.screens.downloads
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mediavault.app.library.LibraryRepository
 import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.domain.download.DownloadProgress
 import com.mediavault.core.domain.download.PlaylistProgress
 import com.mediavault.core.domain.download.toPlaylistProgressGroups
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
     private val downloadEngine: DownloadEngine,
+    private val libraryRepository: LibraryRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<DownloadsUiState> = downloadEngine.observeAll()
@@ -30,6 +36,12 @@ class DownloadsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DownloadsUiState())
 
+    // Kept separate from `uiState` (which is entirely derived from `downloadEngine.observeAll()`)
+    // rather than folding into `DownloadsUiState` — a one-shot navigation signal isn't part of
+    // "what the download list looks like."
+    private val _openMediaItemId = MutableStateFlow<String?>(null)
+    val openMediaItemId: StateFlow<String?> = _openMediaItemId.asStateFlow()
+
     fun pause(taskId: String) = downloadEngine.pause(taskId)
     fun resume(taskId: String) = downloadEngine.resume(taskId)
     fun cancel(taskId: String) = downloadEngine.cancel(taskId)
@@ -41,6 +53,26 @@ class DownloadsViewModel @Inject constructor(
     fun pausePlaylist(playlistId: String) = downloadEngine.pausePlaylist(playlistId)
     fun cancelPlaylist(playlistId: String) = downloadEngine.cancelPlaylist(playlistId)
     fun retryFailedInPlaylist(playlistId: String) = downloadEngine.retryFailedInPlaylist(playlistId)
+
+    /**
+     * "Open" on a completed download must reach the same Player a Library item does — not
+     * launch an external viewer Activity on a private `file://` URI, which is what silently
+     * failed before (rejected by the platform's `FileUriExposedException` before it ever
+     * reached an app chooser). [taskId] and the Library row it produced are different rows in
+     * different tables, linked only via `MediaItemEntity.sourceDownloadTaskId` — resolving that
+     * here is the one extra step needed to hand off to the exact same `player/{id}` route
+     * Library already uses, with no second playback implementation.
+     */
+    fun openInPlayer(taskId: String) {
+        viewModelScope.launch {
+            val mediaItemId = libraryRepository.getBySourceDownloadTaskId(taskId)?.id ?: return@launch
+            _openMediaItemId.value = mediaItemId
+        }
+    }
+
+    fun consumeOpenInPlayer() {
+        _openMediaItemId.update { null }
+    }
 }
 
 data class DownloadsUiState(

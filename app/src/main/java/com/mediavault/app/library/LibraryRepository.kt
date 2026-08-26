@@ -45,6 +45,9 @@ interface LibraryRepository {
     fun observeAll(): Flow<List<MediaItemEntity>>
     suspend fun getById(id: String): MediaItemEntity?
 
+    /** The Library row a completed download task produced, or null if none exists (e.g. the download hasn't finished, or its row was separately removed) — see `MediaVaultDownloadEngine.finish` for where this link is created. */
+    suspend fun getBySourceDownloadTaskId(taskId: String): MediaItemEntity?
+
     /** The real file backing this item, or null for a non-`file://` (e.g. legacy SAF) item. */
     fun fileFor(item: MediaItemEntity): File?
     fun fileExists(item: MediaItemEntity): Boolean
@@ -107,6 +110,9 @@ class AndroidLibraryRepository @Inject constructor(
     override fun observeAll(): Flow<List<MediaItemEntity>> = dao.observeAll()
 
     override suspend fun getById(id: String): MediaItemEntity? = dao.getById(id)
+
+    override suspend fun getBySourceDownloadTaskId(taskId: String): MediaItemEntity? =
+        dao.getBySourceDownloadTaskIds(listOf(taskId)).firstOrNull()
 
     override fun fileFor(item: MediaItemEntity): File? {
         val uri = Uri.parse(item.mediaUri)

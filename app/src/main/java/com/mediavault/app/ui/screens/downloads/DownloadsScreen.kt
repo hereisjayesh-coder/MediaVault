@@ -1,7 +1,5 @@
 package com.mediavault.app.ui.screens.downloads
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +23,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,11 +31,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import android.webkit.MimeTypeMap
 import com.mediavault.app.R
 import com.mediavault.app.ui.components.EmptyStateCard
 import com.mediavault.app.ui.components.MediaThumbnail
@@ -49,14 +46,21 @@ import com.mediavault.core.domain.download.PlaylistProgress
 import com.mediavault.core.model.DownloadStatus
 
 @Composable
-fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel()) {
+fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlayer: (String) -> Unit = {}) {
     val uiState by viewModel.uiState.collectAsState()
+    val openMediaItemId by viewModel.openMediaItemId.collectAsState()
 
     // Only a COMPLETED task's removal needs confirmation — its Library media staying put isn't
     // obvious from the button alone, and this is the one removal a user could plausibly mistake
     // for deleting the actual file (see DownloadEngine.remove's contract). Failed/cancelled
     // removals never touch any media, so they act immediately with no dialog.
     var pendingCompletedRemoval by remember { mutableStateOf<DownloadProgress?>(null) }
+
+    LaunchedEffect(openMediaItemId) {
+        val mediaItemId = openMediaItemId ?: return@LaunchedEffect
+        onOpenPlayer(mediaItemId)
+        viewModel.consumeOpenInPlayer()
+    }
 
     DownloadsScreenContent(
         uiState = uiState,
@@ -67,6 +71,7 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel()) {
         onRemove = { task ->
             if (task.status == DownloadStatus.COMPLETED) pendingCompletedRemoval = task else viewModel.remove(task.taskId)
         },
+        onOpen = viewModel::openInPlayer,
         onPausePlaylist = viewModel::pausePlaylist,
         onCancelPlaylist = viewModel::cancelPlaylist,
         onRetryFailedInPlaylist = viewModel::retryFailedInPlaylist,
@@ -98,6 +103,7 @@ private fun DownloadsScreenContent(
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
     onRemove: (DownloadProgress) -> Unit,
+    onOpen: (String) -> Unit,
     onPausePlaylist: (String) -> Unit,
     onCancelPlaylist: (String) -> Unit,
     onRetryFailedInPlaylist: (String) -> Unit,
@@ -151,11 +157,11 @@ private fun DownloadsScreenContent(
             }
         }
 
-        downloadSection(R.string.downloads_section_active, sections[DownloadSection.ACTIVE], onPause, onResume, onCancel, onRetry, onRemove)
-        downloadSection(R.string.downloads_section_queued, sections[DownloadSection.QUEUED], onPause, onResume, onCancel, onRetry, onRemove)
-        downloadSection(R.string.downloads_section_failed, sections[DownloadSection.FAILED], onPause, onResume, onCancel, onRetry, onRemove)
-        downloadSection(R.string.downloads_section_cancelled, sections[DownloadSection.CANCELLED], onPause, onResume, onCancel, onRetry, onRemove)
-        downloadSection(R.string.downloads_section_completed, sections[DownloadSection.COMPLETED], onPause, onResume, onCancel, onRetry, onRemove)
+        downloadSection(R.string.downloads_section_active, sections[DownloadSection.ACTIVE], onPause, onResume, onCancel, onRetry, onRemove, onOpen)
+        downloadSection(R.string.downloads_section_queued, sections[DownloadSection.QUEUED], onPause, onResume, onCancel, onRetry, onRemove, onOpen)
+        downloadSection(R.string.downloads_section_failed, sections[DownloadSection.FAILED], onPause, onResume, onCancel, onRetry, onRemove, onOpen)
+        downloadSection(R.string.downloads_section_cancelled, sections[DownloadSection.CANCELLED], onPause, onResume, onCancel, onRetry, onRemove, onOpen)
+        downloadSection(R.string.downloads_section_completed, sections[DownloadSection.COMPLETED], onPause, onResume, onCancel, onRetry, onRemove, onOpen)
     }
 }
 
@@ -167,11 +173,12 @@ private fun LazyListScope.downloadSection(
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
     onRemove: (DownloadProgress) -> Unit,
+    onOpen: (String) -> Unit,
 ) {
     if (tasks.isNullOrEmpty()) return
     item { SectionLabel(text = stringResource(titleRes)) }
     items(tasks, key = { it.taskId }) { task ->
-        DownloadTaskCard(task = task, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry, onRemove = onRemove)
+        DownloadTaskCard(task = task, onPause = onPause, onResume = onResume, onCancel = onCancel, onRetry = onRetry, onRemove = onRemove, onOpen = onOpen)
     }
 }
 
@@ -293,9 +300,8 @@ private fun DownloadTaskCard(
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
     onRemove: (DownloadProgress) -> Unit,
+    onOpen: (String) -> Unit,
 ) {
-    val context = LocalContext.current
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -392,9 +398,8 @@ private fun DownloadTaskCard(
                         }
 
                         DownloadStatus.COMPLETED -> {
-                            val destinationUri = task.destinationUri
-                            if (destinationUri != null) {
-                                OutlinedButton(onClick = { openDownloadedFile(context, destinationUri) }) {
+                            if (task.destinationUri != null) {
+                                OutlinedButton(onClick = { onOpen(task.taskId) }) {
                                     Text(stringResource(R.string.downloads_action_open))
                                 }
                             }
@@ -409,18 +414,6 @@ private fun DownloadTaskCard(
             }
         }
     }
-}
-
-private fun openDownloadedFile(context: android.content.Context, destinationUri: String) {
-    val uri = Uri.parse(destinationUri)
-    val extension = destinationUri.substringAfterLast('.', "")
-    val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mimeType)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    runCatching { context.startActivity(intent) }
 }
 
 @Composable

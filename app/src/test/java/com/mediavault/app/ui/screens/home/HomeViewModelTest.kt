@@ -57,6 +57,51 @@ class HomeViewModelTest {
         assertEquals(NetworkStatus.WIFI, state.networkStatus)
     }
 
+    // --- Reset on fresh Home entry (see HomeScreen's remember(Unit)) -----------------------
+
+    @Test
+    fun `resetToCleanState clears a completed analysis back to the default state`() = runTest {
+        val analysisResult = ExtractionResult.Single(sampleMedia())
+        fakeEngine.nextResult = AppResult.Success(analysisResult)
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(analysisResult, viewModel.uiState.value.result)
+
+        viewModel.resetToCleanState()
+
+        val state = viewModel.uiState.value
+        assertEquals("", state.url)
+        assertNull(state.result)
+        assertTrue(state.downloadOptions.isEmpty())
+        assertNull(state.selectedFormatId)
+    }
+
+    @Test
+    fun `resetToCleanState cancels an in-flight analysis rather than letting a late result land after reset`() = runTest {
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia()))
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        // Deliberately not advancing the dispatcher — the analysis is still "in flight".
+
+        viewModel.resetToCleanState()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.result)
+        assertTrue(!viewModel.uiState.value.isAnalyzing)
+    }
+
+    @Test
+    fun `resetToCleanState keeps the already-loaded device status instead of clearing it`() = runTest {
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(10_000_000_000L, viewModel.uiState.value.freeStorageBytes)
+
+        viewModel.resetToCleanState()
+
+        assertEquals(10_000_000_000L, viewModel.uiState.value.freeStorageBytes)
+        assertEquals(NetworkStatus.WIFI, viewModel.uiState.value.networkStatus)
+    }
+
     @Test
     fun `blank url shows an error and never calls the engine`() = runTest {
         viewModel.analyze()

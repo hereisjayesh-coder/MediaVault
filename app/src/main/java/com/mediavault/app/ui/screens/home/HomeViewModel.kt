@@ -427,6 +427,24 @@ class HomeViewModel @Inject constructor(
     private fun currentPlaylistItems(): List<PlaylistItem> =
         (_uiState.value.result as? ExtractionResult.Playlist)?.playlist?.items.orEmpty()
 
+    /**
+     * Resets everything about an in-progress or completed link analysis back to the clean
+     * default — called whenever `HomeScreen` is freshly (re-)entered (see its own
+     * `remember(Unit)`), since Home's `NavBackStackEntry` (and this ViewModel) is never
+     * destroyed by tab switches — it's the nav graph's start destination, so
+     * `MediaVaultNavHost`'s popUpTo always excludes it. Without an explicit reset, a stale
+     * analysis result would still be showing the next time the user tapped the Home tab.
+     * Cancels any in-flight analysis/format-resolution first so a late result can't land after
+     * the reset. `freeStorageBytes`/`networkStatus` are deliberately kept, not re-fetched — that
+     * device status hasn't gone stale just because the user switched tabs.
+     */
+    fun resetToCleanState() {
+        cancelInFlightAnalysis()
+        formatResolutionJob?.cancel()
+        formatResolutionJob = null
+        _uiState.update { HomeUiState(freeStorageBytes = it.freeStorageBytes, networkStatus = it.networkStatus) }
+    }
+
     override fun onCleared() {
         cancelInFlightAnalysis()
         formatResolutionJob?.cancel()

@@ -1689,6 +1689,60 @@ _Prior state, before the real DownloadEngine stage:_
   now-finished item correctly showing under Recently Watched with a fully-filled
   progress bar. No regressions found — no code changes were needed.
 
+* **Three live-testing bug reports fixed: Downloads "Open" navigation, Home tab reset,
+  Player back-transition pop.** All three were found during a real Pixel 7a session, not
+  code review, and none needed a redesign — each was a targeted fix inside the existing
+  architecture.
+  - **Downloads "Open" did nothing:** `DownloadsScreen`'s `openDownloadedFile()` fired an
+    `Intent.ACTION_VIEW` on the download's raw private `file://` URI, which Android 24+
+    throws `FileUriExposedException` for — silently swallowed by a `runCatching`, so the
+    button visibly did nothing. Deleted that function entirely rather than switching it
+    to a `FileProvider` content URI, since the milestone required reusing Library's
+    already-correct playback path, not a second one. `LibraryRepository` gained
+    `getBySourceDownloadTaskId(taskId)` (resolves the Library row a finished download
+    produced via the existing `sourceDownloadTaskId` link); `DownloadsViewModel.openInPlayer()`
+    resolves that id and publishes it through a new one-shot `openMediaItemId` `StateFlow`
+    (mirroring the existing `errorMessage`/`infoMessage` consume pattern), which
+    `DownloadsScreen` observes and forwards to `MediaVaultNavHost`'s `player/{id}` route —
+    the identical route Library already navigates to.
+  - **Home didn't reset when returning to the tab:** Home is the nav graph's
+    `startDestination`, and `navigateToDestination()`'s `popUpTo(graph.findStartDestination().id)`
+    is exclusive by default — Home is architecturally never popped off the back stack by
+    any tab switch, so its `ViewModel` (and whatever analysis result was showing) survives
+    indefinitely no matter how many other tabs are visited. Fixed with a targeted
+    `HomeViewModel.resetToCleanState()` (clears the analysis/UI state back to defaults,
+    cancels any in-flight analysis job, but deliberately keeps the already-loaded device
+    status, which doesn't go stale) invoked via `remember(Unit)` at the top of
+    `HomeScreen`'s composable body — `remember` runs synchronously before the first
+    `collectAsState()` read (avoiding a one-frame stale flash), and fires on every fresh
+    entry because Navigation-Compose tears down and rebuilds Home's composable content on
+    each tab switch even though the underlying `ViewModel` instance persists.
+  - **Player → Back transition visibly popped:** root cause was the same SurfaceView
+    compositing limitation already documented in the 2026-08-27 Player↔Library entry
+    below — `PlayerView`'s default `SurfaceView` composites on its own `SurfaceFlinger`
+    layer outside Compose's alpha pipeline, so the previous `popExitTransition =
+    fadeOut(tween(220))` animated nothing on the actual video pixels: the destination
+    faded in on schedule while the still-fully-opaque video sat frozen, then vanished in
+    one frame the instant the 220ms exit transition elapsed and Compose disposed it.
+    Fixed by changing only `popExitTransition` to `ExitTransition.None` — Player's content
+    stays fully visible/unanimated for the same duration Navigation-Compose already keeps
+    it composed (matching `popEnterTransition`'s 220ms), so the incoming screen's fade-in
+    visually covers it before it's actually removed, leaving nothing to visibly pop.
+    `TextureView` was deliberately not reintroduced (see the 2026-08-27 entry below for
+    why it's avoided) — this fix touches only transition timing, not the surface type.
+  - **Verified live on a physical device (Pixel 7a):** paste-URL → analyze → download →
+    auto-redirect to Downloads → Open → correct Player screen with the correct resumed
+    position (8:37/8:52 on "Lua Tools"); Player/Downloads → Home tab → clean default Home
+    (MediaVault header, greeting, empty analyze field, Popular Sources/Quick Actions/
+    Recent Activity), re-confirmed with a fresh analysis result that it doesn't linger
+    after leaving and returning; Library → Player unaffected; a mid-transition screenshot
+    (chained `input keyevent 4; screencap`) during Player→Back showing the destination's
+    bottom nav already switched while Player's video/UI remained fully intact and opaque
+    — no black/blank frame; a second clean Library→Player→Back round trip; a rapid
+    tab-switching stress pass with no stale state or navigation artifacts. 175 unit tests
+    pass (3 new for Downloads' `openInPlayer`/`consumeOpenInPlayer`, 3 new for
+    `HomeViewModel.resetToCleanState()`), debug APK builds and installs clean.
+
 Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
 analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
@@ -2373,6 +2427,53 @@ video-rendering break, and a `Row`/`weight`/`fillMaxWidth` layout bug that rende
 watch-history remaining-time label one character per line) were confirmed fixed by
 rebuilding, reinstalling, and re-screenshotting on the same device before this stage was
 called done — neither fix was accepted on code-review confidence alone.
+
+---
+
+### 2026-08-27 — Downloads "Open", Home tab reset, and Player back-transition pop: three live-testing defects, three targeted fixes
+
+**Decision:** No architecture changed. Each of the three bugs reported from live Pixel
+7a testing got the smallest fix that reused an already-correct existing path, rather than
+a new one: Downloads "Open" now resolves the Library row a download produced and
+navigates through the same `player/{id}` route Library uses (see §34's Current Project
+State bullet for the full mechanism); Home gained a `resetToCleanState()` call driven by
+`remember(Unit)`; Player's `popExitTransition` changed from `fadeOut()` to
+`ExitTransition.None`.
+
+**Why Downloads got its own resolver method instead of just constructing a
+`FileProvider` URI and fixing the existing `Intent.ACTION_VIEW` call:** the milestone was
+explicit that a second playback implementation must not be created — Library's in-app
+Player route was already correct (position persistence, format handling, everything);
+the bug was that Downloads used a completely different, broken mechanism (an external
+view `Intent`) to reach the same file. Reusing the in-app route by resolving the
+Library row id is not a smaller version of the same fix, it's fixing the actual
+architectural mistake — Downloads shouldn't be handing playback off to another app at all.
+
+**Why Home's fix lives in `remember(Unit)` inside the composable rather than in
+`navigateToDestination()`'s `popUpTo` call:** the tempting alternative — making Home
+actually poppable so a fresh instance is created each visit — would mean giving up
+`popUpTo`'s `saveState`/`restoreState` symmetry that every other tab relies on, or
+special-casing Home out of that shared navigation helper. Both are larger, riskier
+changes to a function every tab depends on, for a bug that's entirely local to Home's own
+stale state. A composable-scoped reset changes nothing about how any other tab is
+reached or restored.
+
+**Why `ExitTransition.None` and not, say, a longer/shorter `fadeOut` duration or a
+different curve:** the root problem isn't timing, it's that `fadeOut()` was animating an
+alpha value the `SurfaceView` ignores entirely — no duration or easing choice fixes an
+animation applied to the wrong pipeline. `ExitTransition.None` sidesteps the pipeline
+mismatch by not animating Player's exit at all, letting the *destination's* fade-in (which
+Compose does control) be the only thing the user perceives, which was already proven
+correct in the original 2026-08-27 Player↔Library crossfade decision below.
+
+**Consequence — verified live on a physical device (Pixel 7a):** all three flows
+re-tested end-to-end after the fixes — Download→Downloads→Open→Player with correct
+resumed position, Player/Downloads→Home showing the clean default state (including after
+a fresh analysis result, to confirm it doesn't linger), and a mid-transition screenshot of
+Player→Back showing no black frame or abrupt pop — plus Library→Player confirmed
+unregressed and a rapid tab-switching stress pass with no artifacts. 175 unit tests pass,
+debug APK builds and installs clean. See §34's Current Project State for the full
+walkthrough.
 
 ---
 
