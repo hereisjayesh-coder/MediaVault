@@ -64,7 +64,19 @@ a tagged release; entries below track development stages instead of version numb
   claimed), and rapid tab-switching with no stale state or visual artifacts. 169 unit
   tests pass. **Not exercised this session**: exact ±10s/±30s seek magnitudes live
   (confirmed instead by unit test, since adb-driven tap timing isn't precise enough to
-  isolate a seek from concurrent playback) and Picture-in-Picture end-to-end.
+  isolate a seek from concurrent playback). Picture-in-Picture was verified in a
+  follow-up session — see below.
+
+### Verified — Picture-in-Picture, End-to-End on a Physical Device
+
+- **Verified live on a physical device (Pixel 7a), no code changes needed**: opened a
+  Library video, started playback, entered PiP (video continued rendering correctly in
+  the floating window — confirmed across multiple frames over several minutes of real
+  elapsed time, not just a static first frame), tapped the PiP window to restore to the
+  full player (position had advanced correctly the whole time, e.g. 3:37 → 7:45 across
+  ~4 real minutes), and confirmed normal Library/Player-tab navigation still worked
+  immediately afterward, including the finished item correctly appearing under Recently
+  Watched with a fully-filled progress bar. No regressions found; no fix required.
 
 ### Added — Local Media Import & Privacy-First Storage/Export
 

@@ -1678,7 +1678,16 @@ _Prior state, before the real DownloadEngine stage:_
     tap timing isn't precise enough to isolate a seek from concurrent normal playback
     advancing the position at the same time — magnitude correctness is instead
     guaranteed by `PlayerGesturesTest`'s exact-value assertions) and Picture-in-Picture
-    end-to-end.
+    end-to-end — covered in a dedicated follow-up session, immediately below.
+* **Picture-in-Picture, verified end-to-end on a physical device (Pixel 7a)**: opened a
+  Library video, started playback, entered PiP, and confirmed the video kept rendering
+  correctly in the floating window across several real minutes (checked via multiple
+  screenshots showing distinct, advancing frames, not a frozen first frame). Tapping the
+  PiP window restored the full player with the position correctly advanced the whole
+  time it was in PiP (e.g. 3:37 → 7:45 across ~4 real minutes of continuous playback),
+  and normal Library/Player-tab navigation worked immediately afterward, including the
+  now-finished item correctly showing under Recently Watched with a fully-filled
+  progress bar. No regressions found — no code changes were needed.
 
 Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
