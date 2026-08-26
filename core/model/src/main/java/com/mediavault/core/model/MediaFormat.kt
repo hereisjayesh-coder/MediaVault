@@ -21,4 +21,6 @@ data class MediaFormat(
     val widthPx: Int? = null,
     /** Only ever what the source reports — never guessed. See [MediaTrackInfo]'s same contract. */
     val languageCode: String? = null,
+    /** Audio bitrate in kbps when the source reports it (yt-dlp's `abr`, falling back to `tbr` for audio-only formats). Null when unknown — never estimated. */
+    val bitrateKbps: Int? = null,
 )

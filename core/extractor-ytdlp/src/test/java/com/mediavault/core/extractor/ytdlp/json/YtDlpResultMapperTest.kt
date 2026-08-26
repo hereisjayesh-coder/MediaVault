@@ -50,6 +50,18 @@ class YtDlpResultMapperTest {
     }
 
     @Test
+    fun `audio bitrate maps from abr, rounded to the nearest kbps`() {
+        val result = decodeSingle(SINGLE_VIDEO_JSON)
+
+        val audioOnly = result.formats.first { it.formatId == "140" }
+        assertEquals(129, audioOnly.bitrateKbps)
+
+        // The video-only format reports neither abr nor tbr in this fixture.
+        val hd = result.formats.first { it.formatId == "137" }
+        assertNull(hd.bitrateKbps)
+    }
+
+    @Test
     fun `audio-only formats become audio tracks grouped by language`() {
         val tracks = decodeSingle(MULTI_AUDIO_JSON).audioTracks
 
@@ -221,7 +233,8 @@ class YtDlpResultMapperTest {
                   "format_id": "140",
                   "ext": "m4a",
                   "vcodec": "none",
-                  "acodec": "mp4a"
+                  "acodec": "mp4a",
+                  "abr": 128.5
                 }
               ]
             }

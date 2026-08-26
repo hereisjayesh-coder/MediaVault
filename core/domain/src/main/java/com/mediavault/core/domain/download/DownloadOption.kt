@@ -134,3 +134,22 @@ internal fun mergeOutputContainer(video: MediaFormat, audio: MediaFormat): Strin
     video.container == "webm" && audio.container == "webm" -> "webm"
     else -> "mkv"
 }
+
+/** Which section of the format picker a [DownloadOption] belongs in — see [DownloadOption.section]. */
+enum class DownloadOptionSection { VIDEO, AUDIO, OTHER }
+
+/**
+ * VIDEO for anything with a video component (muxed direct, or a video-only/paired option —
+ * selectable or not), AUDIO for a direct audio-only option, OTHER as a catch-all so a future
+ * format shape [buildDownloadOptions] doesn't yet anticipate is still shown rather than
+ * silently dropped from the picker.
+ */
+val DownloadOption.section: DownloadOptionSection
+    get() = when {
+        videoFormat != null -> DownloadOptionSection.VIDEO
+        audioFormat != null -> DownloadOptionSection.AUDIO
+        else -> DownloadOptionSection.OTHER
+    }
+
+/** Splits an already-[buildDownloadOptions]-ordered list into its three display sections, preserving each section's relative order (video sorted highest-to-lowest resolution). */
+fun List<DownloadOption>.groupedBySection(): Map<DownloadOptionSection, List<DownloadOption>> = groupBy { it.section }

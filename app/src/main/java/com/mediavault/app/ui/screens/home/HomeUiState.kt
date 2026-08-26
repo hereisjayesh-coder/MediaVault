@@ -25,7 +25,16 @@ data class HomeUiState(
     val justQueued: Boolean = false,
     /** Non-null while the user is choosing one quality to apply to a playlist download — see [HomeViewModel]. */
     val playlistDownloadSetup: PlaylistDownloadSetupState? = null,
+    /** Non-null while [com.mediavault.core.domain.network.NetworkPolicyManager] has flagged a download as merely risky (not blocked) and is waiting for the user to confirm or cancel it — see [HomeViewModel]. */
+    val networkWarning: NetworkWarning? = null,
 )
+
+/** A [com.mediavault.core.domain.network.NetworkPolicyDecision.Warn] the user must explicitly confirm before it proceeds — never applied silently. */
+sealed class NetworkWarning {
+    abstract val reason: String
+    data class Single(override val reason: String) : NetworkWarning()
+    data class Playlist(override val reason: String) : NetworkWarning()
+}
 
 /**
  * Selection state for a [ExtractionResult.Playlist] result. Selection is a real, persisted

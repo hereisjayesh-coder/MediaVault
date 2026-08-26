@@ -55,37 +55,90 @@ fun formatFormatSummary(format: MediaFormat): String {
     return parts.joinToString(" • ")
 }
 
+/** Compact title for a VIDEO-section row, e.g. "2160p60", "1080p". Never invents a resolution the source didn't report. */
+fun videoOptionTitle(option: DownloadOption): String {
+    val video = option.videoFormat ?: return "Video"
+    return listOfNotNull(
+        video.resolutionLabel,
+        video.fps?.takeIf { it > 0 }?.let { "${it}fps" },
+    ).joinToString(" ").ifBlank { "Video" }
+}
+
 /**
- * e.g. "1080p60 • MP4 • avc1 • 92 MB • + audio [en]" for a paired option, or the same shape as
- * [formatFormatSummary] for a direct one. [DownloadOption.combinedEstimatedSizeBytes] is already
- * the video+audio sum for paired options — never re-derived here.
+ * Detail line for a VIDEO-section row: container, codec, the *final* size (already the
+ * video+audio sum for a paired option — never re-derived here), and — per this screen's "never
+ * silently hide audio availability" requirement — always ends with exactly what happens to audio.
  */
-fun downloadOptionSummary(option: DownloadOption): String {
-    val video = option.videoFormat
-    val audio = option.audioFormat
-
-    val resolutionAndFps = listOfNotNull(
-        video?.resolutionLabel,
-        video?.fps?.takeIf { it > 0 }?.let { "${it}fps" },
-    ).joinToString(" ").ifBlank { null }
-
-    val codec = video?.videoCodec ?: audio?.audioCodec
-
-    val audioLabel = when {
-        video != null && audio != null -> "+ audio" + languageSuffix(audio.languageCode)
-        video == null && audio != null -> "audio only" + (audio.audioCodec?.let { " ($it)" } ?: "") + languageSuffix(audio.languageCode)
-        video != null && audio == null -> "video only"
-        else -> null
-    }
-
+fun videoOptionSubtitle(option: DownloadOption): String {
+    val video = option.videoFormat ?: return ""
     val parts = listOfNotNull(
-        resolutionAndFps,
         option.outputContainer.takeIf { it != "unknown" }?.uppercase(),
-        codec,
+        video.videoCodec,
         formatFileSizeLabel(option.combinedEstimatedSizeBytes),
-        audioLabel,
+        audioAvailabilityLabel(option),
     )
     return parts.joinToString(" • ")
+}
+
+/**
+ * One of three real states, always shown, never omitted: the video already has audio baked in
+ * (a direct/muxed option), a separate track will be merged in by FFmpeg after download (a paired
+ * option), or — for a video-only format with no compatible audio track anywhere — genuinely none.
+ */
+fun audioAvailabilityLabel(option: DownloadOption): String {
+    val video = option.videoFormat
+    val pairedAudio = option.audioFormat
+    return when {
+        video != null && video.hasAudio -> "Includes audio" + (video.audioCodec?.let { " ($it)" } ?: "")
+        pairedAudio != null -> "+ audio" + (pairedAudio.audioCodec?.let { " ($it)" } ?: "") + languageSuffix(pairedAudio.languageCode)
+        else -> "No audio available"
+    }
+}
+
+/** Compact title for an AUDIO-section row: the container/format, e.g. "M4A", "OPUS". */
+fun audioOptionTitle(option: DownloadOption): String {
+    val audio = option.audioFormat ?: return "Audio"
+    return audio.container.takeIf { it != "unknown" }?.uppercase() ?: "Audio"
+}
+
+/** Detail line for an AUDIO-section row: codec, bitrate, estimated size, and language when known. */
+fun audioOptionSubtitle(option: DownloadOption): String {
+    val audio = option.audioFormat ?: return ""
+    val parts = listOfNotNull(
+        audio.audioCodec,
+        audio.bitrateKbps?.let { "$it kbps" },
+        formatFileSizeLabel(option.combinedEstimatedSizeBytes),
+        audio.languageCode?.let { "[$it]" },
+    )
+    return parts.joinToString(" • ")
+}
+
+/** Compact "what's selected" label for the persistent Download bar, e.g. "1080p60 • 92 MB" or "M4A • 5 MB". */
+fun selectedOptionSummaryLabel(option: DownloadOption): String {
+    val title = if (option.videoFormat != null) videoOptionTitle(option) else audioOptionTitle(option)
+    val size = formatFileSizeLabel(option.combinedEstimatedSizeBytes)
+    return listOfNotNull(title, size).joinToString(" • ")
+}
+
+/** Short quality label for a raw [MediaFormat] (the playlist quality picker works off the format list directly, before it's wrapped into a [DownloadOption]). */
+fun playlistQualityLabel(format: MediaFormat): String = if (format.hasVideo) {
+    listOfNotNull(
+        format.resolutionLabel,
+        format.fps?.takeIf { it > 0 }?.let { "${it}fps" },
+    ).joinToString(" ").ifBlank { format.container.uppercase() }
+} else {
+    format.container.takeIf { it != "unknown" }?.uppercase() ?: "Audio"
+}
+
+/**
+ * Rough aggregate estimate for the playlist download-setup bar: every item priced the same as
+ * [format]'s own size, since playlist items don't get their own resolved format list until each
+ * is analyzed individually at download time — an estimate, never a guarantee. Null when the
+ * chosen format's own size is unknown, never a guessed number.
+ */
+fun estimatedPlaylistTotalSizeBytes(format: MediaFormat?, itemCount: Int): Long? {
+    val perItem = format?.estimatedSizeBytes ?: return null
+    return perItem * itemCount
 }
 
 /** Never invents a language name — just shows the raw code the source reported, exactly like [com.mediavault.core.model.MediaTrackInfo]'s own contract. */

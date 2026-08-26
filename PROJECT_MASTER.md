@@ -1405,6 +1405,60 @@ _Prior state, before the real DownloadEngine stage:_
     limitation as the prior stage): a 9:16/portrait source's fullscreen behavior, and
     multi-audio-track/subtitle menus — Sintel still offers only one audio track and no
     subtitles.
+* **Format selection/download UI redesigned**: the single-item format picker
+  (`HomeScreen`/`AnalysisResultCard`) no longer renders one flat `DownloadOption` list —
+  `buildDownloadOptions`' output is now split (`DownloadOption.section`/
+  `groupedBySection()`, `core:domain/download/`) into Video and Audio sections (plus a
+  defensive, currently-always-empty "Other" section so a future format shape isn't
+  silently dropped), Video sorted highest-to-lowest resolution. Each row's text comes
+  from new `HomeFormatting` helpers (`videoOptionTitle`/`videoOptionSubtitle`/
+  `audioAvailabilityLabel`/`audioOptionTitle`/`audioOptionSubtitle`) — resolution/fps,
+  container, codec, the final estimated size, and audio availability for Video rows;
+  format, codec, bitrate, and size for Audio rows.
+  - **`MediaFormat.bitrateKbps`** (new field, `core:model`) is populated in
+    `YtDlpResultMapper` from yt-dlp's own `abr`, falling back to `tbr` — never
+    estimated — needed since nothing previously carried audio bitrate at all.
+  - **Persistent bottom action bar**: `HomeScreenContent` is now a `Box` with the
+    scrollable `LazyColumn` plus a bottom-aligned bar (`DownloadActionBar` for the
+    single-item flow, `PlaylistQueueActionBar` for the playlist quality-setup step),
+    which stays visible while the list scrolls (it sits outside the `LazyColumn`, not
+    as a trailing item) and needs no extra inset handling since it's already inside the
+    outer `Scaffold`'s `innerPadding`. Disabled with a prompt until a selection is
+    made; shows the selected quality/estimated size (single-item) or item
+    count/quality/running total (playlist) once one is. The playlist setup card's
+    inline Queue button was removed in favor of this bar; Cancel stays inline.
+  - **`NetworkPolicyManager` is now consulted before enqueueing**, not only once
+    `MediaVaultDownloadEngine.runDownload()` starts the actual transfer (which still
+    does its own check too — this is additive, not a replacement, so the sole-owner
+    contract in the interface's KDoc still holds). `HomeViewModel.beginEnqueueSelectedFormat`/
+    `confirmPlaylistQueue` call `evaluate()` first: `Block` shows the reason and never
+    enqueues; `Warn` shows a new `NetworkWarning` (`HomeUiState`) that blocks the
+    `AlertDialog`-based `NetworkWarningDialog` until the user taps "Download anyway"
+    (`onNetworkWarningConfirmed`) or cancels — never silently proceeds on a risky
+    download; `QueueForWifi` still enqueues but tells the user up front it will wait.
+    A playlist's estimate is the chosen format's own size times the item count
+    (`estimatedPlaylistTotalSizeBytes`) — the same rough-estimate caveat the playlist
+    setup step already had.
+  - **Bug fix, not a new feature**: the old `downloadOptionSummary()` unconditionally
+    showed "video only" for any `DownloadOption` whose `audioFormat` field was null —
+    which included every *muxed* direct option (a format that already has its own
+    embedded audio, so `audioFormat` is never set for it; only `videoFormat.hasAudio`
+    reflects that). Fixed as part of this redesign's `videoOptionSubtitle`/
+    `audioAvailabilityLabel`, which check `videoFormat.hasAudio` directly.
+  - **Verified live** (Pixel 7a): analyzed a real YouTube source (Big Buck Bunny 60fps
+    4K, split video-only/audio-only DASH streams) — Video section sorted 4K → 1440p →
+    1080p → 720p → 480p → 144p with correct per-row text, Audio section below it with
+    real bitrates (129/66/65/50/49 kbps) from `abr`, and the bottom bar staying pinned
+    through the full scroll while correctly toggling disabled↔enabled and updating its
+    text as different rows were selected. Selected a WEBM/opus audio-only row, tapped
+    Download, and confirmed directly in the app's own Room database (pulled via `adb`,
+    queried with `sqlite3`/Python) that the resulting task reached `COMPLETED` with the
+    exact `formatId` chosen in the UI — proof the network-policy-gated enqueue path
+    genuinely runs end-to-end, not just navigates to Downloads optimistically. **Not
+    exercised live this session**: the playlist quality-setup bar (no playlist URL was
+    rehearsed this session) and an actual `Block`/`Warn`/`QueueForWifi` decision (the
+    test device had no mobile-data budget restriction configured to trigger one) —
+    both are covered by unit tests (`HomeViewModelTest`) but not confirmed on-device.
 
 Not yet started: torrent downloading, user-selected-folder/full-device media scanning
 (the Library only indexes MediaVault-managed downloads so far — see the private-library
@@ -1789,6 +1843,82 @@ the actual button" false alarms this session's own testing hit (auto-hidden full
 controls being tapped after they'd already faded, and a scale-factor slip converting a
 landscape screenshot's on-screen position to a device coordinate) that turned out to be
 testing-methodology errors, not app bugs, once re-tested with correct timing/coordinates.
+
+---
+
+### 2026-08-26 — Format selection redesigned into Video/Audio sections with a persistent Download bar; `NetworkPolicyManager` moved to enqueue-time
+
+**Decision:** The single-item format picker's flat `DownloadOption` list is now split into
+Video/Audio sections (plus a defensive "Other" catch-all), each row showing resolution/
+fps/container/codec/final-size/audio-availability (Video) or format/codec/bitrate/size
+(Audio) instead of one packed summary string. A persistent bottom bar replaced the
+inline Download/Queue buttons for both the single-item and playlist-setup flows.
+`NetworkPolicyManager.evaluate()` — already the sole owner of block/warn/budget logic —
+is now also called from `HomeViewModel` before `DownloadEngine.enqueue()`/
+`enqueuePlaylist()`, in addition to `MediaVaultDownloadEngine.runDownload()`'s own
+existing check at actual-transfer time.
+
+**Why sectioned rows instead of one summary string:** the milestone's brief was that a
+long, undifferentiated list of formats is hard to scan, and that "audio availability"
+specifically must never be ambiguous or omitted — auditing the old `downloadOptionSummary()`
+while rewriting it surfaced a real bug (see below), which sectioning and per-field rows
+made impossible to reintroduce (each field is now its own explicit check, not folded
+into one string-building `when`).
+
+**Why `MediaFormat.bitrateKbps` is a new field rather than derived at display time:**
+yt-dlp reports audio bitrate (`abr`, or `tbr` as a fallback) per-format, and nothing in
+the domain model carried it before this stage — display code has nothing to derive a
+bitrate *from* without the mapper populating it first. Populated only from what yt-dlp
+actually reports, consistent with `heightPx`/`widthPx`/`languageCode`'s existing
+"never guessed" precedent from the FFmpeg-merge stage.
+
+**Why the persistent bar sits in a `Box` outside the `LazyColumn` instead of a "sticky
+header/footer" list item:** Compose's `LazyColumn` has no built-in sticky-footer
+primitive (only sticky *headers*), and simulating one by re-measuring scroll offset is
+substantially more fragile than the standard pattern of overlaying a fixed-position
+composable in a `Box` alongside the scrolling list — the same structural choice already
+used for the dedicated Player screen's floating controls.
+
+**Why `NetworkPolicyManager` is called an *additional* time at enqueue rather than
+moved from `runDownload()`:** the milestone's requirement is that the user hears about
+a mobile-data problem "before enqueueing," i.e. immediately after tapping Download —
+not merely "before the bytes start moving," which is what the existing engine-side
+check already guarantees. Removing the engine-side check would leave a task silently
+sitting `QUEUED` with no upfront warning if it were ever enqueued through a path other
+than `HomeViewModel` (e.g. a retry). Calling `evaluate()` twice for the same task is
+cheap (no I/O beyond reading the day's already-tracked usage counter) and keeps
+`NetworkPolicyManager` itself the single place the actual policy logic lives, per its
+own KDoc contract — `HomeViewModel` only reacts to the `NetworkPolicyDecision` it
+returns, never re-derives budget/limit math.
+
+**Why a `Warn` decision now requires an explicit "Download anyway" confirmation
+instead of proceeding with just an info message (the previous, never-wired-up design
+implied by the unused `home_network_warn_*` string resources already sitting in
+`strings.xml`):** a `Warn` means "this may exceed today's remaining budget" — a real
+risk, not a neutral status update. Auto-proceeding would violate this project's
+existing "never silently downgrade or proceed past a risk" principle (already applied
+to quality selection); requiring a tap makes the risk something the user actually saw
+and accepted, matching what the pre-existing but dormant string resources were
+evidently designed for.
+
+**Consequence — a real bug found and fixed during this stage, not a new feature:** the
+old `downloadOptionSummary()` checked only `DownloadOption.audioFormat` to decide
+whether to show "video only" — but a muxed direct option (already containing its own
+audio) never sets that field (it's reserved for a separately-paired audio track), so
+the old code labeled *every* muxed format "video only" regardless of whether it
+actually had audio. The redesign's `audioAvailabilityLabel()` checks
+`videoFormat.hasAudio` directly, fixing this. No test previously caught it because
+`downloadOptionSummary()` itself had no unit test; the new formatting functions do
+(`HomeFormattingTest`).
+
+**Consequence — verified live on a physical device (Pixel 7a):** analyzed a real
+YouTube source (Big Buck Bunny 60fps 4K) and confirmed every UI requirement above by
+screenshot at each step, then confirmed end-to-end correctness — not just UI
+appearance — by pulling and querying the app's own Room database after tapping
+Download, finding the resulting task at `COMPLETED` status with the exact format id
+selected on screen. See §34's Current Project State for the full walkthrough and what
+was not exercised live this session (the playlist bar; an actual Block/Warn/
+QueueForWifi decision).
 
 ---
 

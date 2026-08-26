@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +34,7 @@ import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -45,6 +49,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,6 +72,8 @@ import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.domain.download.DownloadOption
+import com.mediavault.core.domain.download.DownloadOptionSection
+import com.mediavault.core.domain.download.groupedBySection
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
@@ -105,6 +112,8 @@ fun HomeScreen(
         onPlaylistFormatSelected = viewModel::onPlaylistFormatSelected,
         onQueuePlaylistClicked = viewModel::onQueuePlaylistClicked,
         onCancelPlaylistDownloadSetup = viewModel::cancelPlaylistDownloadSetup,
+        onNetworkWarningConfirmed = viewModel::onNetworkWarningConfirmed,
+        onNetworkWarningDismissed = viewModel::onNetworkWarningDismissed,
         onNavigateToDestination = onNavigateToDestination,
         onNavigateToSources = onNavigateToSources,
     )
@@ -127,94 +136,131 @@ private fun HomeScreenContent(
     onPlaylistFormatSelected: (MediaFormat) -> Unit,
     onQueuePlaylistClicked: () -> Unit,
     onCancelPlaylistDownloadSetup: () -> Unit,
+    onNetworkWarningConfirmed: () -> Unit,
+    onNetworkWarningDismissed: () -> Unit,
     onNavigateToDestination: (MediaVaultDestination) -> Unit,
     onNavigateToSources: () -> Unit,
 ) {
     val showDiscovery = uiState.result == null && !uiState.isAnalyzing
+    val selectedOption = uiState.downloadOptions.firstOrNull { it.id == uiState.selectedFormatId }
+    val setup = uiState.playlistDownloadSetup
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        item { MediaVaultTopBar(title = stringResource(R.string.home_title)) }
+    // Exactly one persistent bottom bar can apply at a time: the single-item format picker's
+    // Download bar takes priority while a Single result is showing; the playlist quality-setup
+    // step's Queue bar only applies once that step is open.
+    val showDownloadBar = uiState.result is ExtractionResult.Single && uiState.downloadOptions.isNotEmpty()
+    val showPlaylistBar = uiState.result is ExtractionResult.Playlist && setup != null
 
-        item { GreetingHeader() }
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            item { MediaVaultTopBar(title = stringResource(R.string.home_title)) }
 
-        item {
-            UrlAnalyzeCard(
-                url = uiState.url,
-                isAnalyzing = uiState.isAnalyzing,
-                onUrlChanged = onUrlChanged,
-                onAnalyzeClick = onAnalyzeClick,
-                onCancelClick = onCancelClick,
-            )
-        }
+            item { GreetingHeader() }
 
-        val error = uiState.errorMessage
-        if (error != null) {
-            item { MessageCard(message = error, isError = true) }
-        }
-
-        val info = uiState.infoMessage
-        if (info != null) {
-            item { MessageCard(message = info, isError = false) }
-        }
-
-        when (val result = uiState.result) {
-            is ExtractionResult.Single -> item {
-                AnalysisResultCard(
-                    result = result.media,
-                    downloadOptions = uiState.downloadOptions,
-                    selectedFormatId = uiState.selectedFormatId,
-                    onDownloadOptionSelected = onDownloadOptionSelected,
-                    onDownloadClicked = onDownloadClicked,
+            item {
+                UrlAnalyzeCard(
+                    url = uiState.url,
+                    isAnalyzing = uiState.isAnalyzing,
+                    onUrlChanged = onUrlChanged,
+                    onAnalyzeClick = onAnalyzeClick,
+                    onCancelClick = onCancelClick,
                 )
             }
 
-            is ExtractionResult.Playlist -> {
-                item { PlaylistHeader(result.playlist) }
-                item {
-                    PlaylistSelectionToolbar(
-                        selection = uiState.playlistSelection,
-                        onBeginRangeSelection = onBeginRangeSelection,
-                        onCancelSelection = onCancelSelection,
-                        onDownloadEntirePlaylist = onDownloadEntirePlaylist,
-                        onDownloadSelected = onDownloadSelected,
-                        onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
+            val error = uiState.errorMessage
+            if (error != null) {
+                item { MessageCard(message = error, isError = true) }
+            }
+
+            val info = uiState.infoMessage
+            if (info != null) {
+                item { MessageCard(message = info, isError = false) }
+            }
+
+            when (val result = uiState.result) {
+                is ExtractionResult.Single -> item {
+                    AnalysisResultCard(
+                        result = result.media,
+                        downloadOptions = uiState.downloadOptions,
+                        selectedFormatId = uiState.selectedFormatId,
+                        onDownloadOptionSelected = onDownloadOptionSelected,
                     )
                 }
-                val setup = uiState.playlistDownloadSetup
-                if (setup != null) {
+
+                is ExtractionResult.Playlist -> {
+                    item { PlaylistHeader(result.playlist) }
                     item {
-                        PlaylistDownloadSetupCard(
-                            setup = setup,
-                            onFormatSelected = onPlaylistFormatSelected,
-                            onQueueClicked = onQueuePlaylistClicked,
-                            onCancelClicked = onCancelPlaylistDownloadSetup,
+                        PlaylistSelectionToolbar(
+                            selection = uiState.playlistSelection,
+                            onBeginRangeSelection = onBeginRangeSelection,
+                            onCancelSelection = onCancelSelection,
+                            onDownloadEntirePlaylist = onDownloadEntirePlaylist,
+                            onDownloadSelected = onDownloadSelected,
+                            onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
+                        )
+                    }
+                    if (setup != null) {
+                        item {
+                            PlaylistDownloadSetupCard(
+                                setup = setup,
+                                onFormatSelected = onPlaylistFormatSelected,
+                                onCancelClicked = onCancelPlaylistDownloadSetup,
+                            )
+                        }
+                    }
+                    items(result.playlist.items, key = { it.id }) { playlistItem ->
+                        PlaylistItemRow(
+                            item = playlistItem,
+                            isSelected = playlistItem.id in uiState.playlistSelection.selectedItemIds,
+                            onClick = { onPlaylistItemTapped(playlistItem) },
                         )
                     }
                 }
-                items(result.playlist.items, key = { it.id }) { playlistItem ->
-                    PlaylistItemRow(
-                        item = playlistItem,
-                        isSelected = playlistItem.id in uiState.playlistSelection.selectedItemIds,
-                        onClick = { onPlaylistItemTapped(playlistItem) },
-                    )
-                }
+
+                null -> Unit
             }
 
-            null -> Unit
+            if (showDiscovery) {
+                item { PopularSourcesSection(onClick = onNavigateToSources) }
+                item { QuickActionsSection(onNavigateToDestination) }
+                item { RecentActivitySection() }
+                item { DeviceStatusRow(uiState.freeStorageBytes, uiState.networkStatus) }
+            }
+
+            // Reserves room so the last real item never sits behind the persistent bottom bar.
+            if (showDownloadBar || showPlaylistBar) {
+                item { Spacer(modifier = Modifier.height(72.dp)) }
+            }
         }
 
-        if (showDiscovery) {
-            item { PopularSourcesSection(onClick = onNavigateToSources) }
-            item { QuickActionsSection(onNavigateToDestination) }
-            item { RecentActivitySection() }
-            item { DeviceStatusRow(uiState.freeStorageBytes, uiState.networkStatus) }
+        if (showDownloadBar) {
+            DownloadActionBar(
+                selectedOption = selectedOption,
+                onDownloadClicked = onDownloadClicked,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        } else if (showPlaylistBar && setup != null) {
+            PlaylistQueueActionBar(
+                setup = setup,
+                onQueueClicked = onQueuePlaylistClicked,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
+    }
+
+    val warning = uiState.networkWarning
+    if (warning != null) {
+        NetworkWarningDialog(
+            reason = warning.reason,
+            onConfirm = onNetworkWarningConfirmed,
+            onDismiss = onNetworkWarningDismissed,
+        )
     }
 }
 
@@ -508,7 +554,6 @@ private fun AnalysisResultCard(
     downloadOptions: List<DownloadOption>,
     selectedFormatId: String?,
     onDownloadOptionSelected: (DownloadOption) -> Unit,
-    onDownloadClicked: () -> Unit,
 ) {
     MediaVaultCard {
         Thumbnail(result.thumbnailUrl)
@@ -532,27 +577,42 @@ private fun AnalysisResultCard(
                 text = stringResource(R.string.home_select_format),
                 style = MaterialTheme.typography.labelLarge,
             )
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                downloadOptions.forEach { option ->
-                    DownloadOptionRow(
-                        option = option,
-                        isSelected = option.id == selectedFormatId,
-                        onClick = { onDownloadOptionSelected(option) },
-                    )
-                }
+
+            val sections = downloadOptions.groupedBySection()
+
+            FormatSection(titleRes = R.string.home_section_video, options = sections[DownloadOptionSection.VIDEO].orEmpty()) { option ->
+                VideoOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
             }
 
-            Button(
-                onClick = onDownloadClicked,
-                enabled = selectedFormatId != null,
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(text = stringResource(R.string.home_download_button), modifier = Modifier.padding(start = 8.dp))
+            FormatSection(titleRes = R.string.home_section_audio, options = sections[DownloadOptionSection.AUDIO].orEmpty()) { option ->
+                AudioOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
+            }
+
+            // A defensive catch-all — every option buildDownloadOptions produces today lands in
+            // VIDEO or AUDIO, but a future format shape it doesn't yet classify still shows up
+            // here rather than being silently dropped from the picker.
+            FormatSection(titleRes = R.string.home_section_other, options = sections[DownloadOptionSection.OTHER].orEmpty()) { option ->
+                VideoOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
             }
         }
+    }
+}
+
+/** One labeled group of rows in the format picker — omitted entirely when [options] is empty, so an unused section never shows a bare "Video"/"Audio" heading with nothing under it. */
+@Composable
+private fun FormatSection(
+    titleRes: Int,
+    options: List<DownloadOption>,
+    row: @Composable (DownloadOption) -> Unit,
+) {
+    if (options.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = stringResource(titleRes),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        options.forEach { option -> row(option) }
     }
 }
 
@@ -653,7 +713,6 @@ private fun PlaylistSelectionToolbar(
 private fun PlaylistDownloadSetupCard(
     setup: PlaylistDownloadSetupState,
     onFormatSelected: (MediaFormat) -> Unit,
-    onQueueClicked: () -> Unit,
     onCancelClicked: () -> Unit,
 ) {
     MediaVaultCard {
@@ -697,17 +756,8 @@ private fun PlaylistDownloadSetupCard(
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = onQueueClicked,
-                enabled = setup.selectedFormatId != null,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            ) {
-                Text(stringResource(R.string.home_playlist_setup_queue, setup.items.size))
-            }
-            OutlinedButton(onClick = onCancelClicked) {
-                Text(stringResource(R.string.home_cancel))
-            }
+        OutlinedButton(onClick = onCancelClicked) {
+            Text(stringResource(R.string.home_cancel))
         }
     }
 }
@@ -818,32 +868,167 @@ private fun FormatRow(format: MediaFormat, isSelected: Boolean, onClick: () -> U
     }
 }
 
+/** A VIDEO-section row: resolution/fps as the title, container/codec/final-size/audio-availability as the subtitle — see [videoOptionTitle]/[videoOptionSubtitle]. */
 @Composable
-private fun DownloadOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
+private fun VideoOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
+    DownloadOptionRow(
+        title = videoOptionTitle(option),
+        subtitle = videoOptionSubtitle(option),
+        isSelected = isSelected,
+        isSelectable = option.isSelectable,
+        unavailableReason = option.unavailableReason,
+        onClick = onClick,
+    )
+}
+
+/** An AUDIO-section row: container/format as the title, codec/bitrate/size/language as the subtitle — see [audioOptionTitle]/[audioOptionSubtitle]. */
+@Composable
+private fun AudioOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
+    DownloadOptionRow(
+        title = audioOptionTitle(option),
+        subtitle = audioOptionSubtitle(option),
+        isSelected = isSelected,
+        isSelectable = option.isSelectable,
+        unavailableReason = option.unavailableReason,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun DownloadOptionRow(
+    title: String,
+    subtitle: String,
+    isSelected: Boolean,
+    isSelectable: Boolean,
+    unavailableReason: String?,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = option.isSelectable, onClick = onClick)
-            .alpha(if (option.isSelectable) 1f else 0.5f),
+            .clickable(enabled = isSelectable, onClick = onClick)
+            .alpha(if (isSelectable) 1f else 0.5f)
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = isSelected, onClick = onClick, enabled = option.isSelectable)
+        RadioButton(selected = isSelected, onClick = onClick, enabled = isSelectable)
         Column {
-            Text(
-                text = downloadOptionSummary(option),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            val reason = option.unavailableReason
-            if (reason != null) {
-                Text(text = reason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
-            } else if (option.requiresProcessing) {
-                Text(
-                    text = stringResource(R.string.home_format_will_merge),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            Text(text = title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(text = subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (unavailableReason != null) {
+                Text(text = unavailableReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             }
         }
     }
+}
+
+/**
+ * Persistent bottom bar for the single-item format picker — stays visible while the format list
+ * scrolls (see the [Box]/[Alignment.BottomCenter] usage in [HomeScreenContent]). Disabled with a
+ * prompt until a format is selected; shows the selected quality and its estimated final size once
+ * one is.
+ */
+@Composable
+private fun DownloadActionBar(
+    selectedOption: DownloadOption?,
+    onDownloadClicked: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ActionBarSurface(modifier) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = selectedOption?.let { selectedOptionSummaryLabel(it) } ?: stringResource(R.string.home_download_bar_prompt),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (selectedOption != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Button(
+            onClick = onDownloadClicked,
+            enabled = selectedOption != null,
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        ) {
+            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(text = stringResource(R.string.home_download_button), modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+/**
+ * Persistent bottom bar for the playlist quality-setup step: item count, chosen quality (once
+ * picked), and the running total estimate — see [estimatedPlaylistTotalSizeBytes]. Same
+ * stays-visible-while-scrolling placement as [DownloadActionBar].
+ */
+@Composable
+private fun PlaylistQueueActionBar(
+    setup: PlaylistDownloadSetupState,
+    onQueueClicked: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val selectedFormat = setup.formatOptions.firstOrNull { it.formatId == setup.selectedFormatId }
+    ActionBarSurface(modifier) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.home_playlist_bar_items, setup.items.size),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            val qualityAndSize = if (selectedFormat != null) {
+                val total = estimatedPlaylistTotalSizeBytes(selectedFormat, setup.items.size)
+                listOfNotNull(playlistQualityLabel(selectedFormat), formatFileSizeLabel(total) ?: stringResource(R.string.home_playlist_bar_total_unknown))
+                    .joinToString(" • ")
+            } else {
+                stringResource(R.string.home_playlist_bar_prompt)
+            }
+            Text(
+                text = qualityAndSize,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Button(
+            onClick = onQueueClicked,
+            enabled = setup.selectedFormatId != null,
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        ) {
+            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(text = stringResource(R.string.home_queue_button), modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+/** Shared chrome for the two persistent bottom bars — an opaque surface (never lets scrolled content show through) with a top border standing in for elevation, per this design system's flat/no-shadow style. */
+@Composable
+private fun ActionBarSurface(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            content = content,
+        )
+    }
+}
+
+/** Confirmation dialog for [com.mediavault.core.domain.network.NetworkPolicyDecision.Warn] — a risky-but-not-blocked download is never queued without the user explicitly choosing to proceed. */
+@Composable
+private fun NetworkWarningDialog(reason: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.home_network_warn_title)) },
+        text = { Text(reason) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.home_network_warn_proceed)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.home_cancel)) }
+        },
+    )
 }

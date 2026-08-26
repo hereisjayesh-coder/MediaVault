@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
+import com.mediavault.app.download.FakeNetworkPolicyManager
 import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
@@ -8,6 +9,7 @@ import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import com.mediavault.core.domain.extractor.PlaylistItem
+import com.mediavault.core.domain.network.NetworkPolicyDecision
 import com.mediavault.core.model.MediaFormat
 import com.mediavault.core.model.MediaType
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,7 @@ class HomeViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private lateinit var fakeEngine: FakeExtractorEngine
     private lateinit var fakeDownloadEngine: FakeDownloadEngine
+    private lateinit var fakeNetworkPolicyManager: FakeNetworkPolicyManager
     private lateinit var viewModel: HomeViewModel
 
     @Before
@@ -36,7 +39,8 @@ class HomeViewModelTest {
         Dispatchers.setMain(dispatcher)
         fakeEngine = FakeExtractorEngine()
         fakeDownloadEngine = FakeDownloadEngine()
-        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine)
+        fakeNetworkPolicyManager = FakeNetworkPolicyManager()
+        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine, fakeNetworkPolicyManager)
     }
 
     @After
@@ -321,6 +325,7 @@ class HomeViewModelTest {
         viewModel.onDownloadOptionSelected(option)
 
         viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
 
         val request = fakeDownloadEngine.enqueued.single()
         assertEquals("m1", request.formatId)
@@ -344,6 +349,7 @@ class HomeViewModelTest {
         assertEquals("v1080+a1", paired.id)
         viewModel.onDownloadOptionSelected(paired)
         viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
 
         val request = fakeDownloadEngine.enqueued.single()
         assertEquals("v1080", request.formatId)
@@ -366,6 +372,132 @@ class HomeViewModelTest {
         viewModel.onDownloadClicked()
 
         assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+    }
+
+    // --- Network policy gating (applied before enqueueing) ----------------------------
+
+    @Test
+    fun `a blocked download is never enqueued and shows the block reason`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Block("Today's mobile-data budget is used up.")
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onDownloadOptionSelected(viewModel.uiState.value.downloadOptions.single { it.id == "m1" })
+
+        viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+        assertEquals("Today's mobile-data budget is used up.", viewModel.uiState.value.errorMessage)
+        assertTrue(!viewModel.uiState.value.justQueued)
+    }
+
+    @Test
+    fun `a risky download waits for explicit confirmation, then enqueues once confirmed`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Warn("This may exceed today's remaining mobile-data budget.")
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onDownloadOptionSelected(viewModel.uiState.value.downloadOptions.single { it.id == "m1" })
+
+        viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+        val warning = viewModel.uiState.value.networkWarning as NetworkWarning.Single
+        assertEquals("This may exceed today's remaining mobile-data budget.", warning.reason)
+
+        viewModel.onNetworkWarningConfirmed()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, fakeDownloadEngine.enqueued.size)
+        assertTrue(viewModel.uiState.value.justQueued)
+        assertNull(viewModel.uiState.value.networkWarning)
+    }
+
+    @Test
+    fun `dismissing a risky-download warning leaves it unqueued`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Warn("This may exceed today's remaining mobile-data budget.")
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onDownloadOptionSelected(viewModel.uiState.value.downloadOptions.single { it.id == "m1" })
+        viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.onNetworkWarningDismissed()
+
+        assertNull(viewModel.uiState.value.networkWarning)
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+    }
+
+    @Test
+    fun `a queue-for-wifi decision still enqueues but tells the user it will wait`() = runTest {
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.QueueForWifi
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onDownloadOptionSelected(viewModel.uiState.value.downloadOptions.single { it.id == "m1" })
+
+        viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, fakeDownloadEngine.enqueued.size)
+        assertTrue(viewModel.uiState.value.justQueued)
+        assertEquals(
+            "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.",
+            viewModel.uiState.value.infoMessage,
+        )
+    }
+
+    @Test
+    fun `a blocked playlist queue is never enqueued`() = runTest {
+        loadPlaylist()
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Block("Today's mobile-data budget is used up.")
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onQueuePlaylistClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueuedPlaylists.isEmpty())
+        assertEquals("Today's mobile-data budget is used up.", viewModel.uiState.value.errorMessage)
+        // The setup step stays open so the user can pick a smaller quality instead.
+        assertEquals(muxed.formatId, viewModel.uiState.value.playlistDownloadSetup?.selectedFormatId)
+    }
+
+    @Test
+    fun `a risky playlist queue waits for confirmation, then enqueues once confirmed`() = runTest {
+        loadPlaylist()
+        val muxed = sampleFormat("m1", hasVideo = true, hasAudio = true)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(muxed))))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Warn("This may exceed today's remaining mobile-data budget.")
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onQueuePlaylistClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueuedPlaylists.isEmpty())
+        assertTrue(viewModel.uiState.value.networkWarning is NetworkWarning.Playlist)
+
+        viewModel.onNetworkWarningConfirmed()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, fakeDownloadEngine.enqueuedPlaylists.size)
+        assertTrue(viewModel.uiState.value.justQueued)
     }
 
     private fun sampleFormat(

@@ -14,7 +14,10 @@ import com.mediavault.core.domain.download.buildDownloadOptions
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
+import com.mediavault.core.domain.network.NetworkPolicyDecision
+import com.mediavault.core.domain.network.NetworkPolicyManager
 import com.mediavault.core.model.MediaFormat
 import com.mediavault.core.model.MediaType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,7 +31,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** A format that would leave video and audio in separate streams needs an FFmpeg merge MediaVault doesn't do yet. */
+/**
+ * Gate for the playlist quality picker only. Unlike the single-item flow's
+ * `DownloadOption`/`buildDownloadOptions` (which does pair a video-only format with an
+ * audio-only one for FFmpeg to merge), a batch playlist download has no per-item audio pairing
+ * to resolve yet, so a video-only format stays unselectable there.
+ */
 fun MediaFormat.isSelectableForDownload(): Boolean = hasAudio && !(hasVideo && !hasAudio)
 
 @HiltViewModel
@@ -36,6 +44,7 @@ class HomeViewModel @Inject constructor(
     private val extractorEngine: ExtractorEngine,
     private val deviceStatusProvider: DeviceStatusProvider,
     private val downloadEngine: DownloadEngine,
+    private val networkPolicyManager: NetworkPolicyManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -116,14 +125,41 @@ class HomeViewModel @Inject constructor(
     /** Called by the screen when Download is tapped. Downloads are app-private by default — no folder picker needed. */
     fun onDownloadClicked() {
         if (_uiState.value.selectedFormatId == null) return
-        enqueueSelectedFormat()
+        beginEnqueueSelectedFormat(bypassNetworkCheck = false)
     }
 
     fun consumeJustQueued() {
         _uiState.update { it.copy(justQueued = false) }
     }
 
-    private fun enqueueSelectedFormat() {
+    /** Called when the user confirms the "download anyway" warning — see [NetworkWarning]. */
+    fun onNetworkWarningConfirmed() {
+        when (_uiState.value.networkWarning) {
+            is NetworkWarning.Single -> {
+                _uiState.update { it.copy(networkWarning = null) }
+                beginEnqueueSelectedFormat(bypassNetworkCheck = true)
+            }
+            is NetworkWarning.Playlist -> {
+                _uiState.update { it.copy(networkWarning = null) }
+                confirmPlaylistQueue(bypassNetworkCheck = true)
+            }
+            null -> Unit
+        }
+    }
+
+    fun onNetworkWarningDismissed() {
+        _uiState.update { it.copy(networkWarning = null) }
+    }
+
+    /**
+     * Every enqueue — single or playlist — goes through [NetworkPolicyManager.evaluate] first, so
+     * the user learns about a mobile-data block/warning at the moment they tap Download, not only
+     * later in the Downloads list. [NetworkPolicyManager] stays the sole owner of the actual
+     * budget/limit logic (see its own KDoc); this only reacts to the [NetworkPolicyDecision] it
+     * returns. A blocked download is never silently downgraded to a smaller quality — it's simply
+     * not queued, with the reason shown to the user.
+     */
+    private fun beginEnqueueSelectedFormat(bypassNetworkCheck: Boolean) {
         val media = (_uiState.value.result as? ExtractionResult.Single)?.media ?: return
         val optionId = _uiState.value.selectedFormatId ?: return
         val option = _uiState.value.downloadOptions.firstOrNull { it.id == optionId } ?: return
@@ -132,7 +168,38 @@ class HomeViewModel @Inject constructor(
         // DownloadRequest.formatId is documented as "the video format when audioFormatId is set".
         val primaryFormat = option.videoFormat ?: option.audioFormat ?: return
         val sourceUrl = media.webpageUrl ?: _uiState.value.url.trim()
+        val estimatedSizeBytes = option.combinedEstimatedSizeBytes ?: 0L
 
+        viewModelScope.launch {
+            if (!bypassNetworkCheck) {
+                when (val decision = networkPolicyManager.evaluate(estimatedSizeBytes)) {
+                    is NetworkPolicyDecision.Block -> {
+                        _uiState.update { it.copy(errorMessage = decision.reason) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.Warn -> {
+                        _uiState.update { it.copy(networkWarning = NetworkWarning.Single(decision.reason)) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.QueueForWifi -> {
+                        enqueueDownloadRequest(media, option, primaryFormat, sourceUrl)
+                        _uiState.update { it.copy(justQueued = true, infoMessage = "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.") }
+                        return@launch
+                    }
+                    NetworkPolicyDecision.Allow -> Unit
+                }
+            }
+            enqueueDownloadRequest(media, option, primaryFormat, sourceUrl)
+            _uiState.update { it.copy(justQueued = true, infoMessage = null) }
+        }
+    }
+
+    private fun enqueueDownloadRequest(
+        media: MediaAnalysisResult,
+        option: DownloadOption,
+        primaryFormat: MediaFormat,
+        sourceUrl: String,
+    ) {
         downloadEngine.enqueue(
             DownloadRequest(
                 taskId = UUID.randomUUID().toString(),
@@ -152,8 +219,6 @@ class HomeViewModel @Inject constructor(
                 sourceMediaId = media.id,
             ),
         )
-
-        _uiState.update { it.copy(justQueued = true, infoMessage = null) }
     }
 
     // --- Playlist selection ---------------------------------------------------------
@@ -287,10 +352,11 @@ class HomeViewModel @Inject constructor(
     fun onQueuePlaylistClicked() {
         val setup = _uiState.value.playlistDownloadSetup ?: return
         if (setup.selectedFormatId == null) return
-        confirmPlaylistQueue()
+        confirmPlaylistQueue(bypassNetworkCheck = false)
     }
 
-    private fun confirmPlaylistQueue() {
+    /** Same [NetworkPolicyManager] gate as the single-item path, priced against the whole batch — see [beginEnqueueSelectedFormat]. */
+    private fun confirmPlaylistQueue(bypassNetworkCheck: Boolean) {
         val playlist = (_uiState.value.result as? ExtractionResult.Playlist)?.playlist ?: return
         val setup = _uiState.value.playlistDownloadSetup ?: return
         val formatId = setup.selectedFormatId ?: return
@@ -309,6 +375,42 @@ class HomeViewModel @Inject constructor(
         }
         if (items.isEmpty()) return
 
+        val estimatedTotalBytes = estimatedPlaylistTotalSizeBytes(format, items.size) ?: 0L
+
+        viewModelScope.launch {
+            if (!bypassNetworkCheck) {
+                when (val decision = networkPolicyManager.evaluate(estimatedTotalBytes)) {
+                    is NetworkPolicyDecision.Block -> {
+                        _uiState.update { it.copy(errorMessage = decision.reason) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.Warn -> {
+                        _uiState.update { it.copy(networkWarning = NetworkWarning.Playlist(decision.reason)) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.QueueForWifi -> {
+                        enqueuePlaylistRequest(playlist, format, items)
+                        _uiState.update {
+                            it.copy(
+                                playlistDownloadSetup = null,
+                                playlistSelection = PlaylistSelectionState(),
+                                justQueued = true,
+                                infoMessage = "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.",
+                            )
+                        }
+                        return@launch
+                    }
+                    NetworkPolicyDecision.Allow -> Unit
+                }
+            }
+            enqueuePlaylistRequest(playlist, format, items)
+            _uiState.update {
+                it.copy(playlistDownloadSetup = null, playlistSelection = PlaylistSelectionState(), justQueued = true, infoMessage = null)
+            }
+        }
+    }
+
+    private fun enqueuePlaylistRequest(playlist: PlaylistAnalysisResult, format: MediaFormat, items: List<PlaylistDownloadItem>) {
         downloadEngine.enqueuePlaylist(
             PlaylistDownloadRequest(
                 playlistId = UUID.randomUUID().toString(),
@@ -320,10 +422,6 @@ class HomeViewModel @Inject constructor(
                 items = items,
             ),
         )
-
-        _uiState.update {
-            it.copy(playlistDownloadSetup = null, playlistSelection = PlaylistSelectionState(), justQueued = true)
-        }
     }
 
     private fun currentPlaylistItems(): List<PlaylistItem> =

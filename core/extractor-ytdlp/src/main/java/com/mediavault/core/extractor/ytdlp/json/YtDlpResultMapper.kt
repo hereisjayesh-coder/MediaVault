@@ -129,6 +129,7 @@ private fun YtDlpFormatJson.toMediaFormat(): MediaFormat {
         heightPx = height?.takeIf { isVideo },
         widthPx = width?.takeIf { isVideo },
         languageCode = language,
+        bitrateKbps = (abr ?: tbr)?.roundToInt(),
     )
 }
 

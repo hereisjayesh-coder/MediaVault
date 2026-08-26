@@ -5,6 +5,54 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Format Selection & Download UI Redesign
+
+- The single-item format picker now groups every format into labeled Video/Audio
+  sections (sorted highest-to-lowest resolution within Video), instead of one flat
+  radio-button list. Each Video row shows resolution, fps, container, codec, the
+  final estimated size (already the video+audio sum for a format that needs merging),
+  and — never omitted — whether audio is already included, will be merged in after
+  download, or genuinely isn't available for that resolution. Each Audio row shows
+  its format/container, codec, bitrate, and estimated size. A defensive "Other"
+  section exists so a future format shape the picker doesn't yet classify still shows
+  up rather than silently vanishing.
+- A new persistent bottom Download bar stays visible while the format list scrolls:
+  disabled with a prompt until a format is selected, then showing the selected
+  quality and its estimated size with an enabled Download button. The playlist
+  quality-setup step gets the equivalent persistent bar — selected item count, chosen
+  quality, and the running total estimated size — with the Queue action moved out of
+  the scrolling card and into that bar.
+- `NetworkPolicyManager` is now consulted *before* a download is queued, not only
+  once it actually starts: a hard block (e.g. today's mobile-data budget is used up)
+  is shown immediately and never queued; a soft warning (may exceed the remaining
+  budget) now requires an explicit "Download anyway" confirmation before it proceeds,
+  never silently; a "wait for Wi-Fi" decision still queues the task but tells the
+  user up front that it will wait. This applies to both the single-item and playlist
+  queue paths, priced against the whole batch for playlists.
+- `MediaFormat` gained `bitrateKbps`, mapped in `YtDlpResultMapper` from yt-dlp's own
+  `abr` (falling back to `tbr`) — never estimated — so audio rows can show a real
+  bitrate instead of just a size.
+- Fixed a pre-existing display bug where a muxed direct format (already containing
+  its own audio track) was unconditionally labeled "video only" in the format list,
+  because the old summary only checked for a separately-paired audio format rather
+  than the video format's own `hasAudio`.
+- **Verified live on a physical device (Pixel 7a)**: analyzed a real YouTube source
+  (Big Buck Bunny 60fps 4K) offering split video-only/audio-only DASH streams —
+  confirmed the Video section sorted 4K → 1440p → 1080p → 720p → 480p → 144p with
+  correct resolution/fps/container/codec/size/audio-availability text on each row,
+  the Audio section below it showing real bitrates (129/66/65/50/49 kbps) mapped from
+  yt-dlp's `abr`, and the persistent bottom bar staying pinned through the entire
+  scroll while correctly toggling disabled↔enabled and updating its quality/size text
+  as different rows were selected. Selected a WEBM/opus audio-only format and tapped
+  Download; confirmed directly in the app's own Room database (pulled via `adb`) that
+  the resulting task reached `COMPLETED` with the exact `formatId` selected in the UI,
+  proving the network-policy-gated enqueue path genuinely runs end-to-end, not just
+  navigates away optimistically. Not exercised live this session: the playlist
+  quality-setup bar (no playlist test URL was rehearsed this session) and a
+  network-policy Block/Warn/QueueForWifi decision (the test device had no configured
+  mobile-data budget restriction to trigger one) — both are covered by unit tests
+  (`HomeViewModelTest`) but not confirmed on-device.
+
 ### Added — Player Controls & Gestures Polish
 
 - Popup menus (Speed, Audio, Subtitle, Aspect-ratio, Sleep timer) now open anchored

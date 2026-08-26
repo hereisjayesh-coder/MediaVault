@@ -62,6 +62,10 @@ data class YtDlpFormatJson(
     @SerialName("filesize_approx") val filesizeApprox: Long? = null,
     @SerialName("format_note") val formatNote: String? = null,
     val language: String? = null,
+    /** Average audio bitrate in kbps — the field yt-dlp actually reports for audio-only formats. */
+    val abr: Double? = null,
+    /** Total (video+audio) bitrate in kbps — used as a fallback when [abr] isn't reported. */
+    val tbr: Double? = null,
     /** e.g. "https", "m3u8_native", "http_dash_segments" — determines whether a paused download can safely resume. */
     val protocol: String? = null,
 )

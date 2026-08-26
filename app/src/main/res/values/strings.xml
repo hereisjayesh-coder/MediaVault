@@ -81,11 +81,18 @@
 
     <string name="home_select_format">Select a format</string>
     <string name="home_format_requires_merge">Requires merging — not available yet</string>
-    <string name="home_format_will_merge">Video + audio will be combined automatically after downloading</string>
     <string name="home_download_button">Download</string>
     <string name="home_network_warn_title">Mobile data warning</string>
     <string name="home_network_warn_proceed">Download anyway</string>
     <string name="home_network_blocked">This download is blocked by your current network policy.</string>
+    <string name="home_section_video">Video</string>
+    <string name="home_section_audio">Audio</string>
+    <string name="home_section_other">Other</string>
+    <string name="home_download_bar_prompt">Select a format to continue</string>
+    <string name="home_playlist_bar_prompt">Choose a quality to continue</string>
+    <string name="home_playlist_bar_items">%1$d item(s) selected</string>
+    <string name="home_playlist_bar_total_unknown">Total size unknown</string>
+    <string name="home_queue_button">Queue</string>
 
     <string name="library_title">Library</string>
     <string name="library_search_hint">Search your library</string>

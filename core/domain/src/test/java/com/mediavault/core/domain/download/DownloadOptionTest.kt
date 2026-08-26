@@ -233,4 +233,30 @@ class DownloadOptionTest {
 
         assertEquals("mp4", options.first().outputContainer)
     }
+
+    // --- Section grouping -----------------------------------------------------------------
+
+    @Test
+    fun `muxed and paired options land in the video section, audio-only in the audio section`() {
+        val muxedOption = muxed("m1", 720)
+        val video = videoOnly("v1080", 1080)
+        val audio = audioOnly("a1")
+
+        val options = buildDownloadOptions(listOf(muxedOption, video, audio))
+        val grouped = options.groupedBySection()
+
+        assertEquals(setOf("m1", "v1080+a1"), grouped[DownloadOptionSection.VIDEO]!!.map { it.id }.toSet())
+        assertEquals(setOf("a1"), grouped[DownloadOptionSection.AUDIO]!!.map { it.id }.toSet())
+        assertNull(grouped[DownloadOptionSection.OTHER])
+    }
+
+    @Test
+    fun `an unavailable video-only option still lands in the video section, not dropped`() {
+        val video = videoOnly("v1", 1080)
+
+        val grouped = buildDownloadOptions(listOf(video)).groupedBySection()
+
+        assertEquals(1, grouped[DownloadOptionSection.VIDEO]!!.size)
+        assertNull(grouped[DownloadOptionSection.AUDIO])
+    }
 }
