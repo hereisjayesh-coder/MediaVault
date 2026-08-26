@@ -120,19 +120,31 @@ fun MediaVaultNavHost() {
             enterTransition = { fadeIn(animationSpec = tween(220)) },
             exitTransition = { fadeOut(animationSpec = tween(220)) },
             popEnterTransition = { fadeIn(animationSpec = tween(220)) },
-            // Deliberately NOT fadeOut() here, unlike every other transition — see the
-            // Player-pop decision log entry. PlayerView is a SurfaceView (kept, not TextureView
-            // — see that same entry for why not): it composites on its own SurfaceFlinger layer
-            // outside Compose's draw/alpha pipeline, so animating *its* alpha via fadeOut() does
-            // nothing to the actual video pixels — the destination fades in on schedule while
-            // the still-fully-opaque video sits there unchanged, then vanishes in one frame the
-            // instant this exit transition's 220ms elapses and Compose actually disposes it.
+            // Deliberately NOT a plain fadeOut() for every route — see the Player-pop decision
+            // log entry. PlayerView is a SurfaceView (kept, not TextureView — see that same
+            // entry for why not): it composites on its own SurfaceFlinger layer outside
+            // Compose's draw/alpha pipeline, so animating *its* alpha via fadeOut() does nothing
+            // to the actual video pixels — the destination fades in on schedule while the
+            // still-fully-opaque video sits there unchanged, then vanishes in one frame the
+            // instant the exit transition elapses and Compose actually disposes it.
             // ExitTransition.None leaves Player's content fully visible and unanimated for the
             // whole pop (Navigation-Compose still keeps it composed for exactly as long as
             // popEnterTransition's 220ms, same as before) so the incoming screen's fade-in is
             // what visually covers it — by the time it's actually removed, it's already hidden
             // under fully-opaque destination content, with nothing left to visibly pop.
-            popExitTransition = { ExitTransition.None },
+            //
+            // Every OTHER route is ordinary Compose content, not a SurfaceView — applying that
+            // same ExitTransition.None there (as an earlier version of this file did) is a
+            // different bug, not the same fix: an ordinary screen's alpha *is* part of Compose's
+            // normal draw pipeline, so leaving it un-faded while the destination fades in on top
+            // alpha-blends both screens together for the full 220ms — visible as lingering
+            // text/icons/buttons from the exiting screen ghosting through the incoming one
+            // (found on Source Details -> Back). Those routes need the symmetric fadeOut() they
+            // had before, so only the Player pop keeps the special-cased transition.
+            popExitTransition = {
+                val isLeavingPlayer = initialState.destination.hierarchy.any { it.route == PLAYER_ITEM_ROUTE }
+                if (isLeavingPlayer) ExitTransition.None else fadeOut(animationSpec = tween(220))
+            },
         ) {
             composable(MediaVaultDestination.HOME.route) {
                 HomeScreen(

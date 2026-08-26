@@ -2487,4 +2487,32 @@ walkthrough.
 
 ---
 
+### 2026-08-27 — `ExitTransition.None` scoped to the Player pop only; every other route's pop-exit restored to `fadeOut()`
+
+**Decision:** The entry immediately above set `popExitTransition = { ExitTransition.None }` at
+the `NavHost` level, applying to *every* route's pop, not just Player's. That was fine for
+Player (a `SurfaceView`, immune to Compose alpha) but wrong for ordinary Compose screens: Sources
+-> Source Details -> Back showed Source Details' text/icons/button alpha-blended together with
+the reappearing Sources list for the full transition, since the exiting screen never faded while
+the destination faded in on top of it. `popExitTransition` is now conditional — `initialState.
+destination.hierarchy.any { it.route == PLAYER_ITEM_ROUTE }` selects `ExitTransition.None`;
+every other pop gets the same `fadeOut(tween(220))` every other transition in the app already
+uses.
+
+**Why this wasn't caught when the Player-pop fix shipped:** that stage's live verification
+exercised exactly the flows its own bug report named (Player -> Back, Library -> Player -> Back,
+rapid tab switching) — none of which pop *out of* a non-Player route, so the global scope of the
+`popExitTransition` override had no visible symptom in any of those tests. The bug only surfaces
+on a pop out of a different, ordinary Compose screen, which Source Details' own bug report
+happened to be the first task to actually exercise.
+
+**Consequence — verified live on a physical device (Pixel 7a):** reproduced the exact reported
+repro (search "aeon" -> open Aeon's detail page -> Back) both before and after the fix; after,
+Back settles cleanly into the Sources list with the search query and filtered results intact,
+no ghosted text/icons/buttons. Repeated three rapid open/back cycles in a row with the same
+clean result each time. Player -> Back (the original fix this entry corrects) re-verified
+unregressed.
+
+---
+
 **END OF MASTER SPECIFICATION**

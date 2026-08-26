@@ -5,6 +5,23 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Source Details Back Transition Ghosting
+
+- Sources -> Source Details -> Back was showing both screens' text/icons/buttons alpha-blended
+  together for the full transition (~220ms, perceived as longer since nothing about the outgoing
+  screen was fading), instead of a clean crossfade.
+- Root cause: the Player-pop fix's `popExitTransition = ExitTransition.None` was set globally on
+  `MediaVaultNavHost`'s `NavHost`, so it applied to every route's pop, not just the dedicated
+  Player screen it was written for. Leaving an *ordinary* Compose screen fully opaque and
+  un-faded while the destination fades in on top of it double-exposes both screens' pixels —
+  correct only for Player's `SurfaceView`, which sits outside Compose's alpha pipeline and isn't
+  affected by `fadeOut()` at all (see the 2026-08-27 Player<->Library decision log entry).
+- Fix: `popExitTransition` now checks whether the entry being popped is the dedicated Player
+  route; only then does it use `ExitTransition.None`. Every other pop (Source Details, Library,
+  Downloads, etc.) got back its symmetric `fadeOut(tween(220))`, matching every other transition
+  in the app. No navigation architecture change — same `NavHost`-level transition mechanism, now
+  scoped correctly.
+
 ### Added — Source Descriptions
 
 - The Source detail page now shows a compact 1-2 sentence description of what the platform is
