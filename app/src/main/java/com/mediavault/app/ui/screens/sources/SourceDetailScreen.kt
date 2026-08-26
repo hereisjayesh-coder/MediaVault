@@ -32,6 +32,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediavault.app.R
 import com.mediavault.app.ui.components.EmptyStateCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
+import com.mediavault.core.domain.source.displayDescription
 import com.mediavault.core.model.Source
 
 @Composable
@@ -91,6 +92,12 @@ private fun SourceDetailContent(source: Source, engineVersion: String, onGoToAna
                 }
             }
         }
+
+        Text(
+            text = source.displayDescription(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             source.categories.forEach { category ->

@@ -59,6 +59,13 @@ class SourceCatalogJsonTest {
         assertTrue(!source.isSupported)
     }
 
+    @Test
+    fun `the JSON schema carries no description field -- it is null until curated descriptions are applied`() {
+        val source = decode(SAMPLE_JSON).sources.first { it.id == "youtube" }
+
+        assertNull(source.description)
+    }
+
     private fun decode(json: String) =
         ytDlpJson.decodeFromString(SourceCatalogJson.serializer(), json).toSourceCatalog()
 

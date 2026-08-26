@@ -5,6 +5,25 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Source Descriptions
+
+- The Source detail page now shows a compact 1-2 sentence description of what the platform is
+  and what kind of media it generally carries (e.g. Instagram: "Social media platform for
+  sharing photos, videos, Stories and Reels."), alongside the existing logo, name, domain,
+  categories, and extraction-engine support status.
+- `Source` gained a new optional `description: String?` field (curated only; defaults to
+  `null`). A small hand-curated map (`CuratedSourceDescriptions.byId`, ~20 major services —
+  YouTube, Instagram, Reddit, TikTok, etc.) lives in `core/domain/source/SourceDescriptions.kt`,
+  applied once at catalog-load time (`SourceCatalog.withCuratedDescriptions()`, called from
+  `YtDlpSourceCatalogRepository`) — deliberately not written into the generated
+  `source_catalog.json` asset, so the ~1,027-service catalog doesn't carry ~1,000 placeholder
+  descriptions and regenerating it via `generate_source_catalog.py` never touches descriptions.
+  Every source without a curated entry gets a generic, category-based fallback (e.g. "A video
+  source supported by MediaVault's extraction engine.") via `Source.displayDescription()` — the
+  single place the curated-vs-fallback decision is made, reused by the UI as-is.
+- No changes to the catalog generator, extractor, downloader, player, or navigation. Existing
+  search, category filters, A-Z grouping, aliases, and favicon fallback are all unaffected.
+
 ### Fixed — Supported Sources Search Accessibility
 
 - The search field on the Supported Sources screen no longer permanently scrolls away once

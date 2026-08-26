@@ -21,4 +21,12 @@ data class Source(
     val isSupported: Boolean,
     /** Suggested favicon URL to fetch/cache; null when no domain is known. */
     val faviconUrl: String?,
+    /**
+     * Hand-curated, human-readable description ("what is this platform / what media does it
+     * carry"), e.g. "Social media platform for sharing photos, videos, Stories and Reels."
+     * Null for the vast majority of the catalog, which has no curated entry — see
+     * `core/domain/source/SourceDescriptions.kt` for the curated map and the generic,
+     * category-based fallback shown instead.
+     */
+    val description: String? = null,
 )

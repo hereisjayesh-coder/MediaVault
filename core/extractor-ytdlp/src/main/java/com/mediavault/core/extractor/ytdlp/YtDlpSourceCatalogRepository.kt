@@ -3,6 +3,7 @@ package com.mediavault.core.extractor.ytdlp
 import android.content.Context
 import com.mediavault.core.domain.source.SourceCatalog
 import com.mediavault.core.domain.source.SourceCatalogRepository
+import com.mediavault.core.domain.source.withCuratedDescriptions
 import com.mediavault.core.extractor.ytdlp.json.SourceCatalogJson
 import com.mediavault.core.extractor.ytdlp.json.toSourceCatalog
 import com.mediavault.core.extractor.ytdlp.json.ytDlpJson
@@ -38,7 +39,7 @@ class YtDlpSourceCatalogRepository @Inject constructor(
             val loaded = withContext(Dispatchers.IO) {
                 context.assets.open(CATALOG_ASSET_PATH).use { stream ->
                     val json = stream.readBytes().toString(Charsets.UTF_8)
-                    ytDlpJson.decodeFromString(SourceCatalogJson.serializer(), json).toSourceCatalog()
+                    ytDlpJson.decodeFromString(SourceCatalogJson.serializer(), json).toSourceCatalog().withCuratedDescriptions()
                 }
             }
             cached = loaded
