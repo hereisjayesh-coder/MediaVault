@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      Only covers the native pre-Compose frame while the system is in dark mode — i.e. the
+      SYSTEM theme choice, which is the default until the user picks Light/Dark explicitly.
+      An explicit override that disagrees with the system setting is corrected at runtime in
+      MainActivity.onCreate before the first Compose frame — see its own comment.
+    -->
+    <style name="Theme.MediaVault" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/background_dark</item>
+        <item name="android:navigationBarColor">@color/background_dark</item>
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+    </style>
+</resources>

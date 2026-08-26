@@ -23,3 +23,24 @@ val SuccessGreenContainer = Color(0xFFE6F7ED)
 
 val ErrorRed = Color(0xFFDC2626)
 val ErrorRedContainer = Color(0xFFFCE9E9)
+
+// Dark variant — true/near-black AMOLED-friendly surfaces (see PROJECT_MASTER.md §37,
+// 2026-08-26). Selectable via Settings alongside Light; not a replacement for the
+// approved light/blue identity, which stays the default.
+
+val BackgroundDark = Color(0xFF000000)
+val SurfaceDark = Color(0xFF121318)
+val SurfaceVariantDark = Color(0xFF1E2028)
+val OutlineDark = Color(0xFF2C2E38)
+
+// A lighter blue tone than PrimaryBlue — Material's own dark-theme guidance calls for a
+// lighter, less saturated tone of the brand color so it keeps AA contrast on near-black
+// surfaces instead of looking muddy.
+val PrimaryBlueOnDark = Color(0xFF7FA6FF)
+val PrimaryBlueContainerDark = Color(0xFF1D3A6B)
+
+val TextPrimaryDark = Color(0xFFF2F3F7)
+val TextSecondaryDark = Color(0xFFA7ACB9)
+
+val ErrorRedOnDark = Color(0xFFFF6B6B)
+val ErrorRedContainerDark = Color(0xFF4A1414)

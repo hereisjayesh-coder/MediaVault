@@ -168,7 +168,12 @@
     <string name="player_hub_open_library">Open Library</string>
 
     <string name="settings_title">Settings</string>
-    <string name="settings_placeholder_body">Network policy, storage, and app preferences will appear here once implemented.</string>
+    <string name="settings_placeholder_body">Network policy and storage preferences will appear here once implemented.</string>
+    <string name="settings_appearance_section">Appearance</string>
+    <string name="settings_theme_label">Theme</string>
+    <string name="theme_mode_light">Light</string>
+    <string name="theme_mode_dark">Dark</string>
+    <string name="theme_mode_system">System default</string>
 
     <string name="sources_title">Supported Sources</string>
     <string name="sources_search_hint">Search sources</string>

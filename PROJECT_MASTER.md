@@ -1460,6 +1460,59 @@ _Prior state, before the real DownloadEngine stage:_
     test device had no mobile-data budget restriction configured to trigger one) —
     both are covered by unit tests (`HomeViewModelTest`) but not confirmed on-device.
 
+* **Global theme system**: `Settings` gained a real Appearance section (a placeholder
+  screen until now) with a Light/Dark/System default picker. `com.mediavault.app.settings`
+  (new package) holds `ThemeMode` (the enum + its pure `resolveIsDark(systemInDark)`
+  resolution logic), `ThemeStore`/`DataStoreThemeStore` (DataStore-backed persistence,
+  same pattern as `NetworkPolicyStore`, bound via a new `SettingsModule`), and
+  `ThemeViewModel` (a thin Hilt `ViewModel` wrapping the store, used by both
+  `MainActivity` and `SettingsScreen` — every instance reflects the same persisted
+  value since both read through the one `ThemeStore` singleton).
+  - **`MediaVaultTheme` now takes a `themeMode` param** and picks between the existing
+    light `ColorScheme` and a new true-dark/AMOLED-friendly one
+    (`MediaVaultDarkColorScheme`, `ui/theme/Theme.kt`) built from new dark tokens in
+    `Color.kt` (near-black background/surfaces, a lighter blue accent tuned for
+    contrast on dark). No other screen/component needed changes — everything already
+    read colors from `MaterialTheme.colorScheme` rather than hard-coded values, so
+    swapping the scheme instance re-themes the whole app (Home, Downloads, Library,
+    Player's embedded chrome, Settings, Supported Sources, dialogs, menus, bottom
+    nav, the format-selection UI and its persistent Download bar) automatically. The
+    Player's own video canvas (fullscreen letterboxing, gesture-bubble scrims) stays
+    intentionally black/white regardless of theme, matching standard video-player UX
+    — not a gap, a deliberate exception already true before this stage.
+  - **Startup flash prevention**: a new `values-night/themes.xml` covers the native
+    pre-Compose frame for the common "system is in dark mode, user hasn't overridden
+    it" case at zero runtime cost. `MainActivity.onCreate` additionally resolves the
+    persisted preference synchronously (`runBlocking` over a single small DataStore
+    read — the same accepted trade-off other startup-critical tiny preferences use
+    when a full splash-screen library isn't in scope) before `setContent`, setting
+    the window background (`window.setBackgroundDrawable`) and system bar icon style
+    (`enableEdgeToEdge`) to match immediately — covering the explicit-override case
+    the resource qualifier alone can't (Dark selected while the system is Light, or
+    vice versa). A `LaunchedEffect(isDark)` inside `setContent` re-applies the same
+    window chrome reactively whenever the resolved theme changes at runtime, so the
+    system bar icons never go stale relative to the app's own background after a
+    live theme switch or an OS-level dark-mode toggle in SYSTEM mode.
+  - **No separate player-only theme setting** — the dedicated Player screen reads the
+    same global `MediaVaultTheme` as every other screen; only its video canvas itself
+    is exempt, per above.
+  - **Downloads screen audited, not changed**: `DownloadTaskCard.progressDetailLabel()`
+    already showed downloaded/total size, throughput, and ETA before this stage: this
+    was verified before writing any code, and nothing there was touched.
+  - **Verified live** (Pixel 7a): cold-launched with the device's system theme in dark
+    mode and confirmed the app followed it (System default, the shipped default);
+    switched to Light and to Dark from Settings and confirmed every visible surface
+    re-themed instantly and correctly each time; force-stopped and relaunched with
+    Dark explicitly selected and confirmed Settings still showed Dark selected (not
+    reverted to System) after the cold restart, proving persistence; confirmed the
+    Downloads screen (playlists, task cards, status colors, progress bars) still
+    renders correctly, unregressed, in dark mode. **Not exercised this session**:
+    Player/Library/Supported Sources screens' dark rendering specifically, and an
+    in-progress download's live speed/ETA line in dark mode (both share the same
+    `MaterialTheme.colorScheme` tokens verified elsewhere; out of this stage's
+    testing scope per its own instructions, which excluded unrelated player/source/
+    torrent testing).
+
 Not yet started: torrent downloading, user-selected-folder/full-device media scanning
 (the Library only indexes MediaVault-managed downloads so far — see the private-library
 stage's private-storage note above), app lock/biometric security, source search (beyond
@@ -1919,6 +1972,59 @@ Download, finding the resulting task at `COMPLETED` status with the exact format
 selected on screen. See §34's Current Project State for the full walkthrough and what
 was not exercised live this session (the playlist bar; an actual Block/Warn/
 QueueForWifi decision).
+
+---
+
+### 2026-08-26 — Global theme system: Light/Dark/System, persisted, applied via one shared `MaterialTheme.colorScheme`
+
+**Decision:** Settings gained a real Light/Dark/System default theme picker
+(persisted via a new `ThemeStore`/DataStore, mirroring `NetworkPolicyStore`'s
+pattern) that drives a single `MediaVaultTheme(themeMode)` composable at the app
+root. A new true-dark/AMOLED-friendly `ColorScheme` was added alongside the existing
+approved light/blue one; no screen or component needed its own changes to support it.
+
+**Why no per-screen changes were needed:** every screen/component already read
+colors from `MaterialTheme.colorScheme` rather than hard-coded `Color(...)` literals
+— confirmed by auditing the app before writing any theme code, per this stage's own
+"reuse centralized tokens, no scattered hard-coded colors" requirement. The only
+hard-coded colors found anywhere outside `ui/theme/` are in the dedicated Player
+screen's video canvas (fullscreen black letterboxing, gesture-bubble scrims), which
+are correctly theme-*independent* by design — a video surface and its legibility
+overlays don't change with the app's light/dark preference in any mainstream player,
+and the Player's own embedded chrome around that canvas was already
+`MaterialTheme.colorScheme`-driven. This is why swapping which `ColorScheme` instance
+`MediaVaultTheme` hands to `MaterialTheme` was sufficient to re-theme Home, Downloads,
+Library, Settings, Supported Sources, dialogs, menus, bottom navigation, and the
+format-selection UI/download bar all at once.
+
+**Why a dark scheme is a new user choice, not a return to the original AMOLED
+theme:** §37's 2026-08-24 entry replaced an AMOLED-dark default with the approved
+light/blue identity as a *product* decision (the owner reviewed and approved
+light/blue specifically). This stage doesn't revisit that call — light/blue stays the
+default and the approved identity — it only adds Dark as an explicit, opt-in
+alternative alongside System, per this stage's own requirement.
+
+**Why flash prevention combines a `values-night` resource with a runtime
+`window.setBackgroundDrawable`/`enableEdgeToEdge` call rather than adopting the
+`androidx.core.splashscreen` library:** the milestone's scope was explicitly bounded
+("no unnecessary refactoring," reuse the existing settings architecture) and a full
+splash-screen integration wasn't requested. The resource-qualifier variant handles the
+zero-runtime-cost, most-common case (SYSTEM mode, which is the shipped default) at
+the native pre-Compose frame; a single synchronous DataStore read in
+`MainActivity.onCreate` before `setContent` (the same small-value trade-off already
+accepted elsewhere for tiny startup preferences) then corrects the window
+background/system-bar style for the remaining case — an explicit Light/Dark override
+that disagrees with the system setting — before the first Compose frame draws.
+
+**Consequence — verified live on a physical device (Pixel 7a):** cold-launched with
+the system in dark mode and confirmed SYSTEM mode followed it; switched to Light and
+Dark from Settings and confirmed instant, correct re-theming across Home/Downloads/
+the bottom nav/Settings itself; confirmed the choice survived a force-stop and cold
+relaunch (Dark stayed selected, not reverted to System); confirmed the Downloads
+screen's existing size/speed/ETA display was unregressed in dark mode. See §34's
+Current Project State for the full walkthrough and what wasn't exercised this session
+(Player/Library/Supported Sources dark rendering specifically; a live speed/ETA line
+in dark mode) — out of scope per this stage's own testing instructions.
 
 ---
 

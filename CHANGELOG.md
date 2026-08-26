@@ -5,6 +5,44 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Global Theme System
+
+- Settings now has a real Appearance section with a Light/Dark/System default theme
+  picker, replacing the placeholder-only screen. The choice persists (DataStore) and
+  survives app restart.
+- Added a true dark, AMOLED-friendly color scheme (near-black surfaces, a lighter blue
+  accent tuned for contrast on dark) alongside the existing light/blue design — the
+  light scheme stays the default. Every screen, dialog, menu, and the bottom
+  navigation bar re-themes automatically because they already read colors from
+  `MaterialTheme.colorScheme` rather than hard-coded values; no per-screen changes
+  were needed. The dedicated Player screen's own video canvas (fullscreen
+  letterboxing, gesture overlay scrims) intentionally stays black/white regardless of
+  app theme, matching standard video-player UX — its embedded chrome was already
+  theme-token-driven.
+- Startup theme flash prevention: a `values-night` variant of the app's native window
+  theme covers the pre-Compose frame for the common "follow system" case, and
+  `MainActivity` resolves the persisted preference synchronously before `setContent`
+  (a single small DataStore read) to set the correct window background and system bar
+  icon style for the explicit-override case too, then keeps both in sync reactively
+  as the theme changes at runtime.
+- No separate player-only theme setting was added — the Player screen follows the
+  same global choice as every other screen.
+- Confirmed the Downloads screen already showed downloaded/total size, download
+  speed, and ETA (`DownloadTaskCard.progressDetailLabel`) before this stage — left
+  unchanged, not duplicated.
+- **Verified live on a physical device (Pixel 7a)**: launched cold with the device's
+  system theme in dark mode and confirmed the app followed it (System default);
+  switched to Light and Dark from Settings and confirmed every visible surface —
+  Home, the bottom nav bar, cards, Settings itself — re-themed instantly and
+  correctly on each switch; force-stopped and relaunched with Dark explicitly
+  selected and confirmed it was still selected (not reverted to System) after the
+  cold restart; confirmed the Downloads screen (playlists, task cards, status colors,
+  progress bars) still renders correctly in dark mode with no regression. Not
+  exercised this session: Player/Library/Supported Sources screens' dark rendering,
+  and an in-progress download's live speed/ETA line in dark mode specifically (both
+  rely on the same shared `MaterialTheme.colorScheme` tokens verified elsewhere and
+  were out of this stage's testing scope per its own instructions).
+
 ### Added — Format Selection & Download UI Redesign
 
 - The single-item format picker now groups every format into labeled Video/Audio
