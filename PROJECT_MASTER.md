@@ -1512,13 +1512,76 @@ _Prior state, before the real DownloadEngine stage:_
     `MaterialTheme.colorScheme` tokens verified elsewhere; out of this stage's
     testing scope per its own instructions, which excluded unrelated player/source/
     torrent testing).
+* **Local media import, and a privacy-first storage/export model**: Library gained an
+  explicit "Add media" entry point (`ACTION_OPEN_DOCUMENT` for one file,
+  `ACTION_OPEN_DOCUMENT_TREE` for a folder) — the *only* way media MediaVault didn't
+  download itself ever enters the Library. There is deliberately no device-wide or
+  gallery scan anywhere in this codebase; a folder import reads only that one folder's
+  direct children (`DocumentFile.listFiles()`, no recursion into subfolders), and no
+  broad storage/media permission is requested for any of this.
+  - **New `com.mediavault.app.library` types**: `MediaFileClassifier.kt` (pure —
+    extension→`MediaType`, filename→default title, unit-tested), `MediaMetadataProbe`/
+    `AndroidMediaMetadataProbe` (wraps `android.media.MediaMetadataRetriever` — duration,
+    resolution, a video frame or embedded audio cover art; a broad `catch (Exception)`
+    at this one boundary since the retriever is documented to throw inconsistently for
+    corrupt/DRM/unsupported files — the "handle unsupported formats gracefully"
+    requirement made concrete), and `MediaImportRepository`/`AndroidMediaImportRepository`
+    (orchestrates: takes a best-effort persistable read grant via
+    `takePersistableUriPermission`, classifies, probes, persists a small cached JPEG
+    thumbnail under the app's own cache dir, upserts a `MediaItemEntity` with
+    `isImported = true`, `sourceDownloadTaskId = null`). No Room migration needed —
+    `isImported`/`sourceDownloadTaskId` already existed on the entity, unused until now.
+  - **`MediaOrigin` (`LibraryQuery.kt`)** is the single classification `MediaItemEntity`
+    lives by: `DOWNLOADED` (`!isImported`), `IMPORTED` (`isImported`, no
+    `sourceDownloadTaskId` — came from outside MediaVault), `SAVED_TO_GALLERY`
+    (`isImported` *with* a `sourceDownloadTaskId` — a MediaVault download later moved to
+    the Gallery, see below). Both the Library card badge and the Details dialog's new
+    "Origin" row derive from this one function, never their own copy of the same
+    `when`. `canDeleteUnderlyingFile()` (`!isImported`) is the one predicate
+    `AndroidLibraryRepository.delete()` defers to — the actual safety mechanism behind
+    "removing an imported item must never delete the original": only a row MediaVault
+    unambiguously owns the file for gets its file/document deleted; everything else
+    just loses its Library row (plus releasing MediaVault's own read grant, and
+    cleaning up the cached thumbnail file it wrote).
+  - **"Save to device" replaces the old single "Export"**, opening a Gallery/Files
+    choice. "Save to Files" is the pre-existing `ACTION_CREATE_DOCUMENT` `exportTo()`,
+    unchanged, just relabeled and reachable from the new chooser. "Save to Gallery" is
+    new (`LibraryRepository.saveToGallery`) — see the 2026-08-26 storage-architecture
+    decision log entry below for why it's implemented as a real move (copy into
+    `MediaStore`, verify, delete the now-redundant private copy, repoint the Library
+    row) for a MediaVault-private download specifically, and a plain copy for anything
+    `content://`-sourced (imported or a legacy SAF download) that MediaVault doesn't
+    own. Gated to API 29+ (`MediaStore.VOLUME_EXTERNAL_PRIMARY`/`RELATIVE_PATH`/
+    `IS_PENDING`); below that, a clear `AppError.Unsupported` message points at Save to
+    Files rather than requesting `WRITE_EXTERNAL_STORAGE`.
+  - **Player unchanged** — confirmed before writing any code that `Media3PlayerEngine`
+    already builds `MediaItem.fromUri()` from a plain URI string with no scheme-specific
+    branching, so an imported `content://` item plays with zero player-layer changes,
+    same as the pre-existing legacy-SAF-download rows already did.
+  - **Verified live** (Pixel 7a): imported a single video (correct duration/resolution/
+    size/thumbnail extracted from a real frame); imported a folder containing two
+    videos and one audio file — all three indexed with zero skipped, correct per-file
+    metadata (including an audio file's real 10:34 duration and 10 MB size); played an
+    imported audio file through the real dedicated Player screen (timeline advancing,
+    correct total duration); removed an imported item from Library via the three-dot
+    menu and confirmed via `adb shell ls` that the original file on disk was byte-for-
+    byte untouched; force-stopped and cold-relaunched and confirmed every remaining
+    imported entry — and the earlier removal — persisted; deleted the underlying file
+    out from under a still-listed imported item and confirmed it degraded to a red
+    "File missing" badge rather than crashing or vanishing. **Not exercised this
+    session**: an actual revoked SAF persistable-permission grant specifically (no
+    direct `adb` mechanism to simulate it) — covered instead by the equivalent
+    moved/deleted-file path, which exercises the same `fileExists()` failure-handling
+    code; and "Save to Gallery" itself (no test asked for it beyond the architecture
+    decision, and the physical device's Gallery app wasn't inspected post-save).
 
-Not yet started: torrent downloading, user-selected-folder/full-device media scanning
-(the Library only indexes MediaVault-managed downloads so far — see the private-library
-stage's private-storage note above), app lock/biometric security, source search (beyond
+Not yet started: torrent downloading, app lock/biometric security, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
 analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
-and update checking.
+and update checking. Local media import (a user-picked file or folder, via SAF) exists
+as of the 2026-08-26 stage below — deliberately *not* full-device/gallery scanning,
+which this project has explicitly ruled out as a privacy matter, not just an
+unimplemented one; see that stage's own entry for why.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -2025,6 +2088,56 @@ screen's existing size/speed/ETA display was unregressed in dark mode. See §34'
 Current Project State for the full walkthrough and what wasn't exercised this session
 (Player/Library/Supported Sources dark rendering specifically; a live speed/ETA line
 in dark mode) — out of scope per this stage's own testing instructions.
+
+---
+
+### 2026-08-26 — Local media import stays SAF-explicit, never a gallery/device scan; "Save to Gallery" moves rather than duplicates a MediaVault-owned file
+
+**Decision:** This milestone started from a broader "local media import & library
+scanning" brief and was deliberately narrowed mid-stream to a privacy-first shape: the
+Library only ever indexes (a) what MediaVault itself downloaded, or (b) a file/folder
+the user explicitly picked through `ACTION_OPEN_DOCUMENT`/`ACTION_OPEN_DOCUMENT_TREE`.
+No broad gallery/media permission (`READ_MEDIA_VIDEO`/`READ_MEDIA_AUDIO`, let alone
+`MANAGE_EXTERNAL_STORAGE`) is requested anywhere, and no code path enumerates the
+device's storage beyond a single user-picked folder's own direct children.
+
+**Why "Save to Gallery" doesn't just copy the file, for a MediaVault-owned download:**
+researched before writing any storage code, since the product requirement was
+explicitly "one physical file wherever technically possible." Android's scoped storage
+model (API 29+) gives apps no public zero-copy way to hand a private file to
+`MediaStore` — every write into a MediaStore-backed entry is mediated by the separate
+MediaProvider process via `ContentResolver.insert()` + a real `OutputStream`, and the
+only bypass (`MANAGE_EXTERNAL_STORAGE`) is exactly the kind of broad access this stage
+rules out. Given that hard constraint, the most storage-efficient architecture actually
+achievable is copy-then-delete-source: write the Gallery copy, verify it, delete the
+now-redundant private copy, and repoint the Library row's `mediaUri` at the new
+`content://` URI. The *steady state* is one physical file; the copy step itself is an
+unavoidable, momentary cost of crossing that OS-level boundary, not a shortcut taken
+without checking for a better one.
+
+**Why that move only ever applies to a MediaVault-private (`file://`, non-imported)
+download, never a `content://` source:** MediaVault doesn't own an imported or legacy-
+SAF-downloaded document — deleting it as a side effect of an unrelated "also save a
+copy to Gallery" action would be exactly the kind of surprising data loss this
+project's "never delete an external file the user didn't ask to delete" principle
+exists to prevent (see §37's original SAF-based-download entries and this stage's own
+`canDeleteUnderlyingFile()`/`MediaOrigin`). "Save to Gallery" on such an item stays a
+plain copy, identical in spirit to "Save to Files."
+
+**Why a moved-to-Gallery row is marked `isImported = true` rather than getting a new
+dedicated flag:** the delete-safety rule it needs — "don't delete the file when this
+Library row is removed" — is identical to an imported item's rule, and `isImported`
+already drives exactly that check. Reusing it avoids a Room migration and a second
+code path with the same meaning; `MediaOrigin` (keyed off `isImported` **and**
+whether `sourceDownloadTaskId` survived) is what keeps "saved to Gallery" and
+"imported from outside MediaVault" distinguishable in the UI despite sharing the one
+underlying boolean.
+
+**Consequence — verified live on a physical device (Pixel 7a):** see §34's Current
+Project State for the full device-testing walkthrough of the import side of this
+stage. "Save to Gallery" itself was implemented and reasoned through against the
+storage semantics above but not exercised live this session — flagged there, not
+glossed over.
 
 ---
 

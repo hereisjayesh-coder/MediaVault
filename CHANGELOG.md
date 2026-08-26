@@ -5,6 +5,59 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Local Media Import & Privacy-First Storage/Export
+
+- Library gained an explicit "Add media" action (Import a file / Import a folder) using
+  the Android system document picker (`ACTION_OPEN_DOCUMENT` for one file,
+  `ACTION_OPEN_DOCUMENT_TREE` for a folder). Nothing is ever scanned automatically —
+  MediaVault only ever indexes a file or folder the user explicitly picked through the
+  OS's own picker, and a folder import only looks at that one folder's direct contents,
+  never subfolders or anywhere else on the device. No broad storage/media permission is
+  requested anywhere in this feature.
+- Imported media is indexed with real detected metadata — duration, resolution, file
+  size, and (for video) a thumbnail taken from an actual frame, or (for audio) embedded
+  cover art when the file has one — using Android's built-in `MediaMetadataRetriever`,
+  no new metadata dependency. A persisted read grant (`takePersistableUriPermission`)
+  is taken where the provider supports it, so the import survives an app restart; only
+  the reference and probed metadata are stored, never a copy of the file's bytes.
+- Imported items play through the existing Media3 player unchanged — it already
+  supported `content://` sources from the earlier SAF-based download milestone.
+- Library now clearly distinguishes where a file's bytes actually live: a plain
+  MediaVault download shows no badge, an imported item shows "Imported", and a download
+  later saved to the Gallery shows "In Gallery". "Remove from Library" (the label used
+  in place of "Delete" for anything MediaVault doesn't own the file for) only ever
+  removes the Library row — it never deletes an imported or Gallery-owned file, and the
+  Details dialog now shows this same Origin.
+- The three-dot menu's "Export" became "Save to device", opening a Gallery/Files
+  choice: "Save to Files" is the existing `ACTION_CREATE_DOCUMENT` export unchanged;
+  "Save to Gallery" is new, publishing into `MediaStore` (API 29+; older OS versions
+  get a clear "use Save to Files instead" message rather than the broad legacy
+  `WRITE_EXTERNAL_STORAGE` permission). For a MediaVault-private download specifically,
+  saving to Gallery is a real *move*, not a duplicate: once the Gallery copy is written
+  and verified, the redundant private copy is deleted and the Library row is repointed
+  at the Gallery file, so the steady state is one physical file, not two — see
+  PROJECT_MASTER.md's storage-architecture decision log entry for why Android has no
+  zero-copy way to do this directly, and why a copy-then-delete-source is the most
+  storage-efficient option actually available. A `content://`-sourced item (imported,
+  or a legacy SAF download) is never eligible for this move — MediaVault doesn't own
+  that document, so "Save to Gallery" stays a plain copy there, exactly like Files
+  export.
+- Handles the real-world edge cases this feature invites: a moved/deleted external
+  file (existing "File missing" badge, now correctly covers imported items via the
+  same `content://` existence check), a revoked/unsupported persistable permission
+  (best-effort — the import doesn't fail outright, only the "survives a restart"
+  guarantee for that item), an inaccessible folder, and a non-media file mixed into a
+  folder import (silently skipped and counted, never fails the whole batch).
+- **Verified live on a physical device (Pixel 7a)**: imported a single video (correct
+  duration/resolution/size/thumbnail), imported a folder containing two videos and one
+  audio file (all three indexed, zero skipped, correct per-file metadata), played an
+  imported audio file through the real Player screen, removed an imported item from
+  Library and confirmed via `adb` that the original file on disk was untouched,
+  force-stopped and relaunched the app and confirmed every imported entry (and the
+  earlier removal) persisted, then deleted the underlying file out from under a still-
+  Library-listed imported item and confirmed it degraded to a "File missing" badge
+  instead of crashing or silently disappearing.
+
 ### Added — Global Theme System
 
 - Settings now has a real Appearance section with a Light/Dark/System default theme

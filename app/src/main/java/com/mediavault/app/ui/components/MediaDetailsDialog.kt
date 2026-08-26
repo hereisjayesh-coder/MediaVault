@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mediavault.app.R
+import com.mediavault.app.library.MediaOrigin
+import com.mediavault.app.library.origin
 import com.mediavault.app.ui.screens.home.formatDurationLabel
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import com.mediavault.core.database.entity.MediaItemEntity
@@ -33,6 +35,7 @@ fun MediaDetailsDialog(item: MediaItemEntity, onDismiss: () -> Unit) {
                 item.resolutionLabel?.let { DetailRow(stringResource(R.string.library_details_resolution), it) }
                 formatFileSizeLabel(item.sizeBytes)?.let { DetailRow(stringResource(R.string.library_details_size), it) }
                 item.container?.let { DetailRow(stringResource(R.string.library_details_format), it.uppercase()) }
+                DetailRow(stringResource(R.string.library_details_origin), originLabel(item))
                 DetailRow(stringResource(R.string.library_details_downloaded), DateFormat.getDateTimeInstance().format(Date(item.addedAtEpochMs)))
             }
         },
@@ -40,6 +43,13 @@ fun MediaDetailsDialog(item: MediaItemEntity, onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.library_details_close)) }
         },
     )
+}
+
+@Composable
+private fun originLabel(item: MediaItemEntity): String = when (item.origin()) {
+    MediaOrigin.DOWNLOADED -> stringResource(R.string.library_details_origin_downloaded)
+    MediaOrigin.SAVED_TO_GALLERY -> stringResource(R.string.library_badge_in_gallery)
+    MediaOrigin.IMPORTED -> stringResource(R.string.library_badge_imported)
 }
 
 @Composable

@@ -22,16 +22,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** Top bar used consistently across screens: the logo mark plus a screen title. */
+/** Top bar used consistently across screens: the logo mark, a screen title, and an optional trailing action (e.g. Library's "Add media" button). */
 @Composable
-fun MediaVaultTopBar(title: String, modifier: Modifier = Modifier) {
+fun MediaVaultTopBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    actions: @Composable (() -> Unit)? = null,
+) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         MediaVaultLogo(size = 36.dp)
-        Text(text = title, style = MaterialTheme.typography.titleLarge)
+        Text(text = title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        actions?.invoke()
     }
 }
 

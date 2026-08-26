@@ -14,6 +14,10 @@ data class LibraryUiState(
     val deleteTarget: MediaItemEntity? = null,
     /** Non-null while the details sheet is open for this item. */
     val detailsTarget: MediaItemEntity? = null,
+    /** Non-null while the "Save to device" (Gallery/Files) chooser is open for this item. */
+    val saveToDeviceTarget: MediaItemEntity? = null,
+    /** True while an import (file or folder) is in flight — a folder can take a moment for many files. */
+    val isImporting: Boolean = false,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
 )

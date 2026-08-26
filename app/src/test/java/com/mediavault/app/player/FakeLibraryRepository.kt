@@ -34,6 +34,14 @@ class FakeLibraryRepository : LibraryRepository {
 
     override suspend fun exportTo(id: String, targetUri: Uri): AppResult<Unit> = AppResult.Success(Unit)
 
+    var saveToGalleryResult: AppResult<Unit> = AppResult.Success(Unit)
+    val saveToGalleryCalls = mutableListOf<String>()
+
+    override suspend fun saveToGallery(id: String): AppResult<Unit> {
+        saveToGalleryCalls.add(id)
+        return saveToGalleryResult
+    }
+
     override suspend fun updatePlaybackPosition(id: String, positionMs: Long) {
         updatedPositions.add(id to positionMs)
         state.value = state.value.map { if (it.id == id) it.copy(lastPlaybackPositionMs = positionMs) else it }

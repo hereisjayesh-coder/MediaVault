@@ -5,7 +5,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mediavault.app.library.LibraryRepository
 import com.mediavault.app.library.LibrarySortOrder
+import com.mediavault.app.library.MediaImportRepository
 import com.mediavault.app.library.filterAndSort
+import com.mediavault.app.library.summaryMessage
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.database.entity.MediaItemEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,6 +24,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val repository: LibraryRepository,
+    private val importRepository: MediaImportRepository,
 ) : ViewModel() {
 
     private val searchQuery = MutableStateFlow("")
@@ -94,11 +97,62 @@ class LibraryViewModel @Inject constructor(
 
     fun shareUriFor(item: MediaItemEntity): Uri? = repository.shareUriFor(item)
 
+    // --- Save to device (Gallery / Files) ----------------------------------------------
+
+    fun onSaveToDeviceRequested(item: MediaItemEntity) {
+        _uiState.update { it.copy(saveToDeviceTarget = item) }
+    }
+
+    fun onSaveToDeviceDismissed() {
+        _uiState.update { it.copy(saveToDeviceTarget = null) }
+    }
+
     fun exportTo(item: MediaItemEntity, targetUri: Uri) {
         viewModelScope.launch {
             when (val result = repository.exportTo(item.id, targetUri)) {
-                is AppResult.Success -> _uiState.update { it.copy(infoMessage = "Exported.") }
+                is AppResult.Success -> _uiState.update { it.copy(infoMessage = "Saved to Files.") }
                 is AppResult.Failure -> _uiState.update { it.copy(errorMessage = result.error.message) }
+            }
+        }
+    }
+
+    fun saveToGallery(item: MediaItemEntity) {
+        viewModelScope.launch {
+            when (val result = repository.saveToGallery(item.id)) {
+                is AppResult.Success -> _uiState.update { it.copy(infoMessage = "Saved to Gallery.") }
+                is AppResult.Failure -> _uiState.update { it.copy(errorMessage = result.error.message) }
+            }
+        }
+    }
+
+    // --- Import (explicit user action only — see MediaImportRepository) ---------------
+
+    fun onImportFileSelected(uri: Uri?) {
+        if (uri == null) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true) }
+            when (val result = importRepository.importFile(uri)) {
+                is AppResult.Success -> _uiState.update {
+                    it.copy(isImporting = false, infoMessage = "Imported \"${result.data.title}\".")
+                }
+                is AppResult.Failure -> _uiState.update {
+                    it.copy(isImporting = false, errorMessage = result.error.message)
+                }
+            }
+        }
+    }
+
+    fun onImportFolderSelected(treeUri: Uri?) {
+        if (treeUri == null) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true) }
+            when (val result = importRepository.importFolder(treeUri)) {
+                is AppResult.Success -> _uiState.update {
+                    it.copy(isImporting = false, infoMessage = result.data.summaryMessage())
+                }
+                is AppResult.Failure -> _uiState.update {
+                    it.copy(isImporting = false, errorMessage = result.error.message)
+                }
             }
         }
     }
