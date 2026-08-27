@@ -200,12 +200,73 @@
     <string name="player_hub_open_library">Open Library</string>
 
     <string name="settings_title">Settings</string>
-    <string name="settings_placeholder_body">Network policy and storage preferences will appear here once implemented.</string>
     <string name="settings_appearance_section">Appearance</string>
     <string name="settings_theme_label">Theme</string>
     <string name="theme_mode_light">Light</string>
     <string name="theme_mode_dark">Dark</string>
     <string name="theme_mode_system">System default</string>
+
+    <string name="settings_downloads_section">Downloads</string>
+    <string name="settings_downloads_sequential_info">Downloads run one at a time, in order</string>
+    <string name="settings_downloads_retry_info">Failed downloads can be retried from the Downloads screen</string>
+    <string name="settings_downloads_storage_info">%1$s free on this device</string>
+
+    <string name="settings_network_section">Network &amp; Mobile Data</string>
+    <string name="settings_network_mobile_downloads">Allow downloads over mobile data</string>
+    <string name="settings_network_per_download_limit">Per-download mobile-data limit</string>
+    <string name="settings_network_daily_budget">Daily mobile-data budget</string>
+    <string name="settings_network_used_today">%1$s used today of %2$s</string>
+
+    <string name="settings_player_section">Player</string>
+    <string name="settings_player_default_speed">Default playback speed</string>
+    <string name="settings_player_resume_playback">Resume from last position</string>
+    <string name="settings_player_auto_fullscreen">Auto-fullscreen for landscape video</string>
+    <string name="settings_player_auto_advance">Auto-play next in playlist</string>
+    <string name="settings_player_auto_pip">Auto Picture-in-Picture on exit</string>
+
+    <string name="settings_subtitles_section">Subtitles</string>
+    <string name="settings_subtitles_default_style">Default subtitle style</string>
+
+    <string name="settings_storage_section">Storage</string>
+    <string name="settings_storage_private_explanation">MediaVault downloads are private by default — saved inside the app\'s own storage, not your device\'s shared Gallery, and removed automatically if the app is uninstalled.</string>
+    <string name="settings_storage_free_space">%1$s free on this device</string>
+    <string name="settings_storage_manage_library">Manage downloads in Library</string>
+
+    <string name="settings_support_section">Support the Project</string>
+    <string name="settings_support_explanation">%1$s is free, ad-free, and open-source. If it\'s useful to you, supporting the project is completely optional and appreciated.</string>
+    <string name="settings_support_upi_label">UPI ID</string>
+    <string name="settings_support_copy_upi">Copy UPI ID</string>
+    <string name="settings_support_copied">Copied to clipboard</string>
+    <string name="settings_support_qr_description">UPI payment QR code</string>
+    <string name="settings_support_qr_hint">Scan with any UPI app</string>
+    <string name="settings_support_pay_upi">Pay by any UPI app</string>
+    <string name="settings_support_no_upi_app">No UPI app found on this device</string>
+    <string name="settings_support_buy_me_a_coffee">Buy Me a Coffee</string>
+    <string name="settings_support_external_disclaimer">Buy Me a Coffee is an external service — MediaVault is not affiliated with it.</string>
+
+    <string name="settings_legal_section">Privacy &amp; Legal</string>
+    <string name="settings_legal_privacy">Privacy Policy</string>
+    <string name="settings_legal_terms">Terms &amp; Conditions</string>
+    <string name="settings_legal_terms_subtitle">Includes user responsibility and acceptable-use information</string>
+    <string name="settings_legal_licenses">Open-Source Licenses</string>
+
+    <string name="settings_feedback_section">Feedback &amp; Contact</string>
+    <string name="settings_feedback_send_email">Send feedback by email</string>
+    <string name="settings_feedback_github_issues">Report an issue on GitHub</string>
+    <string name="settings_feedback_no_email_configured">No contact email is configured yet</string>
+
+    <string name="settings_updates_section">Updates</string>
+    <string name="settings_updates_app_version">Version %1$s (%2$d)</string>
+    <string name="settings_updates_engine_version">Extraction engine %1$s</string>
+    <string name="settings_updates_check">Check for updates</string>
+    <string name="settings_updates_check_subtitle">Opens GitHub Releases in your browser</string>
+    <string name="settings_updates_repository">GitHub repository</string>
+
+    <string name="settings_about_section">About</string>
+    <string name="settings_about_version">Version %1$s</string>
+    <string name="settings_about_description">MediaVault is a local-first Android app for downloading, organizing, and playing media you already have the right to access — with a built-in player, multi-audio and subtitle support, and no ads or tracking.</string>
+    <string name="settings_about_github">View on GitHub</string>
+    <string name="settings_about_credits">Open-source credits &amp; third-party notices</string>
 
     <string name="sources_title">Supported Sources</string>
     <string name="sources_search_hint">Search sources</string>

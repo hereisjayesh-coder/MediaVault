@@ -9,6 +9,8 @@ import com.mediavault.app.player.AudioPreferenceProvider
 import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.app.player.Media3PlayerEngine
 import com.mediavault.app.player.PlayerEngineFactory
+import com.mediavault.app.player.PlayerPreferences
+import com.mediavault.app.player.PlayerPreferencesProvider
 import com.mediavault.app.player.SubtitleStyle
 import com.mediavault.app.player.SubtitleStyleProvider
 import com.mediavault.core.domain.player.PlaybackState
@@ -33,6 +35,7 @@ class PlayerViewModel @Inject constructor(
     private val lastPlayedProvider: LastPlayedProvider,
     private val audioPreferenceProvider: AudioPreferenceProvider,
     private val subtitleStyleProvider: SubtitleStyleProvider,
+    private val playerPreferencesProvider: PlayerPreferencesProvider,
 ) : ViewModel() {
 
     private val requestedMediaItemId: String? = savedStateHandle[MEDIA_ITEM_ID_ARG]
@@ -49,11 +52,15 @@ class PlayerViewModel @Inject constructor(
     private var sleepTimerJob: Job? = null
     private var controlsHideJob: Job? = null
     private var subtitleStyleJob: Job? = null
+    private var playerPreferencesJob: Job? = null
 
     private var appliedPreferredAudioThisLoad = false
+    private var appliedAutoFullscreenThisLoad = false
     private var pauseAtEndOfMedia = false
     /** Speed to restore when a long-press-to-2x gesture releases; null when no long-press is active. */
     private var speedBeforeLongPress: Float? = null
+    /** Kept up to date by [playerPreferencesJob]; read synchronously wherever a preference decision is needed. */
+    private var playerPreferences = PlayerPreferences()
 
     /** The whole load-and-observe session, so a single cancel (real teardown or test cleanup) stops every child coroutine below. */
     private val sessionJob: Job
@@ -64,6 +71,12 @@ class PlayerViewModel @Inject constructor(
         // rather than reset on loadItem().
         subtitleStyleJob = viewModelScope.launch {
             subtitleStyleProvider.subtitleStyle.collect { style -> _uiState.update { it.copy(subtitleStyle = style) } }
+        }
+        playerPreferencesJob = viewModelScope.launch {
+            playerPreferencesProvider.preferences.collect { prefs ->
+                playerPreferences = prefs
+                _uiState.update { it.copy(autoEnterPip = prefs.autoEnterPip) }
+            }
         }
 
         sessionJob = viewModelScope.launch {
@@ -109,6 +122,7 @@ class PlayerViewModel @Inject constructor(
         stateCollectJob?.cancel()
         playerEngine?.release()
         appliedPreferredAudioThisLoad = false
+        appliedAutoFullscreenThisLoad = false
         pauseAtEndOfMedia = false
         speedBeforeLongPress = null
         sleepTimerJob?.cancel()
@@ -129,8 +143,11 @@ class PlayerViewModel @Inject constructor(
         val engine = playerEngineFactory.create()
         playerEngine = engine
         engine.prepare(item.mediaUri)
-        if (item.lastPlaybackPositionMs > 0) engine.seekTo(item.lastPlaybackPositionMs)
+        if (item.lastPlaybackPositionMs > 0 && playerPreferences.resumePlaybackEnabled) {
+            engine.seekTo(item.lastPlaybackPositionMs)
+        }
         engine.play()
+        if (playerPreferences.defaultPlaybackSpeed != 1f) engine.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
 
         stateCollectJob = viewModelScope.launch {
             engine.observeState().collect { state -> onPlaybackState(state) }
@@ -149,6 +166,17 @@ class PlayerViewModel @Inject constructor(
             }
         }
 
+        // Real dimensions are only known once `videoAspectRatio` arrives (null for audio-only
+        // media or before the first frame) — applied once per load, same guard style as the
+        // preferred-audio block above.
+        val aspectRatio = state.videoAspectRatio
+        if (!appliedAutoFullscreenThisLoad && aspectRatio != null) {
+            appliedAutoFullscreenThisLoad = true
+            if (playerPreferences.autoFullscreenLandscape && aspectRatio >= 1f && !_uiState.value.isFullscreen) {
+                _uiState.update { it.copy(isFullscreen = true, controlsVisible = true) }
+            }
+        }
+
         if (state.isEnded) handlePlaybackEnded()
     }
 
@@ -158,6 +186,7 @@ class PlayerViewModel @Inject constructor(
             _uiState.update { it.copy(sleepTimer = SleepTimerOption.OFF) }
             return
         }
+        if (!playerPreferences.autoAdvancePlaylist) return
         val state = _uiState.value
         val currentIndex = state.playlistItems.indexOfFirst { it.id == state.item?.id }
         val nextItem = state.playlistItems.getOrNull(currentIndex + 1) ?: return
@@ -337,6 +366,7 @@ class PlayerViewModel @Inject constructor(
         sleepTimerJob?.cancel()
         controlsHideJob?.cancel()
         subtitleStyleJob?.cancel()
+        playerPreferencesJob?.cancel()
     }
 
     override fun onCleared() {

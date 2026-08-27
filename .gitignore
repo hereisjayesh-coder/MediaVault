@@ -24,3 +24,12 @@ __pycache__/
 
 # Personal, machine-specific Claude Code settings (e.g. local JDK/SDK paths) — never shared.
 .claude/settings.local.json
+
+# Local manual-testing screenshots/logcat dumps — not project source.
+/SS/
+
+# Codex CLI local machine config (JAVA_HOME/ANDROID_HOME paths are machine-specific).
+/.codex/
+
+# Obsidian vault state for this repo — local note-taking tool config, not project source.
+/.obsidian/

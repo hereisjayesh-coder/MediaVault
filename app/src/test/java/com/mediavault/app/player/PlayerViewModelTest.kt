@@ -41,6 +41,7 @@ class PlayerViewModelTest {
     private lateinit var lastPlayedProvider: FakeLastPlayedProvider
     private lateinit var audioPreferenceProvider: FakeAudioPreferenceProvider
     private lateinit var subtitleStyleProvider: FakeSubtitleStyleProvider
+    private lateinit var playerPreferencesProvider: FakePlayerPreferencesProvider
 
     @Before
     fun setUp() {
@@ -51,6 +52,7 @@ class PlayerViewModelTest {
         lastPlayedProvider = FakeLastPlayedProvider()
         audioPreferenceProvider = FakeAudioPreferenceProvider()
         subtitleStyleProvider = FakeSubtitleStyleProvider()
+        playerPreferencesProvider = FakePlayerPreferencesProvider()
     }
 
     @After
@@ -80,6 +82,7 @@ class PlayerViewModelTest {
         lastPlayedProvider = lastPlayedProvider,
         audioPreferenceProvider = audioPreferenceProvider,
         subtitleStyleProvider = subtitleStyleProvider,
+        playerPreferencesProvider = playerPreferencesProvider,
     )
 
     @Test
@@ -329,6 +332,77 @@ class PlayerViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertEquals(SubtitleStyle.CLASSIC, viewModel.uiState.value.subtitleStyle)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Player preferences ---------------------------------------------------------------
+
+    @Test
+    fun `resume playback is skipped when the preference is disabled`() = runTest {
+        playerPreferencesProvider = FakePlayerPreferencesProvider(PlayerPreferences(resumePlaybackEnabled = false))
+        libraryRepository.setItems(listOf(item("a", lastPositionMs = 42_000L)))
+
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(engine.seekCalls.isEmpty())
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `a configured default playback speed is applied when an item loads`() = runTest {
+        playerPreferencesProvider = FakePlayerPreferencesProvider(PlayerPreferences(defaultPlaybackSpeed = 1.5f))
+        libraryRepository.setItems(listOf(item("a")))
+
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(1.5f, engine.state.value.playbackSpeed)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `auto-fullscreen-on-landscape enters fullscreen once the real aspect ratio is known`() = runTest {
+        playerPreferencesProvider = FakePlayerPreferencesProvider(PlayerPreferences(autoFullscreenLandscape = true))
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(videoAspectRatio = 16f / 9f)
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(viewModel.uiState.value.isFullscreen)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `auto-fullscreen-on-landscape does nothing for portrait content`() = runTest {
+        playerPreferencesProvider = FakePlayerPreferencesProvider(PlayerPreferences(autoFullscreenLandscape = true))
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(videoAspectRatio = 9f / 16f)
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(!viewModel.uiState.value.isFullscreen)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `disabling auto-advance stops at the end of an item instead of loading the next one`() = runTest {
+        playerPreferencesProvider = FakePlayerPreferencesProvider(PlayerPreferences(autoAdvancePlaylist = false))
+        val a = item("a")
+        val b = item("b")
+        libraryRepository.setItems(listOf(a, b))
+        libraryRepository.playlistSiblings = listOf(a, b)
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        engine.state.value = engine.state.value.copy(isEnded = true, isPlaying = false)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("a", viewModel.uiState.value.item?.id)
         viewModel.cancelBackgroundWorkForTesting()
     }
 

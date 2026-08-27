@@ -100,6 +100,10 @@ dependencies {
 
     implementation(libs.ffmpeg.kit)
 
+    // Local, offline QR-code encoding only (Support the Project's UPI QR code) — no scanning,
+    // no camera permission, no network calls. Pure-JVM artifact, no transitive Android deps.
+    implementation(libs.zxing.core)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 

@@ -3,6 +3,7 @@ package com.mediavault.app.ui.screens.player
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
+import android.os.Build
 import android.util.Rational
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -126,6 +127,7 @@ fun PlayerScreen(
     // available height in whatever orientation the device is already in — see VideoArea).
     val ratio = uiState.playback?.videoAspectRatio ?: DEFAULT_ASPECT_RATIO
     ApplyLandscapeLock(uiState.isFullscreen && !isInPip && ratio >= 1f)
+    ApplyAutoPip(uiState.autoEnterPip, uiState.playback?.videoAspectRatio)
 
     PlayerScreenContent(
         uiState = uiState,
@@ -169,6 +171,31 @@ private fun ApplyLandscapeLock(lockToLandscape: Boolean) {
         }
         onDispose {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+}
+
+/**
+ * `setAutoEnterEnabled` (Android 12/API 31+ only — see `PlayerPreferencesProvider`'s KDoc) lets
+ * the OS enter Picture-in-Picture automatically when the user leaves the app while this screen
+ * is showing, with no explicit `enterPictureInPictureMode()` call needed. Reset to `false` on
+ * dispose so leaving the Player screen (without the preference ever being read again) can't
+ * leave a stale auto-enter request active for whatever screen the user navigates to next — this
+ * is a single-Activity app, so `PictureInPictureParams` are shared across every Compose screen.
+ */
+@Composable
+private fun ApplyAutoPip(enabled: Boolean, videoAspectRatio: Float?) {
+    val view = LocalView.current
+    val activity = view.context as? Activity ?: return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    DisposableEffect(enabled, videoAspectRatio) {
+        val params = PictureInPictureParams.Builder()
+            .setAutoEnterEnabled(enabled)
+            .setAspectRatio(clampedPipRatio(videoAspectRatio ?: DEFAULT_ASPECT_RATIO))
+            .build()
+        activity.setPictureInPictureParams(params)
+        onDispose {
+            activity.setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
         }
     }
 }

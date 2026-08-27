@@ -61,6 +61,10 @@ class AndroidNetworkPolicyManager @Inject constructor(
             return NetworkPolicyDecision.Allow
         }
 
+        if (!store.mobileDownloadsEnabled()) {
+            return NetworkPolicyDecision.Block("Downloads over mobile data are turned off in Settings.")
+        }
+
         val remaining = remainingMobileDataBudgetBytes()
         if (remaining <= 0) {
             return NetworkPolicyDecision.Block("Today's mobile-data budget is used up.")

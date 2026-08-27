@@ -27,6 +27,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mediavault.app.ui.screens.downloads.DownloadsScreen
 import com.mediavault.app.ui.screens.home.HomeScreen
+import com.mediavault.app.ui.screens.legal.LegalDocumentScreen
 import com.mediavault.app.ui.screens.library.LibraryScreen
 import com.mediavault.app.ui.screens.player.PlayerHubScreen
 import com.mediavault.app.ui.screens.player.PlayerScreen
@@ -35,10 +36,14 @@ import com.mediavault.app.ui.screens.settings.SettingsScreen
 import com.mediavault.app.ui.screens.sources.SourceDetailScreen
 import com.mediavault.app.ui.screens.sources.SourceDetailViewModel
 import com.mediavault.app.ui.screens.sources.SourcesScreen
+import com.mediavault.app.R
 
 private const val SOURCES_ROUTE = "sources"
 private const val SOURCE_DETAIL_ROUTE = "sources/{${SourceDetailViewModel.SOURCE_ID_ARG}}"
 private const val PLAYER_ITEM_ROUTE = "player/{${PlayerViewModel.MEDIA_ITEM_ID_ARG}}"
+private const val SETTINGS_PRIVACY_ROUTE = "settings/privacy"
+private const val SETTINGS_TERMS_ROUTE = "settings/terms"
+private const val SETTINGS_LICENSES_ROUTE = "settings/licenses"
 
 private val bottomBarDestinations = listOf(
     MediaVaultDestination.HOME,
@@ -164,7 +169,23 @@ fun MediaVaultNavHost() {
                     onOpenLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
                 )
             }
-            composable(MediaVaultDestination.SETTINGS.route) { SettingsScreen() }
+            composable(MediaVaultDestination.SETTINGS.route) {
+                SettingsScreen(
+                    onNavigateToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
+                    onNavigateToPrivacy = { navController.navigate(SETTINGS_PRIVACY_ROUTE) },
+                    onNavigateToTerms = { navController.navigate(SETTINGS_TERMS_ROUTE) },
+                    onNavigateToLicenses = { navController.navigate(SETTINGS_LICENSES_ROUTE) },
+                )
+            }
+            composable(SETTINGS_PRIVACY_ROUTE) {
+                LegalDocumentScreen(title = stringResource(R.string.settings_legal_privacy), assetFileName = "privacy.md")
+            }
+            composable(SETTINGS_TERMS_ROUTE) {
+                LegalDocumentScreen(title = stringResource(R.string.settings_legal_terms), assetFileName = "terms.md")
+            }
+            composable(SETTINGS_LICENSES_ROUTE) {
+                LegalDocumentScreen(title = stringResource(R.string.settings_legal_licenses), assetFileName = "third_party_notices.md")
+            }
 
             // The dedicated, immersive playback screen — always reached with a specific item
             // id (from Library or the Player tab's "Resume" card), never as a bare tab page.

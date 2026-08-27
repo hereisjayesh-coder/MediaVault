@@ -20,6 +20,7 @@ planned.
 | [Chaquopy](https://chaquo.com/chaquopy/) (`17.0.0`) | Embeds a Python interpreter in the app so yt-dlp (a Python project) can run on Android | MIT License (open-sourced as of v12.0.1) |
 | [Coil](https://coil-kt.github.io/coil/) | Thumbnail image loading in Compose | Apache License 2.0 |
 | [FFmpegKit](https://github.com/moizhassankh/ffmpeg-kit-android-16KB) (`com.moizhassan.ffmpeg:ffmpeg-kit-16kb`, `6.1.1`) | Remuxes a separately-downloaded video-only and audio-only stream into one playable file (`-c copy` only — MediaVault never transcodes) behind `MediaProcessor`/`FFmpegMediaProcessor` | GNU Lesser General Public License v3.0 |
+| [ZXing](https://github.com/zxing/zxing) core (`3.5.3`) | Local, offline QR-code generation for Settings' "Support the Project" UPI QR code — encoding only, no scanning, no camera permission, no network call | Apache License 2.0 |
 
 MediaVault deliberately chose Chaquopy over the more common `youtubedl-android` wrapper
 (a ready-made Kotlin API around a bundled yt-dlp binary) because that wrapper is

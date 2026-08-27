@@ -42,6 +42,8 @@ data class PlayerUiState(
     val showDetails: Boolean = false,
     /** Auto-hidden a few seconds into fullscreen playback; always true outside fullscreen. */
     val controlsVisible: Boolean = true,
+    /** From `PlayerPreferencesProvider` — see `PlayerScreen`'s use of `setAutoEnterEnabled` (Android 12+ only). */
+    val autoEnterPip: Boolean = false,
 ) {
     private val playlistIndex: Int get() = playlistItems.indexOfFirst { it.id == item?.id }
     val hasPrevious: Boolean get() = playlistItems.size > 1 && playlistIndex > 0

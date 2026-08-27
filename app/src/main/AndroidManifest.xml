@@ -8,6 +8,29 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!--
+      Android 11+ package-visibility: without these, resolving an implicit intent (a UPI
+      payment chooser, a mailto: feedback intent, or opening a web link such as Buy Me a
+      Coffee/GitHub) can silently fail to find any matching app even when one is installed.
+      Declared narrowly — only the schemes/actions Settings' Support/Feedback/Legal rows
+      actually launch.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+    </queries>
+
     <application
         android:name=".MediaVaultApplication"
         android:allowBackup="true"
