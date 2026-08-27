@@ -771,7 +771,50 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-27, after the Navigation/Download/Player Checkpoint Close-Out stage._
+_Last updated: 2026-08-27, after the Subtitle Display Styles stage._
+
+* **Subtitle appearance is now user-configurable — Classic / Clean / Outlined.** A small,
+  isolated addition on top of the existing Media3 subtitle-rendering path; no navigation,
+  downloader, or unrelated player code touched.
+  - **Three styles**: Classic (white text, black semi-transparent background — the
+    traditional TV-caption look), Clean (white text, no background — the new default),
+    Outlined (white text, no background, a subtle black outline for readability over
+    bright video). All three keep plain white foreground text; only background/edge
+    treatment differs.
+  - **Reusable, not hard-coded**: `SubtitleStyle` (`app/player/SubtitleStyle.kt`) is a
+    3-value enum; `SubtitleStyle.toSpec()` maps each value to a small, Android-independent
+    `SubtitleStyleSpec` (foreground/background as plain `0xAARRGGBB` ints, an
+    `EDGE_TYPE_NONE`/`EDGE_TYPE_OUTLINE` enum) — genuinely pure Kotlin, unlike almost
+    everything else in the player layer, so it's plain-JUnit-testable without Robolectric.
+    `PlayerScreen.kt`'s private `SubtitleStyleSpec.toCaptionStyleCompat()` is the one place
+    this becomes a real Media3 `CaptionStyleCompat`, applied to `PlayerView`'s
+    `SubtitleView` via `setStyle()` on every recomposition. `subtitleView.setApplyEmbeddedStyles(false)`/
+    `setApplyEmbeddedFontSizes(false)` ensure the chosen style always wins over a source's
+    own embedded subtitle styling — required for the three styles to reliably look the same
+    across different sources.
+  - **Persisted independently of the app's Light/Dark/System theme**: new
+    `SubtitleStyleStore` (`app/player/`, DataStore-backed, bound via `PlayerModule`) mirrors
+    the existing `DataStoreThemeStore`/`AudioPreferenceStore` pattern exactly — its own
+    `subtitle_style` DataStore file, defaulting to `CLEAN` until the user picks something
+    else, applied to every video and every app session, with zero coupling to
+    `ThemeStore`/`ThemeMode`.
+  - **Track selection unchanged**: the style picker lives as a new "Style" section
+    (divider + 3 checkable rows) appended to the existing Subtitles popup menu in
+    `PlayerControlsPanel`'s `SubtitleMenu` — no new icon, no layout change to the main
+    controls row, no change to `onSubtitleTrackSelected`/track enumeration.
+  - **Verified live on a physical device (Pixel 7a)** against the same
+    `multitrack_test.mp4` fixture used for audio/subtitle-track verification: all three
+    styles render visibly distinct (Classic's black bar vs. Clean's fully transparent
+    background vs. Outlined's dark text edge, all confirmed by screenshot comparison at
+    the same timestamp), switching styles takes effect immediately without restarting
+    playback, subtitle-track switching (en/es) still works correctly with any style
+    active, and fullscreen's control row shows no layout regression (same icon set, same
+    positions).
+  - Targeted unit tests added to `PlayerViewModelTest` (default-is-Clean, selecting a style
+    persists and reflects into `uiState`, a style already persisted from a previous session
+    loads correctly) using a new `FakeSubtitleStyleProvider`. Only `:app:testDebugUnitTest
+    --tests PlayerViewModelTest` and a compile check were run — no shared code changed, so
+    the full suite wasn't re-run.
 
 * **Navigation/Download/Player checkpoint closed out.** A milestone review found the
   Downloads Open / Home tab reset / Player back-transition fixes (§37, 2026-08-27) and the

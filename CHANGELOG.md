@@ -5,6 +5,23 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Subtitle Display Styles
+
+- The Subtitles menu in the player now includes a "Style" section with three subtitle
+  appearances: **Classic** (white text, black semi-transparent background), **Clean**
+  (white text, no background — the new default), and **Outlined** (white text, no
+  background, subtle black outline for readability). The choice is persisted across every
+  video and app session (DataStore, same pattern as the theme and audio-language
+  preferences) and is completely independent of the app's own Light/Dark/System theme.
+- Built on the existing Media3 subtitle-rendering path — `PlayerView`'s `SubtitleView` via
+  `CaptionStyleCompat` — with no new dependency. The three styles are defined once as a
+  small, pure (non-Android) `SubtitleStyleSpec` mapping (`app/player/SubtitleStyle.kt`),
+  reused rather than hard-coded inline. Subtitle-track selection/enumeration is untouched.
+- **Verified live on a physical device (Pixel 7a)** against the existing
+  `multitrack_test.mp4` fixture: all three styles render visibly distinct and switch
+  correctly, subtitle-track selection (en/es) keeps working under any style, and no
+  layout/control regression in either embedded or fullscreen playback.
+
 ### Fixed — Downloads Open Silent Failure, Subtitle-Track Verification Correction
 
 - **Downloads → Open silently did nothing** in the one case where a completed task's

@@ -40,6 +40,7 @@ class PlayerViewModelTest {
     private lateinit var engineFactory: FakePlayerEngineFactory
     private lateinit var lastPlayedProvider: FakeLastPlayedProvider
     private lateinit var audioPreferenceProvider: FakeAudioPreferenceProvider
+    private lateinit var subtitleStyleProvider: FakeSubtitleStyleProvider
 
     @Before
     fun setUp() {
@@ -49,6 +50,7 @@ class PlayerViewModelTest {
         engineFactory = FakePlayerEngineFactory(engine)
         lastPlayedProvider = FakeLastPlayedProvider()
         audioPreferenceProvider = FakeAudioPreferenceProvider()
+        subtitleStyleProvider = FakeSubtitleStyleProvider()
     }
 
     @After
@@ -77,6 +79,7 @@ class PlayerViewModelTest {
         playerEngineFactory = engineFactory,
         lastPlayedProvider = lastPlayedProvider,
         audioPreferenceProvider = audioPreferenceProvider,
+        subtitleStyleProvider = subtitleStyleProvider,
     )
 
     @Test
@@ -289,6 +292,43 @@ class PlayerViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertEquals(VideoResizeMode.ZOOM, viewModel.uiState.value.resizeMode)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Subtitle style -----------------------------------------------------------------------
+
+    @Test
+    fun `subtitle style defaults to Clean`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(SubtitleStyle.CLEAN, viewModel.uiState.value.subtitleStyle)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `selecting a subtitle style persists it and reflects back into ui state`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onSubtitleStyleSelected(SubtitleStyle.OUTLINED)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(SubtitleStyle.OUTLINED, viewModel.uiState.value.subtitleStyle)
+        assertEquals(SubtitleStyle.OUTLINED, subtitleStyleProvider.subtitleStyle.value)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `a subtitle style already persisted from a previous session is reflected on load`() = runTest {
+        subtitleStyleProvider = FakeSubtitleStyleProvider(initial = SubtitleStyle.CLASSIC)
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(SubtitleStyle.CLASSIC, viewModel.uiState.value.subtitleStyle)
         viewModel.cancelBackgroundWorkForTesting()
     }
 

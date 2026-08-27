@@ -6,6 +6,8 @@ import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.app.player.LastPlayedStore
 import com.mediavault.app.player.Media3PlayerEngineFactory
 import com.mediavault.app.player.PlayerEngineFactory
+import com.mediavault.app.player.SubtitleStyleProvider
+import com.mediavault.app.player.SubtitleStyleStore
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -27,4 +29,8 @@ abstract class PlayerModule {
     @Binds
     @Singleton
     abstract fun bindAudioPreferenceProvider(impl: AudioPreferenceStore): AudioPreferenceProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindSubtitleStyleProvider(impl: SubtitleStyleStore): SubtitleStyleProvider
 }

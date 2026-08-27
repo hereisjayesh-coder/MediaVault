@@ -161,6 +161,10 @@
     <string name="player_audio_track">Audio</string>
     <string name="player_subtitles">Subtitles</string>
     <string name="player_subtitles_off">Off</string>
+    <string name="player_subtitle_style_label">Style</string>
+    <string name="player_subtitle_style_classic">Classic</string>
+    <string name="player_subtitle_style_clean">Clean</string>
+    <string name="player_subtitle_style_outlined">Outlined</string>
     <string name="player_track_generic">Track %1$d</string>
     <string name="player_fullscreen">Fullscreen</string>
     <string name="player_exit_fullscreen">Exit fullscreen</string>

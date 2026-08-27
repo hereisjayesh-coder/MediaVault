@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -85,9 +86,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.viewinterop.AndroidView
 import com.mediavault.app.R
+import com.mediavault.app.player.SubtitleEdgeType
+import com.mediavault.app.player.SubtitleStyle
+import com.mediavault.app.player.SubtitleStyleSpec
+import com.mediavault.app.player.toSpec
 import com.mediavault.app.ui.components.EmptyStateCard
 import com.mediavault.app.ui.components.MediaDetailsDialog
 import com.mediavault.app.ui.components.MediaVaultTopBar
@@ -130,6 +136,7 @@ fun PlayerScreen(
         onSpeedSelected = viewModel::onSpeedSelected,
         onAudioTrackSelected = viewModel::onAudioTrackSelected,
         onSubtitleTrackSelected = viewModel::onSubtitleTrackSelected,
+        onSubtitleStyleSelected = viewModel::onSubtitleStyleSelected,
         onFullscreenToggled = viewModel::onFullscreenToggled,
         onAttachSurface = viewModel::attachVideoSurface,
         onSurfaceTapped = viewModel::onSurfaceTapped,
@@ -197,6 +204,7 @@ private fun PlayerScreenContent(
     onSpeedSelected: (Float) -> Unit,
     onAudioTrackSelected: (String) -> Unit,
     onSubtitleTrackSelected: (String?) -> Unit,
+    onSubtitleStyleSelected: (SubtitleStyle) -> Unit,
     onFullscreenToggled: () -> Unit,
     onAttachSurface: (PlayerView) -> Unit,
     onSurfaceTapped: () -> Unit,
@@ -271,6 +279,7 @@ private fun PlayerScreenContent(
                 ratio = ratio,
                 isFullscreen = uiState.isFullscreen,
                 resizeMode = uiState.resizeMode,
+                subtitleStyle = uiState.subtitleStyle,
                 isInPip = isInPip,
                 isLoadingFrame = uiState.playback == null,
                 onAttachSurface = onAttachSurface,
@@ -299,6 +308,7 @@ private fun PlayerScreenContent(
                     onSpeedSelected = onSpeedSelected,
                     onAudioTrackSelected = onAudioTrackSelected,
                     onSubtitleTrackSelected = onSubtitleTrackSelected,
+                    onSubtitleStyleSelected = onSubtitleStyleSelected,
                     onFullscreenToggled = onFullscreenToggled,
                     onLoopToggled = onLoopToggled,
                     onResizeModeSelected = onResizeModeSelected,
@@ -353,6 +363,7 @@ private fun PlayerScreenContent(
                         onSpeedSelected = onSpeedSelected,
                         onAudioTrackSelected = onAudioTrackSelected,
                         onSubtitleTrackSelected = onSubtitleTrackSelected,
+                        onSubtitleStyleSelected = onSubtitleStyleSelected,
                         onFullscreenToggled = onFullscreenToggled,
                         onLoopToggled = onLoopToggled,
                         onResizeModeSelected = onResizeModeSelected,
@@ -418,6 +429,7 @@ private fun ColumnScope.VideoArea(
     ratio: Float,
     isFullscreen: Boolean,
     resizeMode: VideoResizeMode,
+    subtitleStyle: SubtitleStyle,
     isInPip: Boolean,
     isLoadingFrame: Boolean,
     onAttachSurface: (PlayerView) -> Unit,
@@ -506,7 +518,7 @@ private fun ColumnScope.VideoArea(
         ) {
             BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 val (width, height) = fitWithinBounds(maxWidth, maxHeight, ratio)
-                VideoSurface(resizeMode, isInPip, onAttachSurface, Modifier.width(width).height(height))
+                VideoSurface(resizeMode, subtitleStyle, isInPip, onAttachSurface, Modifier.width(width).height(height))
                 if (isLoadingFrame) CircularProgressIndicator(color = Color.White)
             }
             SeekFeedbackOverlay(seekFeedback?.deltaMs)
@@ -520,7 +532,7 @@ private fun ColumnScope.VideoArea(
             modifier = Modifier.fillMaxWidth().aspectRatio(ratio).background(Color.Black).then(gestureModifier),
             contentAlignment = Alignment.Center,
         ) {
-            VideoSurface(resizeMode, isInPip, onAttachSurface, Modifier.fillMaxSize())
+            VideoSurface(resizeMode, subtitleStyle, isInPip, onAttachSurface, Modifier.fillMaxSize())
             if (isLoadingFrame) CircularProgressIndicator(color = Color.White)
             SeekFeedbackOverlay(seekFeedback?.deltaMs)
             SpeedBoostOverlay(isSpeedBoosting)
@@ -586,6 +598,7 @@ private fun BoxScope.SpeedBoostOverlay(visible: Boolean) {
 @Composable
 private fun VideoSurface(
     resizeMode: VideoResizeMode,
+    subtitleStyle: SubtitleStyle,
     isInPip: Boolean,
     onAttachSurface: (PlayerView) -> Unit,
     modifier: Modifier,
@@ -601,7 +614,14 @@ private fun VideoSurface(
             // normally underneath. Correct video rendering matters far more than that cosmetic
             // pop, so this reverts to the known-working default rather than trying to patch the
             // TextureView path further. See PROJECT_MASTER.md's decision log for the full story.
-            PlayerView(context).apply { useController = false }
+            PlayerView(context).apply {
+                useController = false
+                // Our chosen style must always win over whatever a source's own embedded
+                // subtitle styling/font size requests — otherwise CLASSIC/CLEAN/OUTLINED
+                // wouldn't reliably apply to every subtitle track.
+                subtitleView?.setApplyEmbeddedStyles(false)
+                subtitleView?.setApplyEmbeddedFontSizes(false)
+            }
         },
         update = { playerView ->
             onAttachSurface(playerView)
@@ -609,10 +629,24 @@ private fun VideoSurface(
             // control to Media3's built-in minimal controller for the duration of PiP only.
             playerView.useController = isInPip
             playerView.resizeMode = resizeMode.toMedia3ResizeMode()
+            playerView.subtitleView?.setStyle(subtitleStyle.toSpec().toCaptionStyleCompat())
         },
         modifier = modifier,
     )
 }
+
+/** The one place [SubtitleStyleSpec] becomes a real Media3 type — everything upstream of this is plain, Android-independent data. */
+private fun SubtitleStyleSpec.toCaptionStyleCompat(): CaptionStyleCompat = CaptionStyleCompat(
+    foregroundColor,
+    backgroundColor,
+    /* windowColor = */ android.graphics.Color.TRANSPARENT,
+    when (edgeType) {
+        SubtitleEdgeType.NONE -> CaptionStyleCompat.EDGE_TYPE_NONE
+        SubtitleEdgeType.OUTLINE -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+    },
+    edgeColor,
+    /* typeface = */ null,
+)
 
 /** Fits a box of the given aspect [ratio] inside [maxWidth]x[maxHeight], preserving it (letterbox/pillarbox as needed). */
 private fun fitWithinBounds(maxWidth: Dp, maxHeight: Dp, ratio: Float): Pair<Dp, Dp> {
@@ -641,6 +675,7 @@ private fun PlayerControlsPanel(
     onSpeedSelected: (Float) -> Unit,
     onAudioTrackSelected: (String) -> Unit,
     onSubtitleTrackSelected: (String?) -> Unit,
+    onSubtitleStyleSelected: (SubtitleStyle) -> Unit,
     onFullscreenToggled: () -> Unit,
     onLoopToggled: () -> Unit,
     onResizeModeSelected: (VideoResizeMode) -> Unit,
@@ -732,7 +767,14 @@ private fun PlayerControlsPanel(
                     AudioTrackMenu(audioTracks, playback?.selectedAudioTrackId, onAudioTrackSelected, textColor)
                 }
                 if (subtitleTracks.isNotEmpty()) {
-                    SubtitleMenu(subtitleTracks, playback?.selectedSubtitleTrackId, onSubtitleTrackSelected, textColor)
+                    SubtitleMenu(
+                        tracks = subtitleTracks,
+                        selectedTrackId = playback?.selectedSubtitleTrackId,
+                        onTrackSelected = onSubtitleTrackSelected,
+                        style = uiState.subtitleStyle,
+                        onStyleSelected = onSubtitleStyleSelected,
+                        tint = textColor,
+                    )
                 }
                 ResizeModeMenu(uiState.resizeMode, onResizeModeSelected, textColor)
                 IconButton(onClick = onLoopToggled) {
@@ -837,6 +879,8 @@ private fun SubtitleMenu(
     tracks: List<SubtitleTrackInfo>,
     selectedTrackId: String?,
     onTrackSelected: (String?) -> Unit,
+    style: SubtitleStyle,
+    onStyleSelected: (SubtitleStyle) -> Unit,
     tint: Color,
 ) {
     PopupMenuButton(Icons.Default.ClosedCaption, stringResource(R.string.player_subtitles), tint) { collapse ->
@@ -850,6 +894,27 @@ private fun SubtitleMenu(
                 text = trackLabel(track.label, track.languageCode, index),
                 isSelected = track.id == selectedTrackId,
                 onClick = { collapse(); onTrackSelected(track.id) },
+            )
+        }
+        // Appearance is independent of which track (if any) is selected — always offered, not
+        // gated behind "Off" vs. a real track, since the user may want to set it up front.
+        HorizontalDivider()
+        Text(
+            text = stringResource(R.string.player_subtitle_style_label),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        val styleLabels = mapOf(
+            SubtitleStyle.CLASSIC to R.string.player_subtitle_style_classic,
+            SubtitleStyle.CLEAN to R.string.player_subtitle_style_clean,
+            SubtitleStyle.OUTLINED to R.string.player_subtitle_style_outlined,
+        )
+        styleLabels.forEach { (candidate, labelRes) ->
+            MenuCheckItem(
+                text = stringResource(labelRes),
+                isSelected = candidate == style,
+                onClick = { collapse(); onStyleSelected(candidate) },
             )
         }
     }

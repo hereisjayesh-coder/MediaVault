@@ -9,6 +9,8 @@ import com.mediavault.app.player.AudioPreferenceProvider
 import com.mediavault.app.player.LastPlayedProvider
 import com.mediavault.app.player.Media3PlayerEngine
 import com.mediavault.app.player.PlayerEngineFactory
+import com.mediavault.app.player.SubtitleStyle
+import com.mediavault.app.player.SubtitleStyleProvider
 import com.mediavault.core.domain.player.PlaybackState
 import com.mediavault.core.domain.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,6 +32,7 @@ class PlayerViewModel @Inject constructor(
     private val playerEngineFactory: PlayerEngineFactory,
     private val lastPlayedProvider: LastPlayedProvider,
     private val audioPreferenceProvider: AudioPreferenceProvider,
+    private val subtitleStyleProvider: SubtitleStyleProvider,
 ) : ViewModel() {
 
     private val requestedMediaItemId: String? = savedStateHandle[MEDIA_ITEM_ID_ARG]
@@ -45,6 +48,7 @@ class PlayerViewModel @Inject constructor(
     private var stateCollectJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var controlsHideJob: Job? = null
+    private var subtitleStyleJob: Job? = null
 
     private var appliedPreferredAudioThisLoad = false
     private var pauseAtEndOfMedia = false
@@ -55,6 +59,13 @@ class PlayerViewModel @Inject constructor(
     private val sessionJob: Job
 
     init {
+        // Independent of the loaded media item — a persisted, app-wide appearance preference,
+        // not per-video playback state, so it's collected for this ViewModel's whole lifetime
+        // rather than reset on loadItem().
+        subtitleStyleJob = viewModelScope.launch {
+            subtitleStyleProvider.subtitleStyle.collect { style -> _uiState.update { it.copy(subtitleStyle = style) } }
+        }
+
         sessionJob = viewModelScope.launch {
             val id = requestedMediaItemId ?: lastPlayedProvider.currentId()
             if (id == null) {
@@ -225,6 +236,11 @@ class PlayerViewModel @Inject constructor(
         playerEngine?.selectSubtitleTrack(trackId)
     }
 
+    /** Persisted via [subtitleStyleProvider] — [subtitleStyleJob] reflects the new value back into [uiState] once the write completes. */
+    fun onSubtitleStyleSelected(style: SubtitleStyle) {
+        viewModelScope.launch { subtitleStyleProvider.setSubtitleStyle(style) }
+    }
+
     fun onLoopToggled() {
         val newValue = !(_uiState.value.playback?.isLooping ?: false)
         playerEngine?.setLooping(newValue)
@@ -320,6 +336,7 @@ class PlayerViewModel @Inject constructor(
         stateCollectJob?.cancel()
         sleepTimerJob?.cancel()
         controlsHideJob?.cancel()
+        subtitleStyleJob?.cancel()
     }
 
     override fun onCleared() {

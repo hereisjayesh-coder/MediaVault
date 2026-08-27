@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.player
 
+import com.mediavault.app.player.SubtitleStyle
 import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.player.PlaybackState
 
@@ -31,6 +32,8 @@ data class PlayerUiState(
     val isFullscreen: Boolean = false,
     val errorMessage: String? = null,
     val resizeMode: VideoResizeMode = VideoResizeMode.FIT,
+    /** Persisted independently of the app's Light/Dark/System theme — see [SubtitleStyleProvider]. */
+    val subtitleStyle: SubtitleStyle = SubtitleStyle.CLEAN,
     val sleepTimer: SleepTimerOption = SleepTimerOption.OFF,
     /** Only set for a fixed-duration timer, counting down for display — null when off or set to "end of media". */
     val sleepTimerRemainingMs: Long? = null,
