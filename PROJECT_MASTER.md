@@ -2628,11 +2628,25 @@ handing plain text to the OS share sheet; nothing in this app can act on the use
 
 **Consequence:** `:app:compileDebugKotlin` and the affected unit tests (`PlayerViewModelTest`,
 `MarkdownLineTest`) pass — none of the touched files have existing automated Compose-UI coverage,
-consistent with the rest of Settings. **Not verified live on a physical device this stage** (no
-device was available in this session) — the share sheet correctly receiving the GitHub URL, the
-Star action opening the right repository, the feedback email intent's recipient/subject/body, and
-the no-email-app fallback's copy action all still need a real Pixel 7a pass before this is
-considered as fully proven as the rest of the Settings milestone.
+consistent with the rest of Settings.
+
+**Update — verified live on a physical device (Pixel 7a):** a user testing this stage's build
+reported "Share MediaVault" was not visible in About at all. Investigation found no source-level
+bug — `AboutSection` renders the row unconditionally, no build flavor/`BuildConfig` flag/resource
+overlay hides it, `Icons.Default.Share` resolves fine, and the Settings tab itself is always
+reachable. The actual cause: the only debug APK on disk (`app/build/outputs/apk/debug/app-debug.apk`)
+had last been built at 17:02:54 that day — before either of this milestone's two commits — and
+`adb shell dumpsys package` confirmed the device's installed app matched that same stale build
+(`lastUpdateTime` 17:03:30). The device had simply never run a build containing this code. A fresh
+`:app:assembleDebug` + `adb install -r` resolved it with no source changes: Settings → About →
+"Share MediaVault" is now visible (third row, after "View on GitHub" and "Star this project on
+GitHub"); tapping it opens the standard Android share sheet ("Sharing text") offering real targets
+(WhatsApp, Gmail, Drive, contacts, etc.); the shared text correctly begins with the explanatory
+message and ends with `https://github.com/hereisjayesh-coder/MediaVault`; no GitHub action fires
+automatically — the sheet only ever hands text to whichever app the user picks. The Star action's
+and feedback email intent's on-device behavior were not re-exercised in this pass (out of scope
+for this report) but rely on the same `openExternalUrl`/`ACTION_SENDTO` mechanisms already
+unit-verified at the source level.
 
 ---
 

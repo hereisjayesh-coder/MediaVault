@@ -23,6 +23,11 @@ a tagged release; entries below track development stages instead of version numb
   collected or sent automatically.
 - All three actions read from the existing `AppConfig` single source of truth; no new
   hard-coded URLs/strings were introduced elsewhere in Settings.
+- **Verified live on a physical device (Pixel 7a)**: a report that "Share MediaVault" was
+  invisible traced to a stale debug APK on the test device (built before this feature's
+  commits) rather than any UI defect — no source changes were needed. After rebuilding and
+  reinstalling, the row is visible in About, opens the Android share sheet, and the shared
+  text correctly contains the GitHub repository URL with no automatic starring.
 
 ### Added — Subtitle Display Styles
 
