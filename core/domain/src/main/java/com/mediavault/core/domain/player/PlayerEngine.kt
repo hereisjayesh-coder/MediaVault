@@ -59,4 +59,13 @@ data class PlaybackState(
     val isLooping: Boolean = false,
     /** True once playback has run to the end (and isn't looping) — lets the UI offer "replay" instead of a dead Pause icon. */
     val isEnded: Boolean = false,
+    /**
+     * Whether the prepared media actually has a video track, from the engine's real track
+     * metadata (not the stored/guessed [com.mediavault.core.model.MediaType]) — null until the
+     * engine has received at least one real track listing, since "no groups yet" and "no video
+     * group" aren't the same thing. This is the source of truth
+     * [com.mediavault.app.ui.screens.player.PlayerUiState.isAudioOnly] prefers once known,
+     * falling back to the item's stored `mediaType` only while this is still null.
+     */
+    val hasVideoTrack: Boolean? = null,
 )

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.size
@@ -80,6 +81,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
@@ -97,9 +100,11 @@ import com.mediavault.app.player.SubtitleStyleSpec
 import com.mediavault.app.player.toSpec
 import com.mediavault.app.ui.components.EmptyStateCard
 import com.mediavault.app.ui.components.MediaDetailsDialog
+import com.mediavault.app.ui.components.MediaThumbnail
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.screens.home.formatDurationLabel
 import com.mediavault.core.model.MediaTrackInfo
+import com.mediavault.core.model.MediaType
 import com.mediavault.core.model.SubtitleTrackInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -118,6 +123,30 @@ fun PlayerScreen(
 
     DisposableEffect(Unit) {
         onDispose { viewModel.onScreenLeft() }
+    }
+
+    if (uiState.isAudioOnly) {
+        // None of fullscreen/landscape-lock/auto-PiP apply to an audio-only presentation — there
+        // is no video canvas for any of them to act on. Deliberately not called at all here
+        // (rather than called with an always-false/no-op argument) so switching to an audio item
+        // mid-playlist can't leave a stale landscape lock or PiP auto-enter request active from
+        // whatever the previous (video) item last set — each effect's own `onDispose` already
+        // resets it the moment its composable leaves composition.
+        AudioPlayerContent(
+            uiState = uiState,
+            onBackToLibrary = onBackToLibrary,
+            onPlayPauseToggled = viewModel::onPlayPauseToggled,
+            onSeek = viewModel::onSeek,
+            onSeekBy = viewModel::seekBy,
+            onSpeedSelected = viewModel::onSpeedSelected,
+            onAudioTrackSelected = viewModel::onAudioTrackSelected,
+            onLoopToggled = viewModel::onLoopToggled,
+            onDetailsToggled = viewModel::onDetailsToggled,
+            onNext = viewModel::onNext,
+            onPrevious = viewModel::onPrevious,
+            onSleepTimerSelected = viewModel::onSleepTimerSelected,
+        )
+        return
     }
 
     // Fullscreen also applies inside PiP's own tiny window — no system bars to fight there anyway.
@@ -401,6 +430,189 @@ private fun PlayerScreenContent(
                         overlayStyle = true,
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The dedicated audio-only presentation — artwork/title in place of a video canvas, and none of
+ * fullscreen, PiP, aspect-ratio/resize controls, or the video surface's tap/double-tap/long-press
+ * gesture handling, per this milestone's product rule. Shares the loading/empty/error states and
+ * top bar with [PlayerScreenContent] (same handling, just not extracted into a third shared
+ * composable, since neither is more than a couple of composable calls) and shares the actual
+ * transport controls via [ScrubberAndTimeRow]/[TransportRow]/[SpeedMenu]/[AudioTrackMenu]/
+ * [SleepTimerMenu] with [PlayerControlsPanel] — nothing about playback logic itself is duplicated,
+ * only which controls are shown.
+ */
+@Composable
+private fun AudioPlayerContent(
+    uiState: PlayerUiState,
+    onBackToLibrary: () -> Unit,
+    onPlayPauseToggled: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onSpeedSelected: (Float) -> Unit,
+    onAudioTrackSelected: (String) -> Unit,
+    onLoopToggled: () -> Unit,
+    onDetailsToggled: (Boolean) -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onSleepTimerSelected: (SleepTimerOption) -> Unit,
+) {
+    if (uiState.isLoading) {
+        Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    val item = uiState.item
+    if (item == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            MediaVaultTopBar(title = stringResource(R.string.player_title))
+            val errorMessage = uiState.errorMessage
+            if (errorMessage != null) {
+                EmptyStateCard(icon = Icons.Default.Warning, title = stringResource(R.string.player_empty_title), description = errorMessage)
+            } else {
+                EmptyStateCard(
+                    icon = Icons.Default.PlayArrow,
+                    title = stringResource(R.string.player_empty_title),
+                    description = stringResource(R.string.player_empty_body),
+                )
+            }
+        }
+        return
+    }
+
+    if (uiState.showDetails) {
+        MediaDetailsDialog(item = item, onDismiss = { onDetailsToggled(false) })
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+    ) {
+        PlayerTopBar(title = item.title, onBackToLibrary = onBackToLibrary)
+
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            // Same 16:9-boxed MediaThumbnail used by Library/Downloads — reused as-is rather than
+            // adding a second, square-cropped artwork treatment purely for this one screen.
+            MediaThumbnail(thumbnailUrl = item.thumbnailUrl, mediaType = MediaType.AUDIO, width = 240.dp)
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // MediaItemEntity carries no artist/uploader field today (see PROJECT_MASTER.md's
+            // decision log) — showing one here would mean fabricating it, so this screen only
+            // ever shows metadata that's actually stored, per this milestone's own "don't guess"
+            // requirement extended to display, not just media-type detection.
+        }
+
+        val playbackErrorMessage = uiState.playback?.errorMessage
+        if (playbackErrorMessage != null) {
+            Text(
+                text = playbackErrorMessage,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+
+        AudioControlsPanel(
+            uiState = uiState,
+            onPlayPauseToggled = onPlayPauseToggled,
+            onSeek = onSeek,
+            onSeekBy = onSeekBy,
+            onSpeedSelected = onSpeedSelected,
+            onAudioTrackSelected = onAudioTrackSelected,
+            onLoopToggled = onLoopToggled,
+            onDetailsToggled = onDetailsToggled,
+            onNext = onNext,
+            onPrevious = onPrevious,
+            onSleepTimerSelected = onSleepTimerSelected,
+        )
+    }
+}
+
+/**
+ * The audio equivalent of [PlayerControlsPanel] — same scrubber/transport row, but deliberately
+ * omits every video-only control ([SubtitleMenu], [ResizeModeMenu], [PipButton], the fullscreen
+ * toggle): there is no video canvas for any of them to act on. Speed is always shown rather than
+ * hidden for music, since nothing in the current data model (`MediaItemEntity` has no genre/
+ * content-type field) reliably distinguishes music from spoken-word audio — hiding it would mean
+ * guessing, which this milestone's media-type rule specifically warns against; always showing it
+ * is a harmless, ignorable extra for music while staying available for podcasts/audiobooks.
+ */
+@Composable
+private fun AudioControlsPanel(
+    uiState: PlayerUiState,
+    onPlayPauseToggled: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onSpeedSelected: (Float) -> Unit,
+    onAudioTrackSelected: (String) -> Unit,
+    onLoopToggled: () -> Unit,
+    onDetailsToggled: (Boolean) -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onSleepTimerSelected: (SleepTimerOption) -> Unit,
+) {
+    val playback = uiState.playback
+    val textColor = MaterialTheme.colorScheme.onSurface
+    val subtleTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        ScrubberAndTimeRow(uiState, onSeek, subtleTextColor)
+        TransportRow(uiState, onPlayPauseToggled, onSeekBy, onNext, onPrevious, textColor)
+
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SpeedMenu(playback?.playbackSpeed ?: 1f, onSpeedSelected, textColor)
+            // Same gate as the video panel — only shown when the stream actually carries more
+            // than one audio track, never speculatively.
+            val audioTracks = playback?.availableAudioTracks.orEmpty()
+            if (audioTracks.size > 1) {
+                AudioTrackMenu(audioTracks, playback?.selectedAudioTrackId, onAudioTrackSelected, textColor)
+            }
+            IconButton(onClick = onLoopToggled) {
+                Icon(
+                    Icons.Default.Loop,
+                    contentDescription = stringResource(R.string.player_loop),
+                    tint = if (playback?.isLooping == true) MaterialTheme.colorScheme.primary else textColor,
+                )
+            }
+            SleepTimerMenu(uiState.sleepTimer, onSleepTimerSelected, textColor)
+            IconButton(onClick = { onDetailsToggled(true) }) {
+                Icon(Icons.Default.Info, contentDescription = stringResource(R.string.player_details), tint = textColor)
             }
         }
     }
@@ -693,6 +905,83 @@ private fun VideoResizeMode.toMedia3ResizeMode(): Int = when (this) {
     VideoResizeMode.ORIGINAL -> AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH
 }
 
+/** The scrub bar + position/duration/sleep-remaining labels — identical for video and audio, shared by [PlayerControlsPanel] and [AudioControlsPanel]. */
+@Composable
+private fun ScrubberAndTimeRow(uiState: PlayerUiState, onSeek: (Long) -> Unit, textColor: Color) {
+    val playback = uiState.playback
+    var isDragging by remember { mutableStateOf(false) }
+    var dragPositionMs by remember { mutableFloatStateOf(0f) }
+
+    val durationMs = (playback?.durationMs ?: 0L).coerceAtLeast(1L).toFloat()
+    val livePositionMs = playback?.positionMs?.toFloat() ?: 0f
+    val shownPositionMs = if (isDragging) dragPositionMs else livePositionMs
+
+    Slider(
+        value = shownPositionMs.coerceIn(0f, durationMs),
+        valueRange = 0f..durationMs,
+        onValueChange = { isDragging = true; dragPositionMs = it },
+        onValueChangeFinished = { onSeek(dragPositionMs.toLong()); isDragging = false },
+    )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(text = formatDurationLabel((shownPositionMs / 1000).toLong()) ?: "0:00", color = textColor, style = MaterialTheme.typography.labelMedium)
+        val sleepRemaining = uiState.sleepTimerRemainingMs
+        if (sleepRemaining != null) {
+            Text(
+                text = stringResource(R.string.player_sleep_timer_remaining, formatDurationLabel(sleepRemaining / 1000) ?: "0:00"),
+                color = textColor,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        Text(text = formatDurationLabel((durationMs / 1000).toLong()) ?: "0:00", color = textColor, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** Prev / -10s / play-pause / +10s / Next — identical for video and audio, shared by [PlayerControlsPanel] and [AudioControlsPanel]. */
+@Composable
+private fun TransportRow(
+    uiState: PlayerUiState,
+    onPlayPauseToggled: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    textColor: Color,
+) {
+    val playback = uiState.playback
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (uiState.hasPrevious) {
+            IconButton(onClick = onPrevious) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = stringResource(R.string.player_previous), tint = textColor)
+            }
+        }
+        IconButton(onClick = { onSeekBy(-10_000L) }) {
+            Icon(Icons.Default.Replay10, contentDescription = stringResource(R.string.player_seek_back_10), tint = textColor)
+        }
+        IconButton(
+            onClick = onPlayPauseToggled,
+            modifier = Modifier.size(56.dp),
+            colors = IconButtonDefaults.iconButtonColors(contentColor = textColor),
+        ) {
+            Icon(
+                imageVector = if (playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+            )
+        }
+        IconButton(onClick = { onSeekBy(10_000L) }) {
+            Icon(Icons.Default.Forward10, contentDescription = stringResource(R.string.player_seek_forward_10), tint = textColor)
+        }
+        if (uiState.hasNext) {
+            IconButton(onClick = onNext) {
+                Icon(Icons.Default.SkipNext, contentDescription = stringResource(R.string.player_next), tint = textColor)
+            }
+        }
+    }
+}
+
 @Composable
 private fun PlayerControlsPanel(
     uiState: PlayerUiState,
@@ -713,12 +1002,6 @@ private fun PlayerControlsPanel(
     overlayStyle: Boolean,
 ) {
     val playback = uiState.playback
-    var isDragging by remember { mutableStateOf(false) }
-    var dragPositionMs by remember { mutableFloatStateOf(0f) }
-
-    val durationMs = (playback?.durationMs ?: 0L).coerceAtLeast(1L).toFloat()
-    val livePositionMs = playback?.positionMs?.toFloat() ?: 0f
-    val shownPositionMs = if (isDragging) dragPositionMs else livePositionMs
     val textColor = if (overlayStyle) Color.White else MaterialTheme.colorScheme.onSurface
     val subtleTextColor = if (overlayStyle) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -729,58 +1012,8 @@ private fun PlayerControlsPanel(
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Slider(
-            value = shownPositionMs.coerceIn(0f, durationMs),
-            valueRange = 0f..durationMs,
-            onValueChange = { isDragging = true; dragPositionMs = it },
-            onValueChangeFinished = { onSeek(dragPositionMs.toLong()); isDragging = false },
-        )
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(text = formatDurationLabel((shownPositionMs / 1000).toLong()) ?: "0:00", color = subtleTextColor, style = MaterialTheme.typography.labelMedium)
-            val sleepRemaining = uiState.sleepTimerRemainingMs
-            if (sleepRemaining != null) {
-                Text(
-                    text = stringResource(R.string.player_sleep_timer_remaining, formatDurationLabel(sleepRemaining / 1000) ?: "0:00"),
-                    color = subtleTextColor,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-            Text(text = formatDurationLabel((durationMs / 1000).toLong()) ?: "0:00", color = subtleTextColor, style = MaterialTheme.typography.labelMedium)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (uiState.hasPrevious) {
-                IconButton(onClick = onPrevious) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = stringResource(R.string.player_previous), tint = textColor)
-                }
-            }
-            IconButton(onClick = { onSeekBy(-10_000L) }) {
-                Icon(Icons.Default.Replay10, contentDescription = stringResource(R.string.player_seek_back_10), tint = textColor)
-            }
-            IconButton(
-                onClick = onPlayPauseToggled,
-                modifier = Modifier.size(56.dp),
-                colors = IconButtonDefaults.iconButtonColors(contentColor = textColor),
-            ) {
-                Icon(
-                    imageVector = if (playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-            IconButton(onClick = { onSeekBy(10_000L) }) {
-                Icon(Icons.Default.Forward10, contentDescription = stringResource(R.string.player_seek_forward_10), tint = textColor)
-            }
-            if (uiState.hasNext) {
-                IconButton(onClick = onNext) {
-                    Icon(Icons.Default.SkipNext, contentDescription = stringResource(R.string.player_next), tint = textColor)
-                }
-            }
-        }
+        ScrubberAndTimeRow(uiState, onSeek, textColor = subtleTextColor)
+        TransportRow(uiState, onPlayPauseToggled, onSeekBy, onNext, onPrevious, textColor)
 
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             val audioTracks = playback?.availableAudioTracks.orEmpty()

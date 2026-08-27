@@ -5,6 +5,32 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Dedicated Audio Player Mode
+
+- Audio-only media (no video track) now opens a dedicated audio-player presentation instead
+  of the video-player UI: artwork/placeholder, title, scrubber, Play/Pause, Previous/Next,
+  ±10s, Speed, audio-track selection (when more than one track exists), loop, sleep timer,
+  and details — with no video canvas, no black video area, no fullscreen, no
+  Picture-in-Picture, no aspect-ratio controls, and no video-surface touch gestures.
+- Media-type detection prefers the player engine's real, live track metadata the moment
+  it's known (a new `PlaybackState.hasVideoTrack`, populated from Media3's actual `Tracks`)
+  over the library item's stored/guessed `MediaType`, falling back to the stored value only
+  for the brief window before the engine has reported real tracks — so a misclassified file
+  still gets the correct presentation once it starts playing.
+- One `PlayerEngine`, one `PlayerScreen`/`PlayerViewModel`/route — no second playback engine
+  and no separate navigation path. The scrubber and transport row are shared, unduplicated
+  composables (`ScrubberAndTimeRow`/`TransportRow`) used by both the video and audio control
+  panels; only the surrounding video-only chrome (resize/subtitle/PiP/fullscreen) differs.
+- Previous/Next and playlist/queue ordering are unchanged and untouched — they were already
+  media-type-agnostic (keyed purely on playlist index, never on `MediaType`).
+- Speed control is always shown for audio (music and spoken word alike): nothing in the
+  current data model distinguishes the two, and hiding it selectively would mean guessing.
+- **Verified on a physical device (Pixel 7a)** against a real imported audio file: the audio
+  player opens (confirmed via the accessibility tree — zero `SurfaceView`, and none of the
+  fullscreen/PiP/aspect-ratio/subtitle controls present), Play/Pause and the scrubber work,
+  the position freezes correctly on pause, and reopening the item after returning to Library
+  resumes near the last position rather than restarting from zero.
+
 ### Added — Private App Lock + Biometric Protection
 
 - **Settings → Security**: a new App Lock toggle, gated behind creating a 4-digit PIN first

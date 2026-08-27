@@ -64,14 +64,14 @@ class PlayerViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun item(id: String, lastPositionMs: Long = 0L) = MediaItemEntity(
+    private fun item(id: String, lastPositionMs: Long = 0L, mediaType: MediaType = MediaType.VIDEO) = MediaItemEntity(
         id = id,
-        title = "Video $id",
-        mediaUri = "file:///private/media/$id.mp4",
-        mediaType = MediaType.VIDEO,
+        title = "${if (mediaType == MediaType.AUDIO) "Audio" else "Video"} $id",
+        mediaUri = "file:///private/media/$id.${if (mediaType == MediaType.AUDIO) "mp3" else "mp4"}",
+        mediaType = mediaType,
         durationMs = 60_000,
         sizeBytes = 1_000L,
-        container = "mp4",
+        container = if (mediaType == MediaType.AUDIO) "mp3" else "mp4",
         isImported = false,
         sourceDownloadTaskId = null,
         lastPlaybackPositionMs = lastPositionMs,
@@ -659,6 +659,58 @@ class PlayerViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertTrue(!engine.state.value.isPlaying)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- Audio-only presentation --------------------------------------------------------------
+
+    @Test
+    fun `an audio item is audio-only before real track metadata arrives`() = runTest {
+        libraryRepository.setItems(listOf(item("a", mediaType = MediaType.AUDIO)))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(viewModel.uiState.value.isAudioOnly)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `a video item is not audio-only`() = runTest {
+        libraryRepository.setItems(listOf(item("a", mediaType = MediaType.VIDEO)))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(!viewModel.uiState.value.isAudioOnly)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `real engine track metadata overrides a stale stored media type`() = runTest {
+        // The item claims AUDIO, but the engine reports a real video track once tracks are
+        // known — the live stream should win, per this milestone's "don't just guess" rule.
+        libraryRepository.setItems(listOf(item("a", mediaType = MediaType.AUDIO)))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        assertTrue(viewModel.uiState.value.isAudioOnly)
+
+        engine.state.value = engine.state.value.copy(hasVideoTrack = true)
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(!viewModel.uiState.value.isAudioOnly)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    @Test
+    fun `engine confirming no video track overrides a stale VIDEO media type`() = runTest {
+        libraryRepository.setItems(listOf(item("a", mediaType = MediaType.VIDEO)))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        assertTrue(!viewModel.uiState.value.isAudioOnly)
+
+        engine.state.value = engine.state.value.copy(hasVideoTrack = false)
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(viewModel.uiState.value.isAudioOnly)
         viewModel.cancelBackgroundWorkForTesting()
     }
 }

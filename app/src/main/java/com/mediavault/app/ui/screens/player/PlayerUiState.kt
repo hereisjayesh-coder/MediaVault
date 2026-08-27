@@ -3,6 +3,7 @@ package com.mediavault.app.ui.screens.player
 import com.mediavault.app.player.SubtitleStyle
 import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.player.PlaybackState
+import com.mediavault.core.model.MediaType
 
 /** How the video surface fills its box — mirrors Media3 `PlayerView`'s own resize modes 1:1, see `PlayerScreen`. */
 enum class VideoResizeMode {
@@ -48,4 +49,14 @@ data class PlayerUiState(
     private val playlistIndex: Int get() = playlistItems.indexOfFirst { it.id == item?.id }
     val hasPrevious: Boolean get() = playlistItems.size > 1 && playlistIndex > 0
     val hasNext: Boolean get() = playlistItems.size > 1 && playlistIndex in 0 until playlistItems.lastIndex
+
+    /**
+     * Decides the video vs. audio *presentation* — prefers the engine's real, live track
+     * metadata ([PlaybackState.hasVideoTrack]) the moment it's known, since a stream's actual
+     * tracks are more trustworthy than a stored/guessed classification. Falls back to the
+     * library item's stored [MediaType] only for the brief window before the engine has
+     * reported real track info yet (`hasVideoTrack == null` — see that field's KDoc).
+     */
+    val isAudioOnly: Boolean
+        get() = playback?.hasVideoTrack?.let { !it } ?: (item?.mediaType == MediaType.AUDIO)
 }

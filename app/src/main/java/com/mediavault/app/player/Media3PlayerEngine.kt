@@ -115,6 +115,11 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
             } else {
                 null
             }
+            // Tracks.EMPTY (before the first real onTracksChanged) means "not known yet," not
+            // "no video track" — the two must stay distinguishable so callers can fall back to
+            // the item's stored MediaType only for that brief unknown window, per this
+            // milestone's "prefer real stream metadata, don't just guess" requirement.
+            val hasVideoTrack = if (tracks == Tracks.EMPTY) null else tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
             return PlaybackState(
                 isPlaying = player.isPlaying,
                 positionMs = player.currentPosition,
@@ -129,6 +134,7 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
                 videoAspectRatio = aspectRatio,
                 isLooping = player.repeatMode == Player.REPEAT_MODE_ONE,
                 isEnded = player.playbackState == Player.STATE_ENDED,
+                hasVideoTrack = hasVideoTrack,
             )
         }
 
