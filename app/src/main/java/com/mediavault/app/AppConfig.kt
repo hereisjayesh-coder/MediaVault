@@ -12,13 +12,8 @@ object AppConfig {
     const val GITHUB_ISSUES_URL = "$GITHUB_REPOSITORY_URL/issues"
     const val GITHUB_RELEASES_URL = "$GITHUB_REPOSITORY_URL/releases"
 
-    /**
-     * No contact email is configured for this project (none exists anywhere in the repo's own
-     * documentation — see PRIVACY.md/TERMS.md/CONTRIBUTING.md). Left `null` deliberately rather
-     * than inventing one; Feedback falls back to [GITHUB_ISSUES_URL], the support channel those
-     * documents actually name.
-     */
-    val supportEmail: String? = null
+    /** Settings' Feedback & Contact section is the only reader — see [com.mediavault.app.ui.screens.settings]. */
+    const val FEEDBACK_EMAIL = "dallemahesh09@gmail.com"
 
     val support = SupportProjectConfig(
         projectName = "MediaVault",

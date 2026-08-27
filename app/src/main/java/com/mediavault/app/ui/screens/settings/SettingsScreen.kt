@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Email
@@ -31,9 +32,11 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SystemUpdateAlt
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -48,10 +52,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mediavault.app.AppConfig
@@ -66,6 +75,7 @@ import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.ui.components.support.SupportSection
 import com.mediavault.app.ui.components.support.openExternalUrl
+import com.mediavault.app.ui.components.support.shareMediaVault
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import androidx.compose.ui.platform.LocalContext
 
@@ -159,7 +169,7 @@ private fun SettingsScreenContent(
                 onLicensesClick = onNavigateToLicenses,
             )
         }
-        item { FeedbackSection(context = context) }
+        item { FeedbackSection(context = context, appVersionName = uiState.appVersionName) }
         item {
             UpdatesSection(
                 versionName = uiState.appVersionName,
@@ -442,27 +452,68 @@ private fun PrivacyLegalSection(onPrivacyClick: () -> Unit, onTermsClick: () -> 
 
 // --- Feedback & Contact -----------------------------------------------------------------------
 
+/**
+ * Feedback is always sent as a plain, user-reviewed email the user's own client composes and
+ * sends — nothing is collected or transmitted automatically. `ACTION_SENDTO` with a bare
+ * `mailto:` [Uri] (recipient/subject/body passed as extras, not URI-encoded into the query
+ * string) is the standard, most broadly-compatible way to target only email apps.
+ */
 @Composable
-private fun FeedbackSection(context: Context) {
+private fun FeedbackSection(context: Context, appVersionName: String) {
+    var showEmailFallback by remember { mutableStateOf(false) }
+    var emailCopied by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+    val subject = stringResource(R.string.settings_feedback_email_subject)
+    val device = remember { "${Build.MANUFACTURER} ${Build.MODEL}".trim() }
+    val body = stringResource(R.string.settings_feedback_email_body, appVersionName, device, Build.VERSION.RELEASE ?: "")
+
     SettingsCardSection(titleRes = R.string.settings_feedback_section) {
-        val supportEmail = AppConfig.supportEmail
-        if (supportEmail != null) {
-            SettingsActionRow(
-                icon = Icons.Default.Email,
-                title = stringResource(R.string.settings_feedback_send_email),
-                onClick = {
-                    val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$supportEmail"))
-                    runCatching { context.startActivity(intent) }
-                },
-            )
-        } else {
-            SettingsActionRow(
-                icon = Icons.Default.Email,
-                title = stringResource(R.string.settings_feedback_github_issues),
-                subtitle = stringResource(R.string.settings_feedback_no_email_configured),
-                onClick = { openExternalUrl(context, AppConfig.GITHUB_ISSUES_URL) },
-            )
+        SettingsActionRow(
+            icon = Icons.Default.Email,
+            title = stringResource(R.string.settings_feedback_send_email),
+            subtitle = AppConfig.FEEDBACK_EMAIL,
+            onClick = {
+                val intent = Intent(Intent.ACTION_SENDTO).apply {
+                    data = Uri.parse("mailto:")
+                    putExtra(Intent.EXTRA_EMAIL, arrayOf(AppConfig.FEEDBACK_EMAIL))
+                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                    putExtra(Intent.EXTRA_TEXT, body)
+                }
+                showEmailFallback = runCatching { context.startActivity(intent) }.isFailure
+            },
+        )
+        if (showEmailFallback) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_feedback_no_email_app, AppConfig.FEEDBACK_EMAIL),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = {
+                    clipboardManager.setText(AnnotatedString(AppConfig.FEEDBACK_EMAIL))
+                    emailCopied = true
+                }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.settings_feedback_copy_email))
+                }
+            }
+            if (emailCopied) {
+                Text(
+                    text = stringResource(R.string.settings_support_copied),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
+        SettingsActionRow(
+            icon = Icons.Default.Code,
+            title = stringResource(R.string.settings_feedback_github_issues),
+            onClick = { openExternalUrl(context, AppConfig.GITHUB_ISSUES_URL) },
+        )
     }
 }
 
@@ -509,6 +560,17 @@ private fun AboutSection(versionName: String, onLicensesClick: () -> Unit, conte
             icon = Icons.Default.Code,
             title = stringResource(R.string.settings_about_github),
             onClick = { openExternalUrl(context, AppConfig.GITHUB_REPOSITORY_URL) },
+        )
+        SettingsActionRow(
+            icon = Icons.Default.Star,
+            title = stringResource(R.string.settings_about_star_github),
+            subtitle = stringResource(R.string.settings_about_star_github_subtitle),
+            onClick = { openExternalUrl(context, AppConfig.GITHUB_REPOSITORY_URL) },
+        )
+        SettingsActionRow(
+            icon = Icons.Default.Share,
+            title = stringResource(R.string.settings_about_share),
+            onClick = { shareMediaVault(context) },
         )
         SettingsActionRow(
             icon = Icons.Default.Article,

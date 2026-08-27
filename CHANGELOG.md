@@ -5,6 +5,25 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Share MediaVault, GitHub Star Call-to-Action, and Centralized Feedback Email
+
+- **Share MediaVault** (Settings → About): opens the system share sheet with a plain-text
+  message naming the GitHub repository URL and inviting the recipient to check out the
+  project, star it, and share feedback. The app never claims to star the repository
+  automatically — it only hands text to the OS share sheet.
+- **Star this project on GitHub** (Settings → About): a worded call-to-action that opens
+  the repository in the browser, alongside the existing "View on GitHub" row. Purely
+  informational/voluntary — no in-app GitHub authentication or automatic starring.
+- **Send Feedback** (Settings → Feedback & Contact) now targets a real, centrally
+  configured address (`AppConfig.FEEDBACK_EMAIL`) instead of falling back to GitHub
+  Issues. Launches the device's default email app via `ACTION_SENDTO`/`mailto:`,
+  pre-filling subject ("Feedback for MediaVault") and a body with the app version,
+  device, and Android version. If no email app is installed, shows the address inline
+  with a copy-to-clipboard action instead of failing silently. No analytics are
+  collected or sent automatically.
+- All three actions read from the existing `AppConfig` single source of truth; no new
+  hard-coded URLs/strings were introduced elsewhere in Settings.
+
 ### Added — Subtitle Display Styles
 
 - The Subtitles menu in the player now includes a "Style" section with three subtitle

@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import com.mediavault.app.AppConfig
 import com.mediavault.app.R
 import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.SectionLabel
@@ -161,5 +162,24 @@ fun openExternalUrl(context: Context, url: String) {
     } catch (_: ActivityNotFoundException) {
         // No browser resolves ACTION_VIEW — nothing meaningful to recover into; the row's own
         // external-link icon already set the user's expectation correctly.
+    }
+}
+
+/**
+ * Hands the OS system share sheet a plain-text message naming [AppConfig.GITHUB_REPOSITORY_URL] —
+ * MediaVault never stars the repo or posts anything on the user's behalf; only the user's chosen
+ * share target (and, if they follow the link, the user themself on GitHub) does anything further.
+ */
+fun shareMediaVault(context: Context) {
+    val message = context.getString(R.string.settings_share_message, AppConfig.GITHUB_REPOSITORY_URL)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, message)
+    }
+    val chooser = Intent.createChooser(intent, context.getString(R.string.settings_about_share))
+    try {
+        context.startActivity(chooser)
+    } catch (_: ActivityNotFoundException) {
+        // No share target on the device at all — nothing meaningful to recover into.
     }
 }

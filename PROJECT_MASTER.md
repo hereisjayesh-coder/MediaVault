@@ -2588,4 +2588,52 @@ unregressed.
 
 ---
 
+### 2026-08-27 — Settings gained Share MediaVault, a "Star this project" call-to-action, and a real centrally-configured feedback email
+
+**Decision:** Three small, purely voluntary product actions were added to Settings' existing
+About / Feedback & Contact sections (no new top-level Settings section, per this milestone's
+"don't clutter Settings" requirement): **Share MediaVault** (About) builds a plain-text
+`ACTION_SEND` message naming the GitHub repository URL and hands it to the system share sheet;
+**Star this project on GitHub** (About) is a worded call-to-action that opens the same repository
+URL in the browser — same mechanism `openExternalUrl` already used for "View on GitHub", just a
+second row with different, explicit wording; **Send Feedback** (Feedback & Contact) now targets a
+real, centrally-configured address (`AppConfig.FEEDBACK_EMAIL`) via `ACTION_SENDTO` with a bare
+`mailto:` `Uri` and `EXTRA_EMAIL`/`EXTRA_SUBJECT`/`EXTRA_TEXT` extras — pre-filling app version,
+device (`Build.MANUFACTURER`/`MODEL`), and Android version (`Build.VERSION.RELEASE`) into the
+body — falling back to an inline "no email app found" row with a copy-to-clipboard action
+(reusing the same copy-confirmation pattern `SupportSection`'s UPI-ID copy already uses) when no
+app resolves the intent.
+
+**Why `AppConfig.supportEmail: String?` became `AppConfig.FEEDBACK_EMAIL: String` (non-null)
+instead of just changing its value:** the nullable type existed specifically to model "no address
+is configured yet, fall back to GitHub Issues" — a real address is now configured, so the
+fallback that matters changed from *no address exists* to *the address exists but no email app is
+installed to send it*. Modeling that as a `String?` null-check would have been the wrong branch
+firing for the wrong reason; the fallback now lives where it actually applies, inside the
+`ACTION_SENDTO` launch's failure path, and it never lost the GitHub Issues route — that stayed
+as a second, permanent action in the same section rather than a null-only fallback.
+
+**Why the mailto intent uses `data = Uri.parse("mailto:")` with `EXTRA_EMAIL` rather than
+`Uri.parse("mailto:$email?subject=...&body=...")`:** encoding the recipient into the URI query
+string is the more common pattern in this codebase's style but is also the less reliable one
+across real email clients — some mis-parse a `?subject=&body=` query, and a couple ignore it
+entirely. Passing recipient/subject/body as `Intent` extras against a bare `mailto:` scheme is
+the combination Android's own developer guidance calls out as most broadly compatible, and it's
+what was chosen here.
+
+**Why "Share MediaVault" doesn't claim to star the repository automatically:** the milestone was
+explicit that the app must never claim to auto-star GitHub — the share message asks the recipient
+to consider starring and giving feedback themselves, and `shareMediaVault()`'s only action is
+handing plain text to the OS share sheet; nothing in this app can act on the user's GitHub account.
+
+**Consequence:** `:app:compileDebugKotlin` and the affected unit tests (`PlayerViewModelTest`,
+`MarkdownLineTest`) pass — none of the touched files have existing automated Compose-UI coverage,
+consistent with the rest of Settings. **Not verified live on a physical device this stage** (no
+device was available in this session) — the share sheet correctly receiving the GitHub URL, the
+Star action opening the right repository, the feedback email intent's recipient/subject/body, and
+the no-email-app fallback's copy action all still need a real Pixel 7a pass before this is
+considered as fully proven as the rest of the Settings milestone.
+
+---
+
 **END OF MASTER SPECIFICATION**

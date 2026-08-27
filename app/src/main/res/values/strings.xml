@@ -251,9 +251,12 @@
     <string name="settings_legal_licenses">Open-Source Licenses</string>
 
     <string name="settings_feedback_section">Feedback &amp; Contact</string>
-    <string name="settings_feedback_send_email">Send feedback by email</string>
+    <string name="settings_feedback_send_email">Send Feedback</string>
+    <string name="settings_feedback_email_subject">Feedback for MediaVault</string>
+    <string name="settings_feedback_email_body">MediaVault version: %1$s\nDevice: %2$s\nAndroid version: %3$s\n\nFeedback:\n</string>
+    <string name="settings_feedback_no_email_app">No email app found on this device. You can reach us directly at %1$s</string>
+    <string name="settings_feedback_copy_email">Copy feedback email address</string>
     <string name="settings_feedback_github_issues">Report an issue on GitHub</string>
-    <string name="settings_feedback_no_email_configured">No contact email is configured yet</string>
 
     <string name="settings_updates_section">Updates</string>
     <string name="settings_updates_app_version">Version %1$s (%2$d)</string>
@@ -266,6 +269,10 @@
     <string name="settings_about_version">Version %1$s</string>
     <string name="settings_about_description">MediaVault is a local-first Android app for downloading, organizing, and playing media you already have the right to access — with a built-in player, multi-audio and subtitle support, and no ads or tracking.</string>
     <string name="settings_about_github">View on GitHub</string>
+    <string name="settings_about_star_github">Star this project on GitHub</string>
+    <string name="settings_about_star_github_subtitle">Optional — opens the repository so you can star it yourself</string>
+    <string name="settings_about_share">Share MediaVault</string>
+    <string name="settings_share_message">Check out MediaVault — a free, open-source Android app for downloading, organizing, and playing media. If you find it useful, consider starring the repository and sharing your feedback!\n\n%1$s</string>
     <string name="settings_about_credits">Open-source credits &amp; third-party notices</string>
 
     <string name="sources_title">Supported Sources</string>
