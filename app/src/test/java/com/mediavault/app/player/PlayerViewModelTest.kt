@@ -2,6 +2,8 @@ package com.mediavault.app.player
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
+import com.mediavault.app.security.AppLockManager
+import com.mediavault.app.security.FakeAppLockSettingsStore
 import com.mediavault.app.ui.screens.player.PlayerViewModel
 import com.mediavault.app.ui.screens.player.SleepTimerOption
 import com.mediavault.app.ui.screens.player.VideoResizeMode
@@ -42,6 +44,7 @@ class PlayerViewModelTest {
     private lateinit var audioPreferenceProvider: FakeAudioPreferenceProvider
     private lateinit var subtitleStyleProvider: FakeSubtitleStyleProvider
     private lateinit var playerPreferencesProvider: FakePlayerPreferencesProvider
+    private lateinit var appLockManager: AppLockManager
 
     @Before
     fun setUp() {
@@ -53,6 +56,7 @@ class PlayerViewModelTest {
         audioPreferenceProvider = FakeAudioPreferenceProvider()
         subtitleStyleProvider = FakeSubtitleStyleProvider()
         playerPreferencesProvider = FakePlayerPreferencesProvider()
+        appLockManager = AppLockManager(FakeAppLockSettingsStore())
     }
 
     @After
@@ -83,6 +87,7 @@ class PlayerViewModelTest {
         audioPreferenceProvider = audioPreferenceProvider,
         subtitleStyleProvider = subtitleStyleProvider,
         playerPreferencesProvider = playerPreferencesProvider,
+        appLockManager = appLockManager,
     )
 
     @Test
@@ -638,6 +643,22 @@ class PlayerViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertEquals(1f, engine.state.value.playbackSpeed)
+        viewModel.cancelBackgroundWorkForTesting()
+    }
+
+    // --- App Lock ---------------------------------------------------------------------------
+
+    @Test
+    fun `playback pauses the moment the app lock engages`() = runTest {
+        libraryRepository.setItems(listOf(item("a")))
+        val viewModel = viewModel("a")
+        dispatcher.scheduler.runCurrent()
+        assertTrue(engine.state.value.isPlaying)
+
+        appLockManager.lockNow()
+        dispatcher.scheduler.runCurrent()
+
+        assertTrue(!engine.state.value.isPlaying)
         viewModel.cancelBackgroundWorkForTesting()
     }
 }

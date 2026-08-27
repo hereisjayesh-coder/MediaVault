@@ -5,6 +5,46 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Private App Lock + Biometric Protection
+
+- **Settings → Security**: a new App Lock toggle, gated behind creating a 4-digit PIN first
+  (setup happens inline via a dialog the moment the toggle is switched on). Once enabled:
+  an optional "Unlock with biometrics" toggle (shown only when the device actually has
+  strong biometric hardware enrolled — `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)`),
+  an auto-lock timeout picker (Immediately / 30s / 1 min / 5 min), and a Change PIN action
+  (requires the current PIN first). Disabling App Lock also requires the current PIN and
+  clears the stored PIN/biometric toggle — re-enabling always starts from a fresh setup.
+- **Lock screen**: a full-screen, opaque gate (MediaVault logo, PIN keypad with dot
+  progress, biometric button when enabled) shown on cold launch when App Lock is enabled,
+  and again after returning from background past the configured timeout. Auto-triggers the
+  system `BiometricPrompt` when biometric unlock is on; "Use PIN" falls back to the keypad.
+  5 consecutive wrong PINs trigger a 30-second lockout with a live countdown.
+  Nothing from Library/Downloads/Player/Settings is ever composed underneath — verified on
+  a physical device that no title/thumbnail reaches the accessibility tree while locked.
+- **Playback**: a video already playing pauses the instant the app locks (position is
+  preserved, same as any other pause) rather than continuing silently behind the lock
+  screen — confirmed on-device via the actual `AudioTrack` transitioning to `state:paused`.
+  Picture-in-Picture and in-app fullscreen do not trigger a relock, since neither causes
+  `ProcessLifecycleOwner`'s `ON_STOP` to fire while the window stays visible.
+- **Privacy**: `FLAG_SECURE` is applied to the whole app while App Lock is enabled (blocks
+  screenshots and recent-apps thumbnails of Library/Downloads/Player). The download
+  foreground-service notification's video-title text is replaced with a generic
+  "Downloading…" while App Lock is enabled, closing a leak path independent of the lock
+  screen itself.
+- **Storage**: the PIN is never stored raw or logged — only a PBKDF2-SHA256 salted hash
+  (standard `javax.crypto`/`java.security` APIs, no custom cryptography), kept in
+  `EncryptedSharedPreferences` (Android Keystore-backed), never in Room or a plain
+  DataStore/SharedPreferences file. Non-secret settings (enabled, biometric toggle,
+  timeout) use the app's normal per-feature DataStore convention.
+- New dependencies: `androidx.biometric`, `androidx.security:security-crypto`,
+  `androidx.fragment` (`MainActivity` is now a `FragmentActivity`, required by
+  `BiometricPrompt`), `androidx.lifecycle:lifecycle-process` (`ProcessLifecycleOwner`).
+- **Verified on a physical device (Pixel 7a)**, including a real fingerprint touch for the
+  biometric path. Found and fixed one real bug during this pass: the biometric prompt
+  didn't auto-trigger on a genuine cold app restart (a `LaunchedEffect(Unit)` captured a
+  stale `false` before the App Lock settings' first async DataStore emission arrived);
+  fixed by keying that effect on the setting value itself.
+
 ### Added — Share MediaVault, GitHub Star Call-to-Action, and Centralized Feedback Email
 
 - **Share MediaVault** (Settings → About): opens the system share sheet with a plain-text

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-08-24_
+_Last updated: 2026-08-27_
 
 MediaVault is a local-first application. This document describes, honestly and
 specifically, what the app does and does not do with your data as of the current
@@ -31,6 +31,15 @@ updated accordingly.
 - **GitHub update checks.** The app may query the public GitHub Releases API to tell
   you whether a newer version exists. This is a standard HTTPS request to GitHub and is
   subject to GitHub's own privacy policy.
+- **Optional App Lock.** If you turn on Settings → Security → App Lock, MediaVault stores
+  only a salted, hashed verifier of your PIN (never the PIN itself) in Android's
+  Keystore-backed `EncryptedSharedPreferences` — not in the app's Room database and not in
+  a plain preferences file. Biometric unlock (when you also enable it) is handled entirely
+  by Android's own `BiometricPrompt`; MediaVault never receives or stores your fingerprint
+  or face data. While App Lock is on, the app also applies `FLAG_SECURE` (blocking
+  screenshots and recent-apps thumbnails of your library) and withholds the video title
+  from the download-progress notification. All of this is local to your device; nothing
+  related to App Lock is ever transmitted anywhere.
 
 ## Data collection and analytics
 

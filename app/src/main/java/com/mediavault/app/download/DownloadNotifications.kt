@@ -31,9 +31,11 @@ internal fun buildDownloadNotification(
     progressPercent: Int?,
     queuedCount: Int,
     isIndeterminate: Boolean,
+    /** When App Lock is enabled, the actual video title is withheld from this always-visible, ongoing notification — see [com.mediavault.app.security.AppLockSettingsStore]. */
+    hideTitleForPrivacy: Boolean = false,
 ): Notification {
     val contentText = when {
-        activeTitle != null -> activeTitle
+        activeTitle != null -> if (hideTitleForPrivacy) context.getString(R.string.download_notification_active_generic) else activeTitle
         queuedCount > 0 -> context.getString(R.string.download_notification_queued, queuedCount)
         else -> context.getString(R.string.download_notification_idle)
     }

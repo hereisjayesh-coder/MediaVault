@@ -1826,7 +1826,7 @@ _Prior state, before the real DownloadEngine stage:_
   network failure. No extractor/networking/downloader logic changed — classification only.
   3 unit tests in `YtDlpErrorMapperTest` cover it.
 
-Not yet started: torrent downloading, app lock/biometric security, source search (beyond
+Not yet started: torrent downloading, source search (beyond
 the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
 analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
 and update checking. Local media import (a user-picked file or folder, via SAF) exists
@@ -2647,6 +2647,118 @@ automatically — the sheet only ever hands text to whichever app the user picks
 and feedback email intent's on-device behavior were not re-exercised in this pass (out of scope
 for this report) but rely on the same `openExternalUrl`/`ACTION_SENDTO` mechanisms already
 unit-verified at the source level.
+
+---
+
+### 2026-08-27 — Private App Lock + Biometric Protection: a new `security` package, `AppLockManager` as the single lock-state source of truth, whole-app (not partial) gating
+
+**Decision:** A new `com.mediavault.app.security` package holds every App Lock piece as small,
+single-responsibility classes: `PinHasher` (pure-JVM PBKDF2WithHmacSHA256 salted hashing, no
+`android.*` import, real unit tests), `EncryptedPinCredentialStore` (the only place the PIN
+verifier is persisted — `EncryptedSharedPreferences` over a Keystore `MasterKey`, never Room or
+plain preferences), `DataStoreAppLockSettingsStore` (non-secret settings — enabled, biometric
+toggle, timeout — same per-feature-DataStore-file convention as `PlayerPreferencesStore`),
+`BiometricAuthenticator` (thin `androidx.biometric` wrapper, `BIOMETRIC_STRONG` only), and
+`AppLockManager` (the one `isLocked: StateFlow<Boolean>` every other piece reads — the lock
+screen, `PlayerViewModel`'s pause-on-lock, `MainActivity`'s overlay/`FLAG_SECURE`). A new
+`AppLockLifecycleObserver` registered on `ProcessLifecycleOwner` from `MediaVaultApplication` is
+the app's first-ever app-wide foreground/background signal — nothing like it existed before.
+`MainActivity` changed from `ComponentActivity` to `FragmentActivity` (required by
+`BiometricPrompt`, a strict superset with no other behavior change). The lock screen renders as a
+`Box`-sibling overlay next to `MediaVaultNavHost()`, not a replacement for it, so Library/Player
+stay composed (and Player's own position-tracking coroutines keep running) underneath while
+locked.
+
+**Why whole-app locking, not partial (e.g. leaving Home open while Library/Player stay gated):**
+considered and rejected. Home itself shows no private data (confirmed by inspection — it's a
+source-browsing/analyze entry point, never reading `LibraryRepository`/`DownloadEngine`), so a
+partial scheme was possible, but it adds real complexity (per-route gating logic, a second way for
+a route to be reachable) for a benefit that doesn't materialize: once App Lock is enabled, MediaVault's whole
+purpose (downloading/organizing private media) is the same tab a partial scheme would have had to
+special-case anyway. Locking everything uniformly is simpler to reason about, simpler to test
+correctly, and has no user-visible cost, since a freshly-launched or freshly-returned-to app
+showing the lock screen for one extra second before Home is not a meaningfully worse experience
+than Home being reachable first.
+
+**Why a fixed 4-digit PIN, not variable-length:** the lock screen auto-submits the instant a
+digit count is reached, with no separate "done" button (matching real device lock-screen UX). A
+variable-length PIN makes that instant ambiguous — has the user finished a 4-digit PIN or paused
+mid-way through a 6-digit one? Fixing the length removes the ambiguity entirely at the cost of not
+letting a user pick a longer PIN — a reasonable trade for this milestone.
+
+**Why disabling App Lock (and Change PIN) requires re-entering the current PIN, even though
+reaching Settings already passed the app's own lock gate:** that gate covers "was this app
+launched/resumed correctly," not "is whoever is holding the phone *right now* the same person who
+set the PIN." An unlocked phone left unattended for a few seconds is enough time to flip a
+switch, but not enough to know or guess a 4-digit PIN — the narrower case the re-verification
+actually defends against.
+
+**Why disabling App Lock also clears the stored PIN/biometric toggle** rather than leaving them
+dormant: re-enabling later always starts from the same, predictable "set a new PIN" flow a
+first-time user gets — no silently-resurrected old PIN a user has long since forgotten.
+
+**Why `BiometricPrompt` is used without a `CryptoObject`:** biometric here gates local UI access,
+not decryption of a secret — the PIN verifier's real protection is `EncryptedSharedPreferences`'
+Keystore-backed encryption, independent of biometric success. A `CryptoObject` tied to a
+Keystore key would be the stronger "cryptographically authorizes a specific decrypt" pattern
+Android's own docs recommend when there *is* a secret to unlock; adding one here (with its own
+`KeyPermanentlyInvalidatedException`/re-enrollment handling) would be meaningfully more code for a
+guarantee this feature doesn't need. Documented as a deliberate scope boundary, not an oversight.
+
+**Why `FLAG_SECURE` is tied to `appLockEnabled`, not to `isLocked`:** Library/Downloads/Player show
+private media any time App Lock is on, whether or not the screen happens to be locked at this
+exact moment — screenshot/recents protection should cover the same "I've opted into privacy" scope
+as the feature itself, not the narrower "currently locked" window.
+
+**Why playback pauses via a `PlayerViewModel` collector on `AppLockManager.isLocked`, not by
+disposing the Player screen:** the lock overlay is a sibling of the NavHost, so `PlayerScreen`
+never leaves composition while locked — good, because its own `onDispose { onScreenLeft() }` path
+was written for tab-switch/back-navigation, not for "temporarily covered by a lock screen," and
+disposing it here would have broken exactly the position-tracking/resume state this milestone
+needed to leave intact. A dedicated collector reacting to the same `isLocked` flow everything else
+reads is a smaller, more targeted fix that reuses the engine's existing `pause()` call (already
+used by the sleep timer and `onScreenLeft`) rather than adding a second pause path.
+
+**Why Picture-in-Picture doesn't trigger a relock:** `ProcessLifecycleOwner` (the app's only
+foreground/background signal, via `AppLockLifecycleObserver`) does not fire `ON_STOP` while a PiP
+window stays visible on screen — only a true backgrounding (the window fully hidden) does. This is
+existing Android/Jetpack behavior, not special-cased app code; it falls directly out of building
+the background-timeout detector on `ProcessLifecycleOwner` rather than a per-Activity callback.
+
+**Consequence — verified live on a physical device (Pixel 7a), including a real fingerprint
+touch:** enabled App Lock (PIN setup dialog, two-step enter/confirm); backgrounded and returned
+with the default Immediate timeout — relocked correctly; entered a wrong PIN — "Incorrect PIN"
+shown, dots cleared, error disappears the instant the next digit is typed; entered the correct PIN
+— unlocked back to the exact previous screen (Settings, and separately, mid-video in Player);
+force-stopped the process entirely and relaunched — still locked (persisted-settings-driven cold
+start, no state survives process death to skip it); relocked from an actively-playing video —
+`adb shell dumpsys audio` showed MediaVault's own `AudioTrack` transition to `state:paused` (no
+audio leaking behind the lock screen), and unlocking returned to the same paused position;
+relocked from Library — the accessibility tree while locked contained only the lock screen's own
+nodes, zero Library titles/thumbnails; enabled biometric — the real system `BiometricPrompt`
+("Unlock MediaVault", fingerprint icon, "Use PIN" fallback) auto-appeared on relock, and a real
+finger touch on the sensor unlocked the app; tapped "Use PIN" from the biometric prompt as a
+fallback path — correctly showed the PIN keypad; disabled App Lock — required the current PIN
+first, then cleared the Security section's sub-rows and confirmed `FLAG_SECURE` lifted (`adb
+screencap` produced a real image again, instead of the solid-black capture `FLAG_SECURE` forces
+while it's active — which itself doubled as live confirmation the flag was genuinely set while
+App Lock was on, since every screencap attempt during that window came back black).
+
+**One real bug found and fixed during this device pass:** on a genuine cold process restart
+(force-stopped, not just backgrounded), the biometric prompt did not auto-appear — only the PIN
+keypad did, even with biometric enabled. Cause: `AppLockScreen`'s `LaunchedEffect(Unit) {
+viewModel.refreshBiometricState(biometricEnabledSetting) }` ran once, capturing the parameter's
+initial value (`false`, since `MainActivity`'s `AppLockSettingsStore.settings.collectAsStateWithLifecycle`
+starts from `initialValue = null` before DataStore's first async read completes) and never
+re-ran once the real persisted value arrived a moment later. Fixed by keying that effect on
+`biometricEnabledSetting` itself instead of `Unit`, so it re-syncs whenever the parameter actually
+changes. Reverified after the fix: a genuinely cold process start (confirmed via `adb shell pidof`
+showing no process before `am start`) now shows the biometric prompt immediately.
+
+**Not separately re-verified this pass:** manually entering Picture-in-Picture during playback
+while App Lock is enabled (the "PiP doesn't trigger a relock" reasoning above is architectural —
+`ProcessLifecycleOwner` genuinely does not fire `ON_STOP` for it — but wasn't exercised
+interactively on-device in this stage).
 
 ---
 

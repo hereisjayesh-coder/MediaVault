@@ -88,6 +88,7 @@
     <string name="download_notification_title">MediaVault</string>
     <string name="download_notification_queued">%1$d queued</string>
     <string name="download_notification_idle">Download complete</string>
+    <string name="download_notification_active_generic">Downloading…</string>
 
     <string name="home_select_format">Select a format</string>
     <string name="home_format_requires_merge">Requires merging — not available yet</string>
@@ -231,6 +232,33 @@
     <string name="settings_storage_private_explanation">MediaVault downloads are private by default — saved inside the app\'s own storage, not your device\'s shared Gallery, and removed automatically if the app is uninstalled.</string>
     <string name="settings_storage_free_space">%1$s free on this device</string>
     <string name="settings_storage_manage_library">Manage downloads in Library</string>
+
+    <string name="settings_security_section">Security</string>
+    <string name="settings_security_app_lock">App Lock</string>
+    <string name="settings_security_biometric">Unlock with biometrics</string>
+    <string name="settings_security_timeout_label">Lock after</string>
+    <string name="settings_security_timeout_immediate">Immediately</string>
+    <string name="settings_security_timeout_30s">30 seconds</string>
+    <string name="settings_security_timeout_1m">1 minute</string>
+    <string name="settings_security_timeout_5m">5 minutes</string>
+    <string name="settings_security_change_pin">Change PIN</string>
+    <string name="settings_security_disable_verify_title">Enter your PIN to turn off App Lock</string>
+
+    <string name="app_lock_title">MediaVault is locked</string>
+    <string name="app_lock_subtitle">Enter your PIN to continue</string>
+    <string name="app_lock_incorrect_pin">Incorrect PIN</string>
+    <string name="app_lock_locked_out">Too many attempts. Try again in %1$ds</string>
+    <string name="app_lock_biometric_prompt_title">Unlock MediaVault</string>
+    <string name="app_lock_use_pin">Use PIN</string>
+    <string name="app_lock_biometric_action">Unlock with biometrics</string>
+    <string name="app_lock_backspace">Delete digit</string>
+    <string name="app_lock_pin_setup_title">Set a PIN</string>
+    <string name="app_lock_pin_setup_enter">Enter a 4-digit PIN</string>
+    <string name="app_lock_pin_setup_confirm">Enter the PIN again to confirm</string>
+    <string name="app_lock_pin_setup_mismatch">PINs didn\'t match — try again</string>
+    <string name="app_lock_pin_verify_title">Enter your current PIN</string>
+    <string name="app_lock_pin_verify_prompt">Enter your current PIN to continue</string>
+    <string name="app_lock_dialog_cancel">Cancel</string>
 
     <string name="settings_support_section">Support the Project</string>
     <string name="settings_support_explanation">%1$s is free, ad-free, and open-source. If it\'s useful to you, supporting the project is completely optional and appreciated.</string>

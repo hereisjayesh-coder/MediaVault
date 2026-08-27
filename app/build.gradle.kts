@@ -104,6 +104,13 @@ dependencies {
     // no camera permission, no network calls. Pure-JVM artifact, no transitive Android deps.
     implementation(libs.zxing.core)
 
+    // App Lock: BiometricPrompt requires a FragmentActivity; EncryptedSharedPreferences is the
+    // Keystore-backed store for the PIN verifier (never a plain DataStore/SharedPreferences key).
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.fragment.ktx)
+    implementation(libs.androidx.lifecycle.process)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 

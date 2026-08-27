@@ -24,10 +24,12 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Policy
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SystemUpdateAlt
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -68,11 +71,15 @@ import com.mediavault.app.R
 import com.mediavault.app.player.PlayerPreferences
 import com.mediavault.app.player.SubtitleStyle
 import com.mediavault.app.policy.NetworkPolicySettings
+import com.mediavault.app.security.AppLockSettings
+import com.mediavault.app.security.AutoLockTimeout
 import com.mediavault.app.settings.ThemeMode
 import com.mediavault.app.settings.ThemeViewModel
 import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
+import com.mediavault.app.ui.components.security.PinSetupDialog
+import com.mediavault.app.ui.components.security.PinVerifyDialog
 import com.mediavault.app.ui.components.support.SupportSection
 import com.mediavault.app.ui.components.support.openExternalUrl
 import com.mediavault.app.ui.components.support.shareMediaVault
@@ -159,6 +166,19 @@ private fun SettingsScreenContent(
             StorageSection(
                 freeStorageBytes = uiState.freeStorageBytes,
                 onManageLibraryClick = onNavigateToLibrary,
+            )
+        }
+        item {
+            SecuritySection(
+                appLockSettings = uiState.appLockSettings,
+                biometricAvailable = uiState.biometricAvailable,
+                onEnableConfirmed = viewModel::enableAppLockWithNewPin,
+                onDisableVerify = viewModel::verifyCurrentPin,
+                onDisableConfirmed = viewModel::disableAppLock,
+                onBiometricToggleChanged = viewModel::setBiometricEnabled,
+                onTimeoutSelected = viewModel::setAutoLockTimeout,
+                onChangePinVerify = viewModel::verifyCurrentPin,
+                onChangePinConfirmed = viewModel::changePin,
             )
         }
         item { SupportSection(config = AppConfig.support) }
@@ -431,6 +451,120 @@ private fun StorageSection(freeStorageBytes: Long, onManageLibraryClick: () -> U
             onClick = onManageLibraryClick,
         )
     }
+}
+
+// --- Security / App Lock ------------------------------------------------------------------
+
+private sealed interface SecurityDialog {
+    data object EnableSetup : SecurityDialog
+    data object VerifyForDisable : SecurityDialog
+    data object VerifyForChangePin : SecurityDialog
+    data object SetupNewPinAfterVerify : SecurityDialog
+}
+
+/**
+ * Boundary decision (documented here since there's no single obvious "right" answer): enabling
+ * requires creating a PIN first (a lock screen with nothing to verify against would be useless),
+ * and disabling — like changing the PIN — requires re-entering the current PIN first, even
+ * though the user necessarily already passed App Lock's own gate to reach Settings at all. This
+ * guards against a narrower case that gate doesn't cover: an unlocked phone left unattended for
+ * a few seconds is enough to toggle a switch, but not enough to also know or guess a 4-digit PIN.
+ */
+@Composable
+private fun SecuritySection(
+    appLockSettings: AppLockSettings,
+    biometricAvailable: Boolean,
+    onEnableConfirmed: (CharArray) -> Unit,
+    onDisableVerify: suspend (CharArray) -> Boolean,
+    onDisableConfirmed: () -> Unit,
+    onBiometricToggleChanged: (Boolean) -> Unit,
+    onTimeoutSelected: (AutoLockTimeout) -> Unit,
+    onChangePinVerify: suspend (CharArray) -> Boolean,
+    onChangePinConfirmed: (CharArray) -> Unit,
+) {
+    var activeDialog by remember { mutableStateOf<SecurityDialog?>(null) }
+
+    SettingsCardSection(titleRes = R.string.settings_security_section) {
+        SwitchRow(
+            icon = Icons.Default.Lock,
+            title = stringResource(R.string.settings_security_app_lock),
+            checked = appLockSettings.appLockEnabled,
+            onCheckedChange = { turningOn ->
+                activeDialog = if (turningOn) SecurityDialog.EnableSetup else SecurityDialog.VerifyForDisable
+            },
+        )
+        if (appLockSettings.appLockEnabled) {
+            if (biometricAvailable) {
+                SwitchRow(
+                    icon = Icons.Default.Fingerprint,
+                    title = stringResource(R.string.settings_security_biometric),
+                    checked = appLockSettings.biometricEnabled,
+                    onCheckedChange = onBiometricToggleChanged,
+                )
+            }
+            Text(text = stringResource(R.string.settings_security_timeout_label), style = MaterialTheme.typography.labelLarge)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AutoLockTimeout.entries.forEach { timeout ->
+                    FilterChip(
+                        selected = timeout == appLockSettings.autoLockTimeout,
+                        onClick = { onTimeoutSelected(timeout) },
+                        label = { Text(stringResource(autoLockTimeoutLabelRes(timeout))) },
+                    )
+                }
+            }
+            SettingsActionRow(
+                icon = Icons.Default.VpnKey,
+                title = stringResource(R.string.settings_security_change_pin),
+                external = false,
+                onClick = { activeDialog = SecurityDialog.VerifyForChangePin },
+            )
+        }
+    }
+
+    when (activeDialog) {
+        SecurityDialog.EnableSetup -> PinSetupDialog(
+            title = stringResource(R.string.app_lock_pin_setup_title),
+            onDismiss = { activeDialog = null },
+            onConfirmed = { pin ->
+                onEnableConfirmed(pin)
+                activeDialog = null
+            },
+        )
+        SecurityDialog.VerifyForDisable -> PinVerifyDialog(
+            title = stringResource(R.string.settings_security_disable_verify_title),
+            onDismiss = { activeDialog = null },
+            onVerify = onDisableVerify,
+            onVerified = {
+                onDisableConfirmed()
+                activeDialog = null
+            },
+        )
+        SecurityDialog.VerifyForChangePin -> PinVerifyDialog(
+            title = stringResource(R.string.app_lock_pin_verify_title),
+            onDismiss = { activeDialog = null },
+            onVerify = onChangePinVerify,
+            onVerified = { activeDialog = SecurityDialog.SetupNewPinAfterVerify },
+        )
+        SecurityDialog.SetupNewPinAfterVerify -> PinSetupDialog(
+            title = stringResource(R.string.app_lock_pin_setup_title),
+            onDismiss = { activeDialog = null },
+            onConfirmed = { pin ->
+                onChangePinConfirmed(pin)
+                activeDialog = null
+            },
+        )
+        null -> Unit
+    }
+}
+
+private fun autoLockTimeoutLabelRes(timeout: AutoLockTimeout): Int = when (timeout) {
+    AutoLockTimeout.IMMEDIATE -> R.string.settings_security_timeout_immediate
+    AutoLockTimeout.THIRTY_SECONDS -> R.string.settings_security_timeout_30s
+    AutoLockTimeout.ONE_MINUTE -> R.string.settings_security_timeout_1m
+    AutoLockTimeout.FIVE_MINUTES -> R.string.settings_security_timeout_5m
 }
 
 // --- Privacy & Legal --------------------------------------------------------------------------

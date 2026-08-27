@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.content.ContextCompat
+import com.mediavault.app.security.AppLockSettingsStore
 import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.model.DownloadStatus
 import dagger.hilt.android.AndroidEntryPoint
@@ -13,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -27,6 +29,9 @@ class DownloadForegroundService : Service() {
     @Inject
     lateinit var downloadEngine: DownloadEngine
 
+    @Inject
+    lateinit var appLockSettingsStore: AppLockSettingsStore
+
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
 
@@ -35,8 +40,8 @@ class DownloadForegroundService : Service() {
         ensureDownloadChannel(this)
         startForeground(DOWNLOAD_NOTIFICATION_ID, buildDownloadNotification(this, null, null, 0, false))
 
-        downloadEngine.observeAll()
-            .onEach { tasks ->
+        combine(downloadEngine.observeAll(), appLockSettingsStore.settings) { tasks, lockSettings -> tasks to lockSettings.appLockEnabled }
+            .onEach { (tasks, appLockEnabled) ->
                 val active = tasks.firstOrNull { it.status.isActiveTransfer() }
                 val queuedCount = tasks.count { it.status == DownloadStatus.QUEUED }
                 val stillWorking = active != null || queuedCount > 0
@@ -50,6 +55,7 @@ class DownloadForegroundService : Service() {
                     progressPercent = percent,
                     queuedCount = queuedCount,
                     isIndeterminate = active != null && percent == null,
+                    hideTitleForPrivacy = appLockEnabled,
                 )
                 ContextCompat.getSystemService(this, android.app.NotificationManager::class.java)
                     ?.notify(DOWNLOAD_NOTIFICATION_ID, notification)

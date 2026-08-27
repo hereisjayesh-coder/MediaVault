@@ -13,6 +13,7 @@ import com.mediavault.app.player.PlayerPreferences
 import com.mediavault.app.player.PlayerPreferencesProvider
 import com.mediavault.app.player.SubtitleStyle
 import com.mediavault.app.player.SubtitleStyleProvider
+import com.mediavault.app.security.AppLockManager
 import com.mediavault.core.domain.player.PlaybackState
 import com.mediavault.core.domain.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,6 +37,7 @@ class PlayerViewModel @Inject constructor(
     private val audioPreferenceProvider: AudioPreferenceProvider,
     private val subtitleStyleProvider: SubtitleStyleProvider,
     private val playerPreferencesProvider: PlayerPreferencesProvider,
+    private val appLockManager: AppLockManager,
 ) : ViewModel() {
 
     private val requestedMediaItemId: String? = savedStateHandle[MEDIA_ITEM_ID_ARG]
@@ -53,6 +55,7 @@ class PlayerViewModel @Inject constructor(
     private var controlsHideJob: Job? = null
     private var subtitleStyleJob: Job? = null
     private var playerPreferencesJob: Job? = null
+    private var appLockJob: Job? = null
 
     private var appliedPreferredAudioThisLoad = false
     private var appliedAutoFullscreenThisLoad = false
@@ -77,6 +80,14 @@ class PlayerViewModel @Inject constructor(
                 playerPreferences = prefs
                 _uiState.update { it.copy(autoEnterPip = prefs.autoEnterPip) }
             }
+        }
+        // Privacy: if the app locks while a video is playing (background timeout elapsed, then
+        // the user returns), pause immediately rather than letting audio/video keep running
+        // behind the opaque lock screen. The lock screen itself is a sibling overlay that never
+        // disposes this screen (see MainActivity), so this collector — not composition teardown
+        // — is what actually stops playback here.
+        appLockJob = viewModelScope.launch {
+            appLockManager.isLocked.collect { locked -> if (locked) playerEngine?.pause() }
         }
 
         sessionJob = viewModelScope.launch {
@@ -367,6 +378,7 @@ class PlayerViewModel @Inject constructor(
         controlsHideJob?.cancel()
         subtitleStyleJob?.cancel()
         playerPreferencesJob?.cancel()
+        appLockJob?.cancel()
     }
 
     override fun onCleared() {

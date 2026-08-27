@@ -4,11 +4,12 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,11 +19,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mediavault.app.navigation.MediaVaultNavHost
+import com.mediavault.app.security.AppLockManager
+import com.mediavault.app.security.AppLockSettingsStore
 import com.mediavault.app.settings.ThemeStore
 import com.mediavault.app.settings.ThemeViewModel
 import com.mediavault.app.settings.resolveIsDark
+import com.mediavault.app.ui.screens.lock.AppLockScreen
 import com.mediavault.app.ui.screens.player.LocalIsInPictureInPicture
 import com.mediavault.app.ui.theme.BackgroundDark
 import com.mediavault.app.ui.theme.BackgroundLight
@@ -32,9 +38,11 @@ import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     @Inject lateinit var themeStore: ThemeStore
+    @Inject lateinit var appLockManager: AppLockManager
+    @Inject lateinit var appLockSettingsStore: AppLockSettingsStore
 
     private val isInPictureInPicture = mutableStateOf(false)
 
@@ -52,6 +60,9 @@ class MainActivity : ComponentActivity() {
             Configuration.UI_MODE_NIGHT_YES
         val startupIsDark = runBlocking { themeStore.currentThemeMode() }.resolveIsDark(systemInDark)
         applyWindowChrome(startupIsDark)
+        // Same "decide before first frame" pattern as the theme read above — whether App Lock is
+        // enabled decides whether the very first Compose frame already renders locked.
+        appLockManager.initializeBlocking()
 
         setContent {
             val themeViewModel: ThemeViewModel = hiltViewModel()
@@ -63,10 +74,37 @@ class MainActivity : ComponentActivity() {
             // never goes stale relative to the app's own background, not just at cold start.
             LaunchedEffect(isDark) { applyWindowChrome(isDark) }
 
+            val appLockSettings by appLockSettingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
+            // FLAG_SECURE is tied to the App Lock toggle itself (not just to isLocked) — Library/
+            // Downloads/Player show private media whenever App Lock is on, whether or not the
+            // screen happens to be locked right now, so screenshot/recents protection applies to
+            // the same "I've opted into privacy" scope as the lock feature, not narrower.
+            LaunchedEffect(appLockSettings?.appLockEnabled) {
+                val enabled = appLockSettings?.appLockEnabled ?: return@LaunchedEffect
+                if (enabled) {
+                    window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
+            val isLocked by appLockManager.isLocked.collectAsStateWithLifecycle()
+
             MediaVaultTheme(themeMode = themeMode) {
                 CompositionLocalProvider(LocalIsInPictureInPicture provides isInPictureInPicture.value) {
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        MediaVaultNavHost()
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            MediaVaultNavHost()
+                            // Kept as a sibling overlay (not a replacement for the NavHost) so
+                            // Library/Player/etc. stay composed underneath while locked — Player
+                            // in particular must not be disposed here, since its own onDispose
+                            // path pauses playback in a way that would break resume-after-unlock.
+                            // PlayerViewModel separately pauses playback the moment isLocked
+                            // becomes true, so nothing plays silently behind this opaque screen.
+                            if (isLocked) {
+                                AppLockScreen(biometricEnabledSetting = appLockSettings?.biometricEnabled ?: false)
+                            }
+                        }
                     }
                 }
             }
