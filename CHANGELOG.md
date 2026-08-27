@@ -5,6 +5,44 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Cross-Platform Media Compatibility QA (YouTube/Instagram/Reddit/Facebook)
+
+A live QA pass against real public URLs across all four platforms, using the app's actual
+analyze → format-select → download → Library → player pipeline (not just checking the
+Supported Sources catalog). Full platform/media-type matrix in `PROJECT_MASTER.md`'s decision
+log. Summary: 6 of 9 tested cases PASS end-to-end; all 3 image-post cases came back
+UNSUPPORTED/SOURCE ERROR (a real yt-dlp/platform-side limitation, not a MediaVault gap — see
+below), so no speculative `MediaType.IMAGE` architecture was built with nothing real to
+validate it against.
+
+- **Fixed a real defect found via the mandated Reddit video test**: a video-only format with
+  no audio-only track *anywhere* in the source (a genuinely silent clip — common for
+  Reddit-hosted videos/GIFs) was being disabled entirely ("No audio track is available to
+  merge with this resolution"), even though there was nothing to merge — the file was already
+  complete. `buildDownloadOptions` now treats that case as a direct, selectable,
+  no-processing option, same as a muxed file. The genuinely-different "audio exists elsewhere
+  but nothing pairs with this resolution" case (`DownloadOption.unavailableReason`) is
+  documented as effectively unreachable today, given the existing any-audio-track pairing
+  fallback — kept as a defensive invariant, not removed as dead code.
+- **Clearer error text** for one real failure mode hit during QA: yt-dlp's Instagram extractor
+  raises "There is no video in this post" for a single-image post; this now maps to a plain
+  "This post doesn't contain a video MediaVault can download." instead of showing the raw
+  Python exception string. No new workaround or bypass — the post is still correctly
+  unsupported, just worded clearly.
+- **Confirmed working, unchanged**: YouTube video/audio-only/playlist detection, Instagram
+  Reel, Facebook video — all verified end-to-end on a physical device (Pixel 7a), including
+  Library insertion and the correct video/audio player presentation.
+- **Confirmed real, unfixed limitations** (recorded accurately, no workaround attempted per
+  this milestone's explicit instruction): Instagram image posts and Facebook photo-permalink
+  URLs are both unsupported by yt-dlp's own extractors for those platforms (video-first
+  design); a Reddit image post reproducibly failed with a source/network-level error fetching
+  the actual image asset (not a MediaVault-side bug). Separately, **YouTube playlist bulk
+  downloads that require video+audio merging are blocked entirely** ("Requires merging — not
+  available yet") in the playlist quality-picker specifically — a real, pre-existing gap
+  distinct from this milestone's media-type-detection scope, left unfixed here since fixing it
+  means touching the playlist download-options path, not the video/audio/image classification
+  this QA pass targeted.
+
 ### Added — Dedicated Audio Player Mode
 
 - Audio-only media (no video track) now opens a dedicated audio-player presentation instead

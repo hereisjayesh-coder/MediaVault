@@ -2780,4 +2780,77 @@ interactively on-device in this stage).
 
 ---
 
+### 2026-08-28 — Cross-platform media compatibility QA: live testing over the catalog, one real defect found and fixed, image support left unbuilt for lack of a real extractable case
+
+**Decision:** Rather than trusting the Supported Sources catalog's listing, this pass ran the
+app's actual analyze → format-select → download → Library → player pipeline against real,
+current, public URLs (a mix of official/brand accounts and neutral subreddits — never
+politically or personally sensitive content) across YouTube, Instagram, Reddit, and Facebook,
+recording an exact PASS / UNSUPPORTED / SOURCE ERROR / OTHER outcome per case rather than a
+blanket "works" claim.
+
+**Full matrix (yt-dlp `2026.8.19`, live-tested on a Pixel 7a):**
+
+| Platform | Media type | Result | Notes |
+|---|---|---|---|
+| YouTube | Video | **PASS** | `watch?v=aqz-KE-bpKQ` (Big Buck Bunny) — analyzed, 144p/17MB format downloaded, Library-inserted, opened in the video player with full controls. |
+| YouTube | Audio-only | **PASS** | Same video, M4A 49kbps/4MB format — downloaded, opened in the dedicated audio player (no video canvas/controls), confirming the recent audio/video presentation split holds for a real download. |
+| YouTube | Playlist | **PASS** (detection) / **separate pre-existing gap** (bulk download) | `playlist?list=PL6B3937A5D230E335` ("Official Blender Open Movies," 17 items) — correctly detected as a playlist with the real title/item count/order. Selecting an item for bulk download offered only video-only formats, all marked "Requires merging — not available yet" and genuinely disabled (`enabled="false"` down to the `RadioButton`) — the playlist bulk-download quality-picker cannot complete any merge-requiring download today. Confirmed real and reproducible, but **left unfixed**: this is a gap in the playlist download-options path, not in media-type detection, and fixing it means touching different code than this milestone's actual scope. |
+| Instagram | Reel (video) | **PASS** | `reel/Dcea3BiPTBm` (@nasa) — analyzed as Video, downloaded, opened correctly in the video player. |
+| Instagram | Image post | **UNSUPPORTED** | `p/Db9IVmrDvQ4` (@nasa, single-photo eclipse post, confirmed via screenshot to have no carousel/video) — yt-dlp's own Instagram extractor raised `There is no video in this post`. This is yt-dlp's Instagram extractor being video-first by design, not a MediaVault-side gap; per this milestone's explicit instruction, no extractor workaround was attempted. Error text improved (see below) but the outcome is unchanged. |
+| Reddit | Video | **FAILED → FIXED → PASS** | `r/oddlysatisfying/.../dandelion_fountain` (0:11, silent) — analyzed correctly as Video, but the only format (h264, no audio track) was shown disabled with "No audio track is available to merge with this resolution." This is a real MediaVault defect (see below), not a platform limitation. Fixed, rebuilt, and reverified end-to-end: format now selectable, downloads, Library-inserts, and plays correctly (silently) in the video player. |
+| Reddit | Image post | **SOURCE ERROR** | Two independent posts tried (`r/EarthPorn` — Mt Rainier photo, and a separate Faroe Islands photo) — both failed identically with "Couldn't reach the source. Check your connection and try again." while general connectivity and the Reddit video case above worked fine moments before/after on the same device. Reproducible across two unrelated posts, so this is a genuine, systemic yt-dlp/Reddit-CDN issue fetching the underlying image asset for this yt-dlp version — not a dead link, not a MediaVault bug, and not something to route around per this milestone's "don't bypass" instruction. |
+| Facebook | Video | **PASS** | A public NASA page video post (spacewalk clip) — analyzed with full caption/metadata, 720p av01 format downloaded, Library-inserted, opened correctly in the video player. |
+| Facebook | Image post | **UNSUPPORTED** | A public NASA page `photo.php?fbid=...` permalink (classic Facebook photo-permalink URL shape) — yt-dlp raised its generic `Unsupported URL` error, meaning Facebook's extractor doesn't match this URL shape at all. Consistent with yt-dlp's Facebook extractor being video/page-post-first, mirroring the Instagram finding. No workaround attempted. |
+
+**Why no `MediaType.IMAGE`/image-viewer architecture was built:** this milestone's own instructions
+are explicit that image support should only be built as "the clean generic solution" *if* image
+support is actually available, and that an Instagram-specific (or any other) extractor workaround
+must not be invented. Live testing found **zero** platforms in the required matrix where yt-dlp
+actually returns extractable image formats/metadata — every image case is either an explicit
+upstream refusal (Instagram, Facebook) or a source/network-level fetch failure (Reddit). Building
+a `MediaType.IMAGE` enum value, rewriting every `MediaType` call site (`MediaThumbnail`'s
+exhaustive `when`, `AndroidMediaMetadataProbe`, `LibraryRepository`'s MediaStore export,
+`MediaDetailsDialog`, `PlayerUiState.isAudioOnly`'s fallback, `MediaVaultDownloadEngine`'s
+type-assignment), and designing a new image-viewer screen now — with no real, working case to
+validate any of it against — would be speculative, unverifiable, and exactly the kind of
+"unnecessary rewrite" this milestone's own quality bar warns against. If a future source is
+confirmed (by the same live-testing standard used here, not by trusting a catalog entry) to yield
+real image formats, the audio/video presentation-split already established in `PlayerScreen`
+(`PlayerUiState.isAudioOnly`, shared `ScrubberAndTimeRow`/`TransportRow`) is the pattern a third,
+image presentation should follow — most likely a genuinely separate, simpler viewer screen
+outside `PlayerViewModel`/`PlayerEngine` entirely, since none of `PlaybackState`'s
+position/duration/seek/speed/loop machinery means anything for a static image (this exact tradeoff
+was already investigated during the audio-player work's research phase and documented there).
+
+**The one real, fixed defect — `buildDownloadOptions`'s "nothing to merge" case (`core/domain/.../DownloadOption.kt`):**
+a video-only format was *always* routed through the video+audio pairing path, regardless of
+whether any audio-only format existed anywhere in the source's format list. When none did (a
+genuinely silent source — confirmed live on the Reddit test case above), the format was still
+marked `unavailableReason = "No audio track is available to merge with this resolution."` and
+disabled outright, even though there was nothing to merge — the video-only file already *is* the
+complete file. Fixed: `buildDownloadOptions` now checks whether any audio-only format exists at
+all in the source before treating a video-only format as needing a pair; when none exist, it
+becomes a direct, selectable, `requiresProcessing = false` option identical in kind to a muxed
+file. **A side effect of this fix, verified by inspection**: `compatibleAudioTracksFor` (the
+pairing-candidate lookup) already falls back to *any* available audio track when no
+same-container-family match exists, and never returns an empty list once given a non-empty input
+— meaning the `unavailableReason`/"audio exists elsewhere but nothing pairs" case this field was
+originally meant to also cover was already unreachable before this fix, and remains unreachable
+after it. It's kept in the data model as a documented, defensive invariant (in case pairing logic
+is ever tightened to require a closer match) rather than deleted as dead code, since removing it
+would mean also touching its UI consumers — a larger change than this milestone's actual fix
+warranted.
+
+**Consequence — verified on a physical device (Pixel 7a) for every PASS and the one fix above**;
+`DownloadOptionTest`/`YtDlpErrorMapperTest` updated and extended (existing tests asserting the old
+"always disabled with no audio" behavior rewritten to assert the corrected one; a new test locks
+in that a source with *some* audio but a total container mismatch still pairs via the any-audio
+fallback, confirming the unavailable path really is unreachable today, not just in this one case).
+`core:domain` and `core:extractor-ytdlp`'s full test suites re-run clean since both were touched;
+the `app` module was not touched by the code fix and its full suite was not rerun, only the
+affected areas exercised live on-device.
+
+---
+
 **END OF MASTER SPECIFICATION**

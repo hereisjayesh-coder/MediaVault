@@ -36,6 +36,13 @@ internal fun PyException.toAppError(): AppError {
         raw.contains("No information could be extracted", ignoreCase = true) ->
             AppError.Unsupported("Nothing playable was found at this URL.")
 
+        // yt-dlp's own extractors raise this for image-only posts on video-first platforms
+        // (confirmed live for Instagram) — this is an upstream extraction limitation, not a
+        // MediaVault defect, so it's classified and worded clearly rather than left as a raw
+        // Python exception string.
+        raw.contains("There is no video in this post", ignoreCase = true) ->
+            AppError.Unsupported("This post doesn't contain a video MediaVault can download.")
+
         raw.contains("No space left on device", ignoreCase = true) ->
             AppError.Storage("Not enough storage space to finish this download.")
 

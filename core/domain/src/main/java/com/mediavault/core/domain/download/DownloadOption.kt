@@ -4,10 +4,12 @@ import com.mediavault.core.model.MediaFormat
 
 /**
  * One selectable row for the single-item download flow: either a format MediaVault can save
- * directly (muxed video+audio, or audio-only — [requiresProcessing] false, unchanged since the
- * real `DownloadEngine` stage), or a video-only format paired with a compatible audio-only
- * format that [MediaProcessor][com.mediavault.core.domain.processing.MediaProcessor] will remux
- * together after both download ([requiresProcessing] true). See `buildDownloadOptions`.
+ * directly — muxed video+audio, audio-only, or a video-only format that is already the complete
+ * file because the source has no separate audio anywhere (a silent clip — [requiresProcessing]
+ * false in all three cases, unchanged since the real `DownloadEngine` stage) — or a video-only
+ * format paired with a compatible audio-only format that
+ * [MediaProcessor][com.mediavault.core.domain.processing.MediaProcessor] will remux together
+ * after both download ([requiresProcessing] true). See `buildDownloadOptions`.
  */
 data class DownloadOption(
     /** Stable across rebuilds of the same format list: the format id for a direct option, `"videoId+audioId"` for a paired one. */
@@ -20,8 +22,14 @@ data class DownloadOption(
     val combinedEstimatedSizeBytes: Long?,
     /**
      * Set only when this option can be displayed (so the user can see the resolution exists at
-     * all — "never silently hide") but not actually selected — e.g. a video-only format with no
-     * audio-only track available anywhere to pair it with. Null means selectable.
+     * all — "never silently hide") but not actually selected. In practice this never fires today:
+     * `compatibleAudioTracksFor` always finds *some* audio to pair with once any audio-only
+     * format exists anywhere (falling back to any language/container rather than returning
+     * empty), and a source with no audio-only format at all is handled as a direct, selectable
+     * option instead (see `buildDownloadOptions`) rather than routed through pairing. Kept as a
+     * defensive, documented invariant — e.g. if pairing logic is ever tightened to require a
+     * closer match — rather than removed as dead code for a single milestone's fix. Null means
+     * selectable.
      */
     val unavailableReason: String? = null,
 ) {
@@ -34,19 +42,29 @@ data class DownloadOption(
  *
  * - Muxed and audio-only formats pass through unchanged as direct options — no processing, same
  *   behavior as before FFmpeg existed.
- * - Every video-only format becomes one *or more* paired options, one per distinct audio
- *   language available to combine it with (never just the "best" one — the caller/UI decides
- *   which language row to surface or let the user pick, but no language is silently dropped).
- * - A video-only format with no audio-only track anywhere in [formats] still gets exactly one
- *   row, marked [DownloadOption.unavailableReason] — shown, not hidden, but not selectable.
+ * - A video-only format is only ever a *candidate* for pairing when the source has at least one
+ *   separate audio-only format somewhere in [formats] — i.e. this specific resolution's audio was
+ *   split out, and a real track exists to reunite it with. When [formats] has no audio-only
+ *   format at all, the source's video genuinely has no separate audio to merge (common for
+ *   silent clips — many Reddit-hosted videos, for one) and every video-only format is itself
+ *   already the complete file: it passes through as a direct, immediately-downloadable option
+ *   exactly like a muxed one, never routed through the pairing/merge path below.
+ * - Every video-only format that *does* have candidate audio-only formats becomes one *or more*
+ *   paired, selectable options, one per distinct audio language available to combine it with
+ *   (never just the "best" one — the caller/UI decides which language row to surface or let the
+ *   user pick, but no language is silently dropped). See [DownloadOption.unavailableReason]'s
+ *   KDoc for why this pairing step effectively always succeeds once any audio-only format exists.
  *
  * No resolution tier is hardcoded (4K/1440p/1080p/720p/...) — whatever heights the extractor
  * reports become whatever paired rows exist, so a source offering *more* than that list still
  * works without a code change.
  */
 fun buildDownloadOptions(formats: List<MediaFormat>): List<DownloadOption> {
+    val audioOnlyFormats = formats.filter { it.hasAudio && !it.hasVideo }
+    val isVideoOnlyWithNoAudioAnywhere = { format: MediaFormat -> format.hasVideo && !format.hasAudio && audioOnlyFormats.isEmpty() }
+
     val directOptions = formats
-        .filterNot { it.hasVideo && !it.hasAudio }
+        .filterNot { it.hasVideo && !it.hasAudio && !isVideoOnlyWithNoAudioAnywhere(it) }
         .map { format ->
             DownloadOption(
                 id = format.formatId,
@@ -58,8 +76,7 @@ fun buildDownloadOptions(formats: List<MediaFormat>): List<DownloadOption> {
             )
         }
 
-    val videoOnlyFormats = formats.filter { it.hasVideo && !it.hasAudio }
-    val audioOnlyFormats = formats.filter { it.hasAudio && !it.hasVideo }
+    val videoOnlyFormats = formats.filter { it.hasVideo && !it.hasAudio && !isVideoOnlyWithNoAudioAnywhere(it) }
 
     val pairedOptions = videoOnlyFormats.flatMap { video ->
         val compatibleAudio = compatibleAudioTracksFor(video, audioOnlyFormats)

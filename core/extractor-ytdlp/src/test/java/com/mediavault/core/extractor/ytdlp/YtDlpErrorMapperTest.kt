@@ -56,6 +56,17 @@ class YtDlpErrorMapperTest {
     }
 
     @Test
+    fun `image-only post message maps to Unsupported with a clear, non-raw reason`() {
+        // The exact message yt-dlp's Instagram extractor raises for a single-image post —
+        // confirmed live against a real public Instagram photo post during QA.
+        val error = PyException("ERROR: [Instagram] Db9IVmrDvQ4: There is no video in this post")
+            .toAppError()
+
+        assertTrue(error is AppError.Unsupported)
+        assertEquals("This post doesn't contain a video MediaVault can download.", error.message)
+    }
+
+    @Test
     fun `unrecognized message falls back to a cleaned Unknown error`() {
         val error = PyException("yt_dlp.utils.ExtractorError: Something entirely new broke").toAppError()
 

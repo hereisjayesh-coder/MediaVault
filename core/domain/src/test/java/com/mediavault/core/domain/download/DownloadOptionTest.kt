@@ -144,16 +144,36 @@ class DownloadOptionTest {
     }
 
     @Test
-    fun `a video-only format with zero audio tracks anywhere is shown but marked unavailable`() {
+    fun `a video-only format with zero audio tracks anywhere is a direct, selectable option`() {
+        // Nothing to merge — this is a silent source (common for Reddit-hosted clips), so the
+        // video-only file is already complete, not a resolution missing its audio.
         val video = videoOnly("v1", 1080)
 
         val options = buildDownloadOptions(listOf(video))
 
         val option = options.single()
-        assertEquals(false, option.isSelectable)
-        assertTrue(option.unavailableReason!!.isNotBlank())
-        // Still shown with its real resolution/size — never hidden outright.
+        assertEquals(false, option.requiresProcessing)
+        assertTrue(option.isSelectable)
+        assertNull(option.unavailableReason)
         assertEquals(video, option.videoFormat)
+        assertNull(option.audioFormat)
+    }
+
+    @Test
+    fun `a video-only format still pairs even with a completely mismatched container, via the any-audio fallback`() {
+        // compatibleAudioTracksFor falls back to every available audio track when no same-family
+        // match exists (see its own KDoc) — so as long as *any* audio-only format exists anywhere,
+        // pairing always succeeds (into an mkv remux target). unavailableReason therefore only
+        // ever fires for the zero-audio-anywhere case, which is handled as a direct option above,
+        // not through this pairing path at all.
+        val video = videoOnly("v1", 1080, container = "mkv")
+        val audio = audioOnly("a1", container = "m4a")
+
+        val option = buildDownloadOptions(listOf(video, audio)).single { it.videoFormat == video }
+
+        assertTrue(option.isSelectable)
+        assertEquals(true, option.requiresProcessing)
+        assertEquals("mkv", option.outputContainer)
     }
 
     @Test
