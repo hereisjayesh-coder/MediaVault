@@ -77,7 +77,7 @@ class DownloadsViewModelTest {
     }
 
     @Test
-    fun `opening a task with no matching library row does nothing, rather than crashing or opening the wrong item`() = runTest {
+    fun `opening a task with no matching library row surfaces an error instead of doing nothing`() = runTest {
         libraryRepository.setItems(listOf(libraryItem(id = "media-1", sourceDownloadTaskId = "some-other-task")))
         val viewModel = viewModel()
 
@@ -85,5 +85,21 @@ class DownloadsViewModelTest {
         dispatcher.scheduler.runCurrent()
 
         assertNull(viewModel.openMediaItemId.value)
+        assertEquals(
+            "Couldn't find this item in your Library. It may have been removed or renamed.",
+            viewModel.openInPlayerError.value,
+        )
+    }
+
+    @Test
+    fun `consuming the open-in-player error clears it back to null`() = runTest {
+        libraryRepository.setItems(emptyList())
+        val viewModel = viewModel()
+        viewModel.openInPlayer("task-1")
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.consumeOpenInPlayerError()
+
+        assertNull(viewModel.openInPlayerError.value)
     }
 }

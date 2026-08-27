@@ -771,7 +771,34 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-25, after the Player Controls & Gestures Polish stage (including its on-device verification pass)._
+_Last updated: 2026-08-27, after the Navigation/Download/Player Checkpoint Close-Out stage._
+
+* **Navigation/Download/Player checkpoint closed out.** A milestone review found the
+  Downloads Open / Home tab reset / Player back-transition fixes (§37, 2026-08-27) and the
+  Player gesture/controls/watch-history work (below) were already correctly implemented on
+  `master` — confirmed by re-reading the code, not just trusting the changelog. Two real
+  gaps were found and closed this stage:
+  - **Downloads "Open" silently failed instead of erroring** when a task's Library row
+    could no longer be resolved (`DownloadsViewModel.openInPlayer()` returned early with no
+    user feedback). Now surfaces an inline error card (matching `HomeScreen`'s existing
+    `MessageCard` error-styling convention) reading "Couldn't find this item in your
+    Library. It may have been removed or renamed." instead of doing nothing.
+  - **Subtitle-track verification was undocumented and contradicted between docs**:
+    `CHANGELOG.md` claimed subtitle switching was verified against a 2-track fixture, but
+    this file's own corresponding entry (below) only documented audio-track verification.
+    **Re-verified live on a physical device (Pixel 7a)** this stage: imported the existing
+    `multitrack_test.mp4` fixture (previously placed in the app's private storage by an
+    earlier stage but not indexed in Library — imported via the standard "Import a file"
+    flow from a SAF-visible copy, since Android's Storage Access Framework cannot browse an
+    app's own `Android/data` folder even for that same app's picker) and confirmed both
+    audio tracks ("en"/"es") and both subtitle tracks ("en"/"es") switch correctly — English
+    showed "ENGLISH SUBTITLE TRACK - line three", Spanish showed "PISTA DE SUBTITULOS EN
+    ESPANOL - linea tres" at the same timestamp, confirming the track actually changes
+    rather than the label alone. Both docs now agree.
+  - No other item in the checkpoint (Home reset, Player transition, gesture contract,
+    watch-history tab, PiP) needed any code change — each was independently re-confirmed
+    present in the code before being left alone, per this project's "don't redo completed
+    work" rule.
 
 * **Completed downloads are now managed MediaVault Library items, playable inside the
   app.** New downloads land in app-private storage by default (no SAF folder picker in
@@ -1672,7 +1699,10 @@ _Prior state, before the real DownloadEngine stage:_
     bubble; portrait and landscape-fullscreen playback with real, correctly-rendered
     video; the audio-track menu against a legitimate local multi-track test fixture (2
     real audio tracks, "en"/"es", selection reflected live) rather than claiming
-    untested coverage; rapid tab-switching with no stale state, clipped cards, or
+    untested coverage — **subtitle-track switching against the same fixture's 2 real
+    subtitle tracks was verified in a later stage (2026-08-27, see §34's most recent
+    entry), not this one; this entry's silence on subtitles reflected a genuine gap at
+    the time, since closed**; rapid tab-switching with no stale state, clipped cards, or
     visual artifacts. 169 unit tests pass, debug APK builds and installs clean.
     **Not exercised this session**: exact ±10s/±30s seek magnitudes live (adb-driven
     tap timing isn't precise enough to isolate a seek from concurrent normal playback

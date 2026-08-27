@@ -5,6 +5,26 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Downloads Open Silent Failure, Subtitle-Track Verification Correction
+
+- **Downloads → Open silently did nothing** in the one case where a completed task's
+  Library row could no longer be resolved (e.g. deleted/renamed after the download
+  finished) — `DownloadsViewModel.openInPlayer()` returned early with no feedback at all.
+  Now shows an inline error card ("Couldn't find this item in your Library. It may have
+  been removed or renamed."), reusing the same error-card visual convention `HomeScreen`
+  already uses elsewhere in the app.
+- **Correction**: an earlier changelog entry (Player, Navigation & Downloads UX
+  Stabilization, below) claimed subtitle-track switching was verified alongside
+  audio-track switching, but `PROJECT_MASTER.md`'s corresponding entry only documented the
+  audio-track verification — the two project docs disagreed. Re-verified live on a Pixel
+  7a this stage against the same `multitrack_test.mp4` fixture: both "en" and "es"
+  subtitle tracks render distinct, correct text when switched. The original claim was
+  accurate; it just hadn't been independently confirmed until now. Both docs agree as of
+  this entry.
+- No changes to Home navigation, the Player back-transition, Player gestures/controls, the
+  Player tab's watch-history sections, or Picture-in-Picture — all were re-confirmed
+  already correct in the current code before being left untouched.
+
 ### Fixed — Source Details Back Transition Ghosting
 
 - Sources -> Source Details -> Back was showing both screens' text/icons/buttons alpha-blended

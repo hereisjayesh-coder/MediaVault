@@ -49,6 +49,7 @@ import com.mediavault.core.model.DownloadStatus
 fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlayer: (String) -> Unit = {}) {
     val uiState by viewModel.uiState.collectAsState()
     val openMediaItemId by viewModel.openMediaItemId.collectAsState()
+    val openInPlayerError by viewModel.openInPlayerError.collectAsState()
 
     // Only a COMPLETED task's removal needs confirmation — its Library media staying put isn't
     // obvious from the button alone, and this is the one removal a user could plausibly mistake
@@ -64,6 +65,8 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlaye
 
     DownloadsScreenContent(
         uiState = uiState,
+        openInPlayerError = openInPlayerError,
+        onDismissOpenInPlayerError = viewModel::consumeOpenInPlayerError,
         onPause = viewModel::pause,
         onResume = viewModel::resume,
         onCancel = viewModel::cancel,
@@ -95,9 +98,36 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlaye
     }
 }
 
+/** Mirrors HomeScreen's `MessageCard` error styling — this is the app's one existing convention for inline error feedback. */
+@Composable
+private fun OpenInPlayerErrorCard(message: String, onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = message,
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.downloads_dismiss)) }
+        }
+    }
+}
+
 @Composable
 private fun DownloadsScreenContent(
     uiState: DownloadsUiState,
+    openInPlayerError: String?,
+    onDismissOpenInPlayerError: () -> Unit,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
@@ -117,6 +147,9 @@ private fun DownloadsScreenContent(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item { MediaVaultTopBar(title = stringResource(R.string.downloads_title)) }
+            if (openInPlayerError != null) {
+                item { OpenInPlayerErrorCard(message = openInPlayerError, onDismiss = onDismissOpenInPlayerError) }
+            }
             item {
                 EmptyStateCard(
                     icon = Icons.Default.Download,
@@ -138,6 +171,10 @@ private fun DownloadsScreenContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { MediaVaultTopBar(title = stringResource(R.string.downloads_title)) }
+
+        if (openInPlayerError != null) {
+            item { OpenInPlayerErrorCard(message = openInPlayerError, onDismiss = onDismissOpenInPlayerError) }
+        }
 
         if (uiState.playlists.isNotEmpty()) {
             item { SectionLabel(text = stringResource(R.string.downloads_section_playlists)) }

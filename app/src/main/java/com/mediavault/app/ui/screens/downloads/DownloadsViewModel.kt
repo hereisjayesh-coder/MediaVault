@@ -42,6 +42,11 @@ class DownloadsViewModel @Inject constructor(
     private val _openMediaItemId = MutableStateFlow<String?>(null)
     val openMediaItemId: StateFlow<String?> = _openMediaItemId.asStateFlow()
 
+    // Same one-shot pattern as `_openMediaItemId`, for the failure case — a task whose
+    // Library row can no longer be resolved (e.g. deleted/renamed out from under it).
+    private val _openInPlayerError = MutableStateFlow<String?>(null)
+    val openInPlayerError: StateFlow<String?> = _openInPlayerError.asStateFlow()
+
     fun pause(taskId: String) = downloadEngine.pause(taskId)
     fun resume(taskId: String) = downloadEngine.resume(taskId)
     fun cancel(taskId: String) = downloadEngine.cancel(taskId)
@@ -65,13 +70,21 @@ class DownloadsViewModel @Inject constructor(
      */
     fun openInPlayer(taskId: String) {
         viewModelScope.launch {
-            val mediaItemId = libraryRepository.getBySourceDownloadTaskId(taskId)?.id ?: return@launch
+            val mediaItemId = libraryRepository.getBySourceDownloadTaskId(taskId)?.id
+            if (mediaItemId == null) {
+                _openInPlayerError.value = "Couldn't find this item in your Library. It may have been removed or renamed."
+                return@launch
+            }
             _openMediaItemId.value = mediaItemId
         }
     }
 
     fun consumeOpenInPlayer() {
         _openMediaItemId.update { null }
+    }
+
+    fun consumeOpenInPlayerError() {
+        _openInPlayerError.update { null }
     }
 }
 

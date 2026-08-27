@@ -82,6 +82,7 @@
     <string name="downloads_remove_body_generic">This removes it from your Downloads list.</string>
     <string name="downloads_remove_confirm">Remove</string>
     <string name="downloads_dialog_cancel">Cancel</string>
+    <string name="downloads_dismiss">Dismiss</string>
 
     <string name="download_notification_channel_name">Downloads</string>
     <string name="download_notification_title">MediaVault</string>
