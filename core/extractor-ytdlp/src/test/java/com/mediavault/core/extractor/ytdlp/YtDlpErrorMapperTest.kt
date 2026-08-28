@@ -67,6 +67,68 @@ class YtDlpErrorMapperTest {
     }
 
     @Test
+    fun `an image-only tweet's distinct wording maps to the same clear, non-raw reason`() {
+        // Twitter/X's own wording for this same scenario — confirmed live against a real,
+        // public, image-only tweet (yt-dlp's own maintained test fixture for the case).
+        val error = PyException("ERROR: [twitter] 657991469417025536: No video could be found in this tweet")
+            .toAppError()
+
+        assertTrue(error is AppError.Unsupported)
+        assertEquals("This post doesn't contain a video MediaVault can download.", error.message)
+    }
+
+    @Test
+    fun `a login-required message from any extractor maps to Unsupported, never leaking the raw --cookies CLI hint`() {
+        // The exact shape yt-dlp's shared raise_login_required() helper produces for a real
+        // public Vimeo video — confirmed live: Vimeo's default web API currently requires a
+        // login for every video, not just this one, per common.py's shared login-hint text.
+        val error = PyException(
+            "ERROR: [vimeo] 393756517: The web client only works when logged-in. Use --cookies, " +
+                "--cookies-from-browser, --username and --password, --netrc-cmd, or --netrc (vimeo) to " +
+                "provide account credentials. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ  for how to " +
+                "manually pass cookies",
+        ).toAppError()
+
+        assertTrue(error is AppError.Unsupported)
+        assertEquals(
+            "This content requires logging into the source — MediaVault only downloads public content.",
+            error.message,
+        )
+    }
+
+    @Test
+    fun `a protected-tweet login message also maps to the same clean login-required reason`() {
+        val error = PyException(
+            "ERROR: [twitter] 123: You are not authorized to view this protected tweet. Use --cookies...",
+        ).toAppError()
+
+        assertTrue(error is AppError.Unsupported)
+        assertEquals(
+            "This content requires logging into the source — MediaVault only downloads public content.",
+            error.message,
+        )
+    }
+
+    @Test
+    fun `yt-dlp's own ALL-CAPS ERROR log prefix is stripped, not just the lowercase Error class-name prefix`() {
+        // Regression guard: DownloadError's own __str__ formats as "ERROR: [extractor] id: msg"
+        // (all-caps) — case-sensitively distinct from "SomeClassError: msg", which the
+        // pre-existing "Error: " substring match alone does not catch, previously leaking the
+        // entire raw string (including any CLI-only hints) for any unrecognized error.
+        val error = PyException(
+            "ERROR: [TikTok] 7206382937372134662: Unexpected response from webpage request; please " +
+                "report this issue on  https://github.com/yt-dlp/yt-dlp/issues",
+        ).toAppError()
+
+        assertTrue(error is AppError.Unknown)
+        assertEquals(
+            "Unexpected response from webpage request; please report this issue on  " +
+                "https://github.com/yt-dlp/yt-dlp/issues",
+            error.message,
+        )
+    }
+
+    @Test
     fun `reddit gallery rejection message maps to Unsupported with a clear, non-raw reason`() {
         // The exact ValueError mediavault_ytdlp.py's own `_reddit_image_result` raises for a
         // multi-image Reddit gallery post — see its module-level docstring for why this is

@@ -312,6 +312,25 @@ class MediaVaultDownloadEngineTest {
         assertNull(task.preferredEngineIdOrNull())
     }
 
+    // --- Live throughput merge -----------------------------------------------------------
+
+    @Test
+    fun `speed and ETA are null when nothing live is known yet`() {
+        val progress = sampleTask(DownloadStatus.DOWNLOADING).toDownloadProgress(throughput = null)
+
+        assertNull(progress.throughputBytesPerSecond)
+        assertNull(progress.etaSeconds)
+    }
+
+    @Test
+    fun `a live throughput value is merged into the persisted task's progress`() {
+        val progress = sampleTask(DownloadStatus.DOWNLOADING)
+            .toDownloadProgress(DownloadThroughput(speedBytesPerSecond = 512_000L, etaSeconds = 12L))
+
+        assertEquals(512_000L, progress.throughputBytesPerSecond)
+        assertEquals(12L, progress.etaSeconds)
+    }
+
     @Test
     fun `a non-image task never hints an image-only backend`() {
         val task = sampleTask(DownloadStatus.ANALYZING).copy(

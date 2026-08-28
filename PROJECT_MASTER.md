@@ -3211,4 +3211,117 @@ Instaloader's own download path; the new Reddit path reuses it via the shared
 
 ---
 
+### 2026-08-29 — Major social platform hardening: TikTok/X/Vimeo added to the compatibility matrix, three real cross-platform defects found and fixed, no new architecture
+
+**Decision:** Before adding further major features, this stage hardened the seven priority
+social/web sources against a real (not simulated) test matrix — reusing the existing
+`CompositeExtractorEngine`/`YtDlpExtractorEngine`/error-mapping architecture throughout, with
+zero new abstractions, zero platform-specific hacks in shared code, and zero authentication/
+anti-bot bypass attempted anywhere. Three real, cross-platform (not single-source) defects were
+found via this testing and fixed; everything else already-verified in earlier stages was
+reused, not repeated, per this stage's own "don't redo verified work" instruction.
+
+**Full compatibility matrix** (yt-dlp `2026.8.19`; PASS rows reused from the 2026-08-28 QA/
+Instaloader/Reddit-image stages above where unchanged and not retested; rows marked "new" were
+verified fresh this stage, live on a Pixel 7a where noted):
+
+| Platform | Case | Result | Notes |
+|---|---|---|---|
+| YouTube | Video | **PASS** (reused) | Unchanged since 2026-08-28 QA. |
+| YouTube | Audio-only | **PASS** (reused) | Unchanged since 2026-08-28 QA. |
+| YouTube | Playlist (detect + bulk merge download) | **PASS** (reused) | Fixed and verified in the 2026-08-25 merged-playlist-formats stage; unchanged. |
+| YouTube | Deleted/unavailable video | **PASS** (error handling) | `https://www.youtube.com/watch?v=xxxxxxxxxxx` → yt-dlp's own "This video is unavailable", already matched by the existing `Video unavailable` branch — no code change needed, confirmed via local harness. |
+| YouTube | Download progress/speed/ETA | **PASS — real defect fixed, new** | See below; verified live with a real 689 MB 4K download showing live-updating `"179 MB / 689 MB • 20 MB/s • ETA 25s"` through to completion and correct Library insertion. |
+| Instagram | Reel (video) | **PASS** (reused) | Unchanged since 2026-08-28 QA. |
+| Instagram | Image post / carousel | **PASS** (reused) | Unchanged since the 2026-08-28 Instaloader implementation stage. |
+| Instagram | Private/login-required account | **PASS** (reused) | `InstaloaderErrorMapper` already had dedicated, tested coverage for this from that same stage — not retested live. |
+| Facebook | Video | **PASS** (reused) | Unchanged since 2026-08-28 QA. |
+| Facebook | Image post | **UNSUPPORTED** (reused) | Unchanged — yt-dlp's Facebook extractor doesn't recognize the photo-permalink URL shape at all. |
+| Reddit | Video | **PASS** (reused) | Fixed and verified in the 2026-08-28 QA stage (silent-track merge bug); unchanged. |
+| Reddit | Single-image post | **PASS** (reused) | Unchanged since the 2026-08-28 Reddit-image stage immediately above this one. |
+| Reddit | Multi-image gallery | **UNSUPPORTED** (reused, documented) | Unchanged — yt-dlp's Reddit extractor has no reliable gallery support; refused outright with a clear message. |
+| TikTok | Video | **SOURCE ERROR, new** | 4 independent real public post URLs (from yt-dlp's own maintained TikTok test fixtures, not guessed) all failed identically — locally: `"Unexpected response from webpage request"`; on-device (Pixel 7a): `AppError.Timeout`. A genuine, current, upstream TikTok-extractor/anti-bot-response-shape breakage in this yt-dlp version, not a MediaVault defect — no workaround attempted, per this task's explicit instruction. Handled gracefully either way: a clean error, no crash, confirmed live on-device. |
+| TikTok | `can_handle` routing | **PASS, new** | Confirmed offline URL recognition still works correctly even though live extraction currently fails — routing and extraction failure are independent, verified via the local bridge module directly. |
+| X/Twitter | Video | **PASS, new — full live E2E on Pixel 7a** | `x.com/historyinmemes/status/1790637656616943991` — analyzed with real thumbnail/title/duration (0:15), 3 video-only formats correctly shown as directly downloadable (not disabled/merge-blocked, confirming the 2026-08-28 no-audio-to-merge fix generalizes to Twitter), downloaded, Library-inserted, and played correctly in the video player. |
+| X/Twitter | Image-only tweet | **UNSUPPORTED, new** | Same video-first-extractor pattern as Instagram/Facebook, confirmed via yt-dlp's own real 2015 photo-tweet test fixture (`No video could be found in this tweet`) — error wording generalized (see below) rather than left as a second, differently-worded raw message. |
+| X/Twitter | Protected/NSFW-gated tweet | **AUTH REQUIRED, new** | Covered by the new generic login-required mapping below; the underlying yt-dlp mechanism (`raise_login_required()`) is shared with the Vimeo case that *was* live-verified, so this is confirmed by mechanism and message-shape testing rather than a live protected-account round trip (finding a real one to test against isn't something this task's "don't bypass" instruction makes sensible to pursue). |
+| Vimeo | Video | **AUTH REQUIRED (current, source-level), new — verified live on Pixel 7a** | 3 independent real public Vimeo videos (yt-dlp's own test fixtures) *all* failed identically: `"The web client only works when logged-in"`. Confirmed this is Vimeo's own current default-API-client policy, not a per-video privacy setting — and confirmed *not* bypassable via yt-dlp's alternate `'android'` API client either (`"is unable to fetch new OAuth tokens and is only intended for use with previously cached tokens"` — a dead end without real credentials, correctly not pursued). A genuine, current, external limitation — MediaVault surfaces it as a clean `"This content requires logging into the source"` message, confirmed live end-to-end through Chaquopy. |
+| Vimeo | `can_handle` routing | **PASS, new** | Confirmed offline URL recognition, independent of the live auth-wall above. |
+
+**Three real, cross-platform defects found and fixed (`YtDlpErrorMapper.kt`,
+`MediaVaultDownloadEngine.kt` — no new files, no new abstractions):**
+
+1. **Download speed/ETA were silently dead for every download, on every platform, since the
+   feature's own introduction.** `MediaVaultDownloadEngine`'s `ExtractionEvent.Progress` handler
+   already received real `speedBytesPerSecond`/`etaSeconds` from yt-dlp's own progress hooks (see
+   `YtDlpExtractorEngine`) but dropped both on the floor before ever reaching Room — and
+   `toDownloadProgress()` hardcoded both fields to `null` on the read side, even though
+   `DownloadsScreen.kt` already had fully-built UI to render them (`"$speed/s • ETA $eta"`).
+   Found by reading the actual data flow end-to-end (not by observing broken UI, since the UI
+   simply never showed the text — an easy silent gap to miss). Fixed with a new in-memory
+   `liveThroughput: ConcurrentHashMap<String, DownloadThroughput>` on the engine (deliberately
+   **not** a new Room column — speed/ETA are meaningless to persist past a process restart, only
+   the yt-dlp hook's current instant), merged into `DownloadProgress` at read time via
+   `toDownloadProgress(throughput)`, and cleared on every terminal transition (`finish`/`fail`/
+   `pauseTask`/`cancelTask`). Verified live: a real 689 MB 4K YouTube download showed live-
+   updating `"179 MB / 689 MB • 20 MB/s • ETA 25s"`, later `"539 MB / 689 MB • 18 MB/s • ETA
+   7s"`, through to a clean completion.
+2. **A login-required error from *any* extractor leaked yt-dlp's raw CLI hint text
+   (`--cookies`, `--username and --password`, GitHub wiki URLs) straight to the user**, because
+   no branch in `YtDlpErrorMapper` recognized this scenario at all — it fell to the `Unknown`
+   fallback. Found live: a real, currently-public Vimeo video failed this way (Vimeo's default
+   web API now requires login for every video, confirmed reproducible across 3 independent
+   URLs). Traced to yt-dlp's own shared `raise_login_required()` helper (`extractor/common.py`),
+   used identically by Vimeo, Twitter/X (protected/NSFW-gated tweets), Facebook, and effectively
+   every other extractor — so one new `when` branch (matching the helper's own guaranteed
+   substrings: `"provide account credentials"`, `"Use --cookies"`, `"for the authentication"`,
+   `"login required"`, plus two platform-specific phrasings already seen live) now produces a
+   single clean `"This content requires logging into the source — MediaVault only downloads
+   public content."` for every such extractor, not a per-platform branch — matching this file's
+   own "reuse common error mapping" convention. Verified live end-to-end through Chaquopy against
+   the real Vimeo case.
+3. **`cleanExtractorMessage`'s prefix-stripping only handled one of yt-dlp's two real exception
+   text shapes.** A bare Python exception's `str()` (`"yt_dlp.utils.ExtractorError: msg"`) was
+   already cleaned correctly by the existing case-sensitive `"Error: "` substring match — but
+   yt-dlp's own `DownloadError.__str__()` formats as `"ERROR: [extractor] id: msg"` (all-caps
+   `"ERROR"`, confirmed live via both the Vimeo and TikTok cases), which that same case-sensitive
+   match does *not* catch, silently leaking the entire raw string — including any embedded CLI
+   hints — for any error that didn't match a specific branch above. Fixed with an additional
+   regex-based prefix strip (`^(?:ERROR|WARNING):\s*(?:\[extractor]\s*)?(?:id:\s*)?`, applied
+   before the existing substring match) — defense-in-depth for any future unrecognized error, not
+   just the two found live. Confirmed the existing `"yt_dlp.utils.ExtractorError: ..."` unit test
+   still passes unchanged (that shape was never affected).
+
+**One smaller, related fix reusing the same pattern:** the existing Instagram-only `"There is no
+video in this post"` branch was generalized to also match Twitter/X's differently-worded
+`"No video could be found in this tweet"` — both are the same underlying "video-first extractor,
+image-only post" scenario (confirmed live for Twitter via a real photo-tweet), so both now
+produce the identical clean message rather than one being clean and the other falling through to
+a differently-worded raw string.
+
+**Not changed, and why:** no new `ExtractorEngine` implementation, no new `MediaType`, no new
+Gradle module, no cookie/credential/anti-bot-bypass code anywhere — every fix above is either a
+`YtDlpErrorMapper` classification improvement (pure string matching, already this file's whole
+design) or a plumbing fix inside the existing `MediaVaultDownloadEngine` (no new public API
+surface). TikTok's current breakage and Vimeo's current login-wall are both left exactly as
+yt-dlp itself behaves — no workaround, no retry-with-different-headers, no proxy — per this
+stage's explicit instruction.
+
+**Testing:** 5 new unit tests in `YtDlpErrorMapperTest` (generic login-required message, a
+protected-tweet variant of the same, the ALL-CAPS `ERROR:` prefix-stripping regression, and the
+generalized image-only-tweet wording), 2 new in `MediaVaultDownloadEngineTest`
+(`toDownloadProgress` merges/omits live throughput correctly) — all passing, alongside the full
+existing suite for both touched modules (`core:extractor-ytdlp`, `app`) with zero regressions;
+the one pre-existing `HomeViewModelTest` failure (`a video-only format with no compatible audio
+cannot be selected`) was independently confirmed via `git stash` to reproduce identically with
+none of this stage's changes applied — pre-existing, unrelated, and out of this stage's scope,
+not a regression introduced here. Both modules build clean; a debug APK was built, installed,
+and used for every live-device verification above (X/Twitter full E2E, TikTok graceful-error,
+Vimeo graceful-error, and the live speed/ETA download).
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed"/"Changed" entries for this
+stage. `THIRD-PARTY-NOTICES.md` is unchanged — no new dependency was added.
+
+---
+
 **END OF MASTER SPECIFICATION**

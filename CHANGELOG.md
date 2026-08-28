@@ -5,6 +5,48 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Major Social Platform Hardening (Download Speed/ETA, Login-Required Errors)
+
+- **Download speed and ETA now actually display, for every download on every source** — the
+  Downloads screen already had the UI for `"12 MB/s • ETA 45s"`, but the real values from
+  yt-dlp's own progress hooks were being dropped before ever reaching it, so the text never
+  appeared. Fixed with an in-memory (never persisted — meaningless past a process restart) live
+  value merged into progress at read time. Verified live with a real 689 MB 4K download showing
+  live-updating speed/ETA through to completion.
+- **A login-required error from any source (Vimeo, Twitter/X protected tweets, Facebook, and
+  more) no longer leaks yt-dlp's raw `--cookies`/CLI-hint text** — found live against a real,
+  currently-public Vimeo video (Vimeo's default API now requires login for every video). One
+  new, generic error-mapping branch now covers every extractor that hits this same shared yt-dlp
+  mechanism, producing a single clean "This content requires logging into the source" message
+  instead of a raw, developer-facing string.
+- Fixed a related gap where yt-dlp's own ALL-CAPS `"ERROR: [extractor] id: ..."` formatted
+  exceptions weren't being cleaned by the existing (case-sensitive) prefix-stripping logic,
+  silently leaking the full raw message — including CLI-only hints — for any otherwise-
+  unrecognized error. Now stripped for any future unrecognized case too, not just the ones found
+  live this stage.
+- Generalized the existing "image-only post" error message (previously Instagram-only wording)
+  to also recognize Twitter/X's differently-worded equivalent, so both produce the same clean
+  message instead of one falling through to a raw string.
+
+### Verified — Compatibility Hardening Across the 7 Priority Social/Web Sources
+
+- Ran a real (not simulated) compatibility pass against YouTube, Instagram, Facebook, Reddit,
+  TikTok, X/Twitter, and Vimeo — reusing all existing architecture, no new backend, no
+  authentication/anti-bot bypass anywhere. TikTok, X/Twitter, and Vimeo are new to the
+  compatibility matrix this stage; the other four were already verified in earlier stages and
+  were not redundantly retested.
+- **X/Twitter video: now confirmed working end-to-end**, verified live on a Pixel 7a — analyze,
+  real thumbnail/duration/format list, download, Library insertion, and correct video-player
+  playback, all against a real public tweet.
+- **TikTok video: currently broken upstream** in this pinned yt-dlp version (confirmed via 4
+  independent real posts) — handled gracefully (a clean error, no crash), not worked around.
+- **Vimeo video: currently requires login** on yt-dlp's default API client for this platform
+  (confirmed via 3 independent real videos, and confirmed not bypassable via yt-dlp's own
+  alternate API client without real credentials) — handled gracefully with the new clean
+  login-required message, verified live on-device.
+- See PROJECT_MASTER.md's 2026-08-29 decision log entry for the full compatibility matrix and
+  exact per-case results.
+
 ### Changed — Torrent/Magnet Downloading Deferred from v1
 
 - **Product scope decision, not a code change**: torrent/magnet-link downloading is deferred out

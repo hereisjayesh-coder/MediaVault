@@ -74,6 +74,10 @@ class MediaVaultDownloadEngine @Inject constructor(
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val queueMutex = Mutex()
 
+    /** taskId -> most recent speed/ETA from the extractor's own progress hooks — see
+     * [DownloadThroughput]'s own KDoc for why this is in-memory only, never persisted. */
+    private val liveThroughput = ConcurrentHashMap<String, DownloadThroughput>()
+
     /**
      * Resets anything left DOWNLOADING/PROCESSING/MERGING by a killed process back to PAUSED
      * (a split-stream task interrupted mid-merge just re-downloads both streams and re-merges
@@ -221,6 +225,7 @@ class MediaVaultDownloadEngine @Inject constructor(
 
     private suspend fun pauseTask(task: DownloadTaskEntity) {
         extractorEngine.cancel(task.id)
+        liveThroughput.remove(task.id)
         // Guards against a race where the transfer finishes (or fails) in the moment between
         // the user tapping Pause and this running — a terminal status must never be clobbered.
         // MERGING isn't pausable (a stream-copy remux of already-downloaded files is normally a
@@ -275,6 +280,7 @@ class MediaVaultDownloadEngine @Inject constructor(
         extractorEngine.cancel(task.id)
         mediaProcessor.cancel(task.id)
         activeJobs[task.id]?.cancel()
+        liveThroughput.remove(task.id)
         if (task.status == DownloadStatus.COMPLETED || task.status == DownloadStatus.CANCELLED) return
         task.localCachePath?.let { runCatching { File(it).delete() } }
         task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
@@ -331,10 +337,10 @@ class MediaVaultDownloadEngine @Inject constructor(
         dao.countBySourceMediaIdAndStatus(sourceMediaId, DownloadStatus.COMPLETED) > 0
 
     override fun observeProgress(taskId: String): Flow<DownloadProgress> =
-        dao.observeById(taskId).filterNotNull().map { it.toDownloadProgress() }
+        dao.observeById(taskId).filterNotNull().map { it.toDownloadProgress(liveThroughput[taskId]) }
 
     override fun observeAll(): Flow<List<DownloadProgress>> =
-        dao.observeAll().map { tasks -> tasks.map { it.toDownloadProgress() } }
+        dao.observeAll().map { tasks -> tasks.map { it.toDownloadProgress(liveThroughput[it.id]) } }
 
     // --- Queue processing -------------------------------------------------------------------
 
@@ -399,12 +405,15 @@ class MediaVaultDownloadEngine @Inject constructor(
 
         extractorEngine.download(request).collect { event ->
             when (event) {
-                is ExtractionEvent.Progress -> updateTask(task.id) {
-                    it.copy(
-                        status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
-                        bytesTransferred = event.bytesTransferred,
-                        totalBytes = event.totalBytes ?: it.totalBytes,
-                    )
+                is ExtractionEvent.Progress -> {
+                    liveThroughput[task.id] = DownloadThroughput(event.speedBytesPerSecond, event.etaSeconds)
+                    updateTask(task.id) {
+                        it.copy(
+                            status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
+                            bytesTransferred = event.bytesTransferred,
+                            totalBytes = event.totalBytes ?: it.totalBytes,
+                        )
+                    }
                 }
 
                 is ExtractionEvent.Completed -> finish(task.id, event.outputPath)
@@ -477,12 +486,15 @@ class MediaVaultDownloadEngine @Inject constructor(
 
         extractorEngine.download(request).collect { event ->
             when (event) {
-                is ExtractionEvent.Progress -> updateTask(taskId) {
-                    it.copy(
-                        status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
-                        bytesTransferred = baseBytesTransferred + event.bytesTransferred,
-                        totalBytes = it.totalBytes ?: event.totalBytes,
-                    )
+                is ExtractionEvent.Progress -> {
+                    liveThroughput[taskId] = DownloadThroughput(event.speedBytesPerSecond, event.etaSeconds)
+                    updateTask(taskId) {
+                        it.copy(
+                            status = if (event.stage == ExtractionStage.PROCESSING) DownloadStatus.PROCESSING else DownloadStatus.DOWNLOADING,
+                            bytesTransferred = baseBytesTransferred + event.bytesTransferred,
+                            totalBytes = it.totalBytes ?: event.totalBytes,
+                        )
+                    }
                 }
 
                 is ExtractionEvent.Completed -> outcome = StreamOutcome.Completed
@@ -554,6 +566,7 @@ class MediaVaultDownloadEngine @Inject constructor(
     }
 
     private suspend fun finish(taskId: String, cacheOutputPath: String) {
+        liveThroughput.remove(taskId)
         updateTask(taskId) { it.copy(status = DownloadStatus.PROCESSING) }
         val task = dao.getById(taskId) ?: return
 
@@ -617,6 +630,7 @@ class MediaVaultDownloadEngine @Inject constructor(
     }
 
     private suspend fun fail(taskId: String, error: AppError) {
+        liveThroughput.remove(taskId)
         updateTask(taskId) { it.copy(status = DownloadStatus.FAILED, errorMessage = error.message) }
     }
 
@@ -726,7 +740,12 @@ private fun DownloadTaskEntity.toQualityDescriptor(): QualityDescriptor? {
     )
 }
 
-private fun DownloadTaskEntity.toDownloadProgress(): DownloadProgress = DownloadProgress(
+/** Speed/ETA are yt-dlp hook values for the current instant — meaningless to persist past a
+ * process restart, so unlike every other [DownloadProgress] field they never touch Room; see
+ * [MediaVaultDownloadEngine.liveThroughput]. */
+internal data class DownloadThroughput(val speedBytesPerSecond: Long?, val etaSeconds: Long?)
+
+internal fun DownloadTaskEntity.toDownloadProgress(throughput: DownloadThroughput?): DownloadProgress = DownloadProgress(
     taskId = id,
     title = title,
     sourceName = sourceName,
@@ -734,8 +753,8 @@ private fun DownloadTaskEntity.toDownloadProgress(): DownloadProgress = Download
     status = status,
     bytesTransferred = bytesTransferred,
     totalBytes = totalBytes,
-    throughputBytesPerSecond = null,
-    etaSeconds = null,
+    throughputBytesPerSecond = throughput?.speedBytesPerSecond,
+    etaSeconds = throughput?.etaSeconds,
     canResume = canResume,
     errorMessage = errorMessage,
     destinationUri = destinationUri,

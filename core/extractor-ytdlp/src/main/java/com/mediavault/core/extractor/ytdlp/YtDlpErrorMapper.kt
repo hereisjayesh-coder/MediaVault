@@ -33,14 +33,33 @@ internal fun PyException.toAppError(): AppError {
             raw.contains("Sign in to confirm", ignoreCase = true) ->
             AppError.Unsupported("This content isn't available (removed, private, restricted, or region-locked).")
 
+        // yt-dlp's shared `raise_login_required()` helper (extractor/common.py) is what every
+        // extractor — Vimeo, Twitter/X protected or NSFW-gated tweets, Facebook login-walled
+        // posts, and more — calls for this exact scenario, always appending a `--cookies`/
+        // `--username and --password`/"for the authentication" CLI hint that means nothing to a
+        // MediaVault user (confirmed live: a real public Vimeo video currently fails this way).
+        // One shared match here covers every such extractor, matching this file's own "reuse
+        // common error mapping" convention, rather than a per-platform login-message branch.
+        raw.contains("provide account credentials", ignoreCase = true) ||
+            raw.contains("Use --cookies", ignoreCase = true) ||
+            raw.contains("for the authentication", ignoreCase = true) ||
+            raw.contains("only works when logged-in", ignoreCase = true) ||
+            raw.contains("protected tweet", ignoreCase = true) ||
+            raw.contains("requires authentication", ignoreCase = true) ||
+            raw.contains("login required", ignoreCase = true) ->
+            AppError.Unsupported("This content requires logging into the source — MediaVault only downloads public content.")
+
         raw.contains("No information could be extracted", ignoreCase = true) ->
             AppError.Unsupported("Nothing playable was found at this URL.")
 
-        // yt-dlp's own extractors raise this for image-only posts on video-first platforms
-        // (confirmed live for Instagram) — this is an upstream extraction limitation, not a
-        // MediaVault defect, so it's classified and worded clearly rather than left as a raw
-        // Python exception string.
-        raw.contains("There is no video in this post", ignoreCase = true) ->
+        // yt-dlp's own extractors raise a variant of this for an image-only post on a
+        // video-first platform — Instagram's own wording ("There is no video in this post",
+        // confirmed live) and Twitter/X's own distinct wording for an image-only tweet
+        // ("No video could be found in this tweet", confirmed live via a real 2015 photo
+        // tweet) are both upstream extraction limitations, not a MediaVault defect, so both
+        // get the same clear, non-raw wording rather than yt-dlp's own platform-specific text.
+        raw.contains("There is no video in this post", ignoreCase = true) ||
+            raw.contains("No video could be found in this tweet", ignoreCase = true) ->
             AppError.Unsupported("This post doesn't contain a video MediaVault can download.")
 
         // Raised deliberately by mediavault_ytdlp.py's own Reddit-image fast path, not by
@@ -69,11 +88,23 @@ internal fun PyException.toAppError(): AppError {
     }
 }
 
-/** Strips yt-dlp's noisy `ERROR: [extractor] id: ` / Python traceback prefixes down to the useful part. */
+/**
+ * Strips yt-dlp's noisy `ERROR: [extractor] id: ` / Python traceback prefixes down to the
+ * useful part. Two distinct prefix shapes exist and both must be handled: a bare Python
+ * exception's `str()` (e.g. `"yt_dlp.utils.ExtractorError: message"`, cleaned by the
+ * `"Error: "` substring match) and yt-dlp's own CLI-log-formatted `DownloadError.__str__()`
+ * (e.g. `"ERROR: [vimeo] 123: message"` — confirmed live; note the all-caps "ERROR", which
+ * the case-sensitive `"Error: "` match alone does *not* catch, previously leaking the full
+ * raw string — including embedded `--cookies`/`-U` CLI hints — for any error that didn't
+ * match a specific branch above).
+ */
 private fun cleanExtractorMessage(raw: String): String {
-    val withoutPythonPrefix = raw.substringAfterLast("Error: ").trim()
-    val message = withoutPythonPrefix.ifBlank { raw.trim() }
+    val withoutLogPrefix = raw.replaceFirst(YTDLP_LOG_PREFIX, "").trim()
+    val withoutPythonPrefix = withoutLogPrefix.substringAfterLast("Error: ").trim()
+    val message = withoutPythonPrefix.ifBlank { withoutLogPrefix.ifBlank { raw.trim() } }
     return message.take(MAX_MESSAGE_LENGTH).ifBlank { "Extraction failed for an unknown reason." }
 }
+
+private val YTDLP_LOG_PREFIX = Regex("""^(?:ERROR|WARNING):\s*(?:\[[^]]+]\s*)?(?:[\w.-]+:\s*)?""", RegexOption.IGNORE_CASE)
 
 private const val MAX_MESSAGE_LENGTH = 300
