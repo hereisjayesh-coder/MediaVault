@@ -5,6 +5,17 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — v1 Core-Flow Hardening Audit
+
+- **A merge-required download (video-only + audio-only remuxed into one file) no longer shows a
+  stale, frozen download speed/ETA during the merge step** — that data is meaningless once the
+  transfer itself has finished, and previously kept displaying its last value throughout the
+  entire merge instead of disappearing. Found via a full audit of the core v1 workflows (video/
+  audio/image/collection downloads, download management, storage/privacy, player, settings);
+  everything else reviewed (Room migrations, player lifecycle, Library delete-safety, dependency
+  list) was confirmed sound with no other defects found. See PROJECT_MASTER.md's 2026-08-29
+  hardening-audit decision log entry for the full review.
+
 ### Fixed — Major Social Platform Hardening (Download Speed/ETA, Login-Required Errors)
 
 - **Download speed and ETA now actually display, for every download on every source** — the

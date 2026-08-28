@@ -517,6 +517,11 @@ class MediaVaultDownloadEngine @Inject constructor(
     /** Remuxes the two downloaded streams, then hands the merged file to the same [finish] every direct download already uses to reach the Library. */
     private suspend fun mergeAndFinish(taskId: String, videoCachePath: String, audioCachePath: String) {
         val task = dao.getById(taskId) ?: return
+        // The download phase's speed/ETA mean nothing once transfer has actually finished and
+        // remuxing has started — without this, the Downloads row would keep showing a stale,
+        // frozen "X MB/s • ETA Ys" (from the last download progress tick) for the whole merge,
+        // which reads as live data even though nothing is still transferring.
+        liveThroughput.remove(taskId)
         updateTask(taskId) { it.copy(status = DownloadStatus.MERGING) }
 
         val outputContainer = task.container ?: "mkv"

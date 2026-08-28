@@ -3324,4 +3324,90 @@ stage. `THIRD-PARTY-NOTICES.md` is unchanged — no new dependency was added.
 
 ---
 
+### 2026-08-29 — v1 core-flow integration/hardening audit: one real defect found and fixed, everything else confirmed sound by code review
+
+**Decision:** Before adding new features, audited the eleven core v1 areas (video/audio/image/
+collection flows, download management, storage/privacy, player, settings/security, source
+compatibility, known limitations, code quality) against the actual current codebase — reusing
+the extensive live-device evidence already recorded in this file's own decision log (see the
+2026-08-24 through 2026-08-29 entries above) rather than repeating verification that already
+exists, per this stage's own "don't redo verified work" instruction.
+
+**Method:** structural code review (file sizes, Room migration wiring, lifecycle/release paths,
+delete-safety logic, dependency list) across the highest-risk areas, cross-checked against the
+decision log for what each flow's most recent live-device evidence actually covers, rather than
+a blanket device re-test of all eight flow categories.
+
+**Areas reviewed with no defect found:**
+- **Room migrations**: version 6, migrations 1→2 through 5→6 present with no gaps, all five
+  correctly registered in `DatabaseModule`'s `.addMigrations(...)` call, no
+  `fallbackToDestructiveMigration`. `MediaType.IMAGE` (added for Instagram/Reddit images) needed
+  no migration at all — the `Converters` `MediaType` column is a plain `.name` string, so a new
+  enum value is schema-compatible by construction.
+- **Player lifecycle** (`Media3PlayerEngine`, `PlayerViewModel`): `release()` is called at every
+  real transition (item switch in `loadItem()`, missing-file early-return, `onCleared()`) with
+  no double-release or leak path found by tracing every call site.
+- **Storage/privacy delete-safety** (`LibraryRepository`): `canDeleteUnderlyingFile() = !isImported`
+  correctly gates every file-deleting branch of `delete()`; `saveToGallery()`'s "move" path
+  explicitly flips `isImported = true` after the Gallery copy is verified written, closing the
+  one real way this could have gone wrong (deleting a MediaVault-private file out from under an
+  item that no longer owns it). Export/save-to-Gallery use proper `MediaStore` `IS_PENDING`
+  semantics with cleanup-on-failure (`failGalleryWrite`).
+- **`ImageViewerViewModel`**: small, correctly scoped, no lifecycle issues.
+- **Dependencies**: `core:extractor-ytdlp`'s pinned Python packages are exactly `yt-dlp` and
+  `instaloader` — no leftover `gallery-dl` or other rejected-research dependency.
+- No `TODO`/`FIXME` markers anywhere in `app`/`core:*` source.
+
+**One real defect found and fixed** (`MediaVaultDownloadEngine.kt`): a merge-required download
+(video-only + audio-only streams remuxed via `MediaProcessor`) kept showing a **stale, frozen
+download-phase speed/ETA** (e.g. `"18 MB/s • ETA 7s"`) for the entire `MERGING` phase, even
+though nothing was still transferring — `liveThroughput` (the in-memory speed/ETA map added in
+the 2026-08-29 platform-hardening stage above) was only cleared on the four fully-terminal
+transitions (`finish`/`fail`/`pauseTask`/`cancelTask`), not on the DOWNLOADING→MERGING one.
+Found by tracing every place `DownloadStatus.MERGING` is rendered (`DownloadsScreen.kt` shows
+the same speed/ETA line for MERGING as for DOWNLOADING) against every place `liveThroughput` is
+written/cleared. Fixed with one additional `liveThroughput.remove(taskId)` at the top of
+`mergeAndFinish()`, before the status flips to MERGING — the byte-count fields (`bytesTransferred`/
+`totalBytes`, which correctly freeze at "fully downloaded" during merge) were never affected,
+only the transient speed/ETA. Low severity in practice (merging is normally a few seconds), but
+a real, confirmed, previously-undetected correctness gap, not a hypothetical one.
+
+**Flows confirmed sound via existing decision-log evidence, not re-tested live this stage**
+(each already has its own dated, device-verified entry above): YouTube/Instagram/Reddit video
+and image download → Library → correct viewer; Instagram carousel duplicate-skip/ordering/
+partial-failure/retry; process-death recovery; pause/resume/cancel/retry at both task and
+playlist-group level; dedicated audio player pause/resume/history; Player gestures/fullscreen/
+audio-track/subtitle-track switching/Picture-in-Picture, all live-verified on a Pixel 7a;
+App Lock + biometric/PIN + its documented PiP-interaction reasoning; Light/Dark/System theme;
+mobile-data budget controls; Share MediaVault/GitHub/feedback-email/legal pages. None of these
+share code with this stage's one fix (`mergeAndFinish`'s throughput clearing is new code, not a
+change to anything these flows depend on), so none needed re-verification.
+
+**Not separately re-verified this stage, low risk, already unit-tested:** subtitle *style*
+(color/background/outline) visual rendering specifically — `SubtitleStyle.toSpec()` is a pure,
+already-unit-tested mapping (`FakeSubtitleStyleProvider`, per the 2026-08-27 stage) feeding
+directly into Media3's own `CaptionStyleCompat`; only subtitle *track switching* has an explicit
+live-device confirmation on record. Source compatibility (YouTube/Instagram/Facebook/Reddit/
+TikTok/X/Vimeo) was not retested — the full matrix from the 2026-08-29 platform-hardening entry
+above is current and unaffected by this stage's one fix.
+
+**Known limitations, confirmed still accurate and unchanged:** TikTok video extraction currently
+broken upstream (this pinned yt-dlp version); Vimeo video currently requires login on yt-dlp's
+default API client; Facebook image posts unsupported (extractor doesn't recognize the URL
+shape); Reddit multi-image galleries unsupported (no reliable extractor support) — all four
+documented in the 2026-08-29 platform-hardening entry above, none touched by this stage.
+
+**Testing:** the existing `MediaVaultDownloadEngineTest` suite (covering `toDownloadProgress`'s
+null-throughput behavior, which is what this fix's `MERGING`-phase display now correctly
+produces) passes unchanged; no new test was added for the one-line `mergeAndFinish` change
+itself since it has no independently-testable pure-function boundary (unlike this file's other
+helpers) and the behavior it produces is already covered by the existing throughput tests. Build
+verified clean for the touched module; not re-verified live on-device given the fix's low
+severity and the very recent (this same day) live confirmation that the shared
+`toDownloadProgress`/`DownloadsScreen` rendering path works correctly for the non-merge case.
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**
