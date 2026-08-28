@@ -394,7 +394,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             sourceUrl = task.sourceUrl,
             formatId = task.formatId.orEmpty(),
             destinationPath = cachePath,
-            preferredEngineId = task.mediaType.preferredEngineIdOrNull(),
+            preferredEngineId = task.preferredEngineIdOrNull(),
         )
 
         extractorEngine.download(request).collect { event ->
@@ -697,11 +697,15 @@ internal fun DownloadTaskEntity.isRemovable(): Boolean =
 /**
  * Routing hint for [com.mediavault.app.extractor.CompositeExtractorEngine] — see
  * [ExtractionRequest.preferredEngineId]'s own KDoc for why this exists at all. Only meaningful
- * where more than one backend's `canHandle` can agree on the same URL (an Instagram post: a
- * video-first backend and an image backend); every other [MediaType] has exactly one backend
- * that would ever claim it, so no hint is needed and this correctly returns null.
+ * for an Instagram image/carousel, where yt-dlp and Instaloader can both legitimately claim the
+ * same URL. A Reddit image post is IMAGE too, but only yt-dlp's `canHandle` ever agrees to it —
+ * [com.mediavault.app.extractor.CompositeExtractorEngine] already resolves that case correctly
+ * on its own (from analyze-time memory, or its own `canHandle` fallback after a cold process
+ * restart), so hinting "instaloader" for every IMAGE task regardless of source would incorrectly
+ * force a Reddit image download through a backend that was never involved in resolving it.
  */
-internal fun MediaType.preferredEngineIdOrNull(): String? = if (this == MediaType.IMAGE) "instaloader" else null
+internal fun DownloadTaskEntity.preferredEngineIdOrNull(): String? =
+    if (mediaType == MediaType.IMAGE && sourceUrl.contains("instagram.com", ignoreCase = true)) "instaloader" else null
 
 /** Pure: which playlists have format resolution stuck (an ANALYZING task with no live coroutine behind it — e.g. after process death). */
 internal fun List<DownloadTaskEntity>.playlistIdsNeedingResolution(): List<String> =

@@ -5,6 +5,50 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Changed — Torrent/Magnet Downloading Deferred from v1
+
+- **Product scope decision, not a code change**: torrent/magnet-link downloading is deferred out
+  of active v1 development so v1 can focus on social/web media downloading. No `TorrentEngine`
+  code existed in the repository to remove — only PROJECT_MASTER.md's spec sections describing
+  it, which are now annotated DEFERRED/FUTURE in place rather than deleted, for a future stage.
+  No other abstraction (`ExtractorEngine`, `DownloadEngine`, `MediaProcessor`) changed — all were
+  already backend-agnostic with nothing torrent-specific to undo.
+
+### Added — Reddit Single-Image Support
+
+- **MediaVault can now analyze and download single-image Reddit posts** (e.g.
+  `reddit.com/r/.../comments/.../`, resolving to a direct `i.redd.it/...` image) — the same
+  analyze → preview → download → Library → Image Viewer flow Instagram images already use, with
+  no new backend or `MediaType`. Reddit video is completely unchanged.
+- Extends the existing `YtDlpExtractorEngine`/`mediavault_ytdlp.py` path directly, per this
+  stage's explicit brief: a cheap yt-dlp "light probe" (`process=False`) run only for
+  `reddit.com`/`redd.it` URLs detects a single direct image before ever reaching the slower full
+  pipeline. A resolved single image maps to the same `ExtractionResult.Collection`/
+  `MediaCollectionResult` shape a single-image Instagram post already produces, so the UI needed
+  no new code at all.
+- **Multi-image Reddit galleries are explicitly unsupported and refused with a clear message**,
+  not attempted or silently truncated to one image — confirmed by direct testing that yt-dlp's
+  Reddit extractor has no reliable gallery support (a gallery post can hang the normal pipeline
+  for 60+ seconds before failing).
+- DRY fix in passing: extracted the "stream a resolved URL to a file" logic that
+  `mediavault_instaloader.py`'s image download already had into a new shared
+  `mediavault_direct_download.py` helper, now used by both the Instagram and Reddit image
+  download paths instead of two copies of the same code.
+- **Real routing bug caught during this stage's own review**: `MediaVaultDownloadEngine`'s
+  download-engine routing hint unconditionally pointed every `MediaType.IMAGE` task at
+  Instaloader — correct when only Instagram had images, but wrong now that Reddit images share
+  the same `MediaType`, since Instaloader doesn't recognize `reddit.com` URLs at all. Fixed to
+  only hint Instaloader for an actual `instagram.com` source URL.
+- No new third-party dependency — reuses the `requests` package already bundled for Instaloader's
+  download path.
+- **Verified live on a physical device (Pixel 7a)** against a real public Reddit image post:
+  correct thumbnail/title/source in the analysis preview, a single Download button (no gallery
+  picker), completed download shown in Downloads and Library with the real thumbnail, "Open"
+  correctly launching the Image Viewer (never the video Player) with the real downloaded photo,
+  no crash. Gallery rejection and native-video/external-embed fallthrough (i.e., no regression
+  in Reddit video handling from the shared bridge-module edits) were verified directly against
+  the real, unmodified extraction code via a local Python harness.
+
 ### Added — Instagram Image and Carousel Support
 
 - **MediaVault can now analyze and download Instagram image posts and carousels** — a single

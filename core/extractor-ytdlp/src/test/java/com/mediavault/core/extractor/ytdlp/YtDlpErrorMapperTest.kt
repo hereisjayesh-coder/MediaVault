@@ -67,6 +67,23 @@ class YtDlpErrorMapperTest {
     }
 
     @Test
+    fun `reddit gallery rejection message maps to Unsupported with a clear, non-raw reason`() {
+        // The exact ValueError mediavault_ytdlp.py's own `_reddit_image_result` raises for a
+        // multi-image Reddit gallery post — see its module-level docstring for why this is
+        // rejected outright rather than attempted.
+        val error = PyException(
+            "ValueError: This is a multi-image Reddit gallery post — MediaVault can only " +
+                "download single-image Reddit posts today.",
+        ).toAppError()
+
+        assertTrue(error is AppError.Unsupported)
+        assertEquals(
+            "This is a multi-image Reddit gallery post — MediaVault can only download single-image Reddit posts today.",
+            error.message,
+        )
+    }
+
+    @Test
     fun `unrecognized message falls back to a cleaned Unknown error`() {
         val error = PyException("yt_dlp.utils.ExtractorError: Something entirely new broke").toAppError()
 

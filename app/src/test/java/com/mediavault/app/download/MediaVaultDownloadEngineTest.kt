@@ -285,4 +285,40 @@ class MediaVaultDownloadEngineTest {
         assertTrue(!sampleTask(DownloadStatus.QUEUED).isRemovable())
         assertTrue(!sampleTask(DownloadStatus.PAUSED).isRemovable())
     }
+
+    // --- Engine routing hint -------------------------------------------------------------
+
+    @Test
+    fun `an Instagram image task hints instaloader, since yt-dlp would also claim the URL`() {
+        val task = sampleTask(DownloadStatus.ANALYZING).copy(
+            sourceUrl = "https://instagram.com/p/shortcode/",
+            mediaType = MediaType.IMAGE,
+        )
+
+        assertEquals("instaloader", task.preferredEngineIdOrNull())
+    }
+
+    @Test
+    fun `a Reddit image task hints nothing — only yt-dlp's canHandle ever claims that URL`() {
+        // Regression guard: this used to unconditionally hint "instaloader" for every
+        // MediaType.IMAGE task, which would have wrongly forced a Reddit image download
+        // through Instaloader (which doesn't even recognize reddit.com URLs) instead of the
+        // yt-dlp backend that actually resolved it.
+        val task = sampleTask(DownloadStatus.ANALYZING).copy(
+            sourceUrl = "https://www.reddit.com/r/pics/comments/1w0mfi4/sunrise_on_lake_ontario/",
+            mediaType = MediaType.IMAGE,
+        )
+
+        assertNull(task.preferredEngineIdOrNull())
+    }
+
+    @Test
+    fun `a non-image task never hints an image-only backend`() {
+        val task = sampleTask(DownloadStatus.ANALYZING).copy(
+            sourceUrl = "https://instagram.com/reel/shortcode/",
+            mediaType = MediaType.VIDEO,
+        )
+
+        assertNull(task.preferredEngineIdOrNull())
+    }
 }

@@ -2,6 +2,7 @@ package com.mediavault.core.extractor.ytdlp.json
 
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import org.junit.Assert.assertEquals
@@ -190,6 +191,46 @@ class YtDlpResultMapperTest {
         assertEquals(PlaylistCollectionType.CHANNEL, playlist.collectionType)
     }
 
+    // --- Reddit single-image detection ------------------------------------------------
+
+    @Test
+    fun `a result with imageUrl is detected as a collection, not a single video or playlist`() {
+        val extraction = decode(REDDIT_IMAGE_JSON)
+
+        assertTrue(extraction is ExtractionResult.Collection)
+    }
+
+    @Test
+    fun `an imageUrl result maps to a one-item collection with the resolved direct image url`() {
+        val collection = decodeCollection(REDDIT_IMAGE_JSON)
+
+        assertEquals("1w0mfi4", collection.id)
+        assertEquals("Reddit", collection.sourceName)
+        assertEquals("Sunrise on Lake Ontario", collection.title)
+        assertEquals("https://www.reddit.com/r/pics/comments/1w0mfi4/sunrise_on_lake_ontario/", collection.webpageUrl)
+        assertEquals(1, collection.items.size)
+
+        val item = collection.items.single()
+        assertEquals("1w0mfi4_1", item.id)
+        assertEquals(1, item.index)
+        assertEquals("https://i.redd.it/u6q1zo1jb3mh1.jpeg", item.imageUrl)
+    }
+
+    @Test
+    fun `an imageUrl result with no thumbnails falls back to the direct image url as its thumbnail`() {
+        val collection = decodeCollection(REDDIT_IMAGE_NO_THUMBNAIL_JSON)
+
+        assertEquals("https://i.redd.it/no-thumb.jpeg", collection.thumbnailUrl)
+        assertEquals("https://i.redd.it/no-thumb.jpeg", collection.items.single().thumbnailUrl)
+    }
+
+    @Test
+    fun `an imageUrl result prefers the highest-preference thumbnail over the direct image url`() {
+        val collection = decodeCollection(REDDIT_IMAGE_JSON)
+
+        assertEquals("https://preview.redd.it/best.jpeg", collection.thumbnailUrl)
+    }
+
     private fun decode(json: String): ExtractionResult =
         ytDlpJson.decodeFromString(YtDlpInfoJson.serializer(), json).toExtractionResult()
 
@@ -198,6 +239,9 @@ class YtDlpResultMapperTest {
 
     private fun decodePlaylist(json: String): PlaylistAnalysisResult =
         (decode(json) as ExtractionResult.Playlist).playlist
+
+    private fun decodeCollection(json: String): MediaCollectionResult =
+        (decode(json) as ExtractionResult.Collection).collection
 
     private companion object {
         val SINGLE_VIDEO_JSON = """
@@ -349,6 +393,34 @@ class YtDlpResultMapperTest {
               "entries": [
                 { "id": "vid1", "title": "Upload 1" }
               ]
+            }
+        """.trimIndent()
+
+        // Shape mediavault_ytdlp.py's `_reddit_image_result` actually produces for a
+        // single-image Reddit post (see mediavault_ytdlp.py's own docstring/verification).
+        val REDDIT_IMAGE_JSON = """
+            {
+              "id": "1w0mfi4",
+              "title": "Sunrise on Lake Ontario",
+              "webpage_url": "https://www.reddit.com/r/pics/comments/1w0mfi4/sunrise_on_lake_ontario/",
+              "extractor": "Reddit",
+              "extractor_key": "Reddit",
+              "thumbnails": [
+                { "url": "https://preview.redd.it/worst.jpeg", "preference": -10 },
+                { "url": "https://preview.redd.it/best.jpeg", "preference": 5 }
+              ],
+              "imageUrl": "https://i.redd.it/u6q1zo1jb3mh1.jpeg"
+            }
+        """.trimIndent()
+
+        val REDDIT_IMAGE_NO_THUMBNAIL_JSON = """
+            {
+              "id": "abcd123",
+              "title": "No thumbnail post",
+              "webpage_url": "https://www.reddit.com/r/pics/comments/abcd123/no_thumbnail_post/",
+              "extractor": "Reddit",
+              "extractor_key": "Reddit",
+              "imageUrl": "https://i.redd.it/no-thumb.jpeg"
             }
         """.trimIndent()
     }

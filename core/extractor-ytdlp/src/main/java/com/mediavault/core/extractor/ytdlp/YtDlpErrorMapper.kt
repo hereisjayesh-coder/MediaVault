@@ -43,6 +43,14 @@ internal fun PyException.toAppError(): AppError {
         raw.contains("There is no video in this post", ignoreCase = true) ->
             AppError.Unsupported("This post doesn't contain a video MediaVault can download.")
 
+        // Raised deliberately by mediavault_ytdlp.py's own Reddit-image fast path, not by
+        // yt-dlp itself — yt-dlp's Reddit extractor has no reliable multi-image/gallery
+        // support (confirmed: attempting one through its normal pipeline can hang for over a
+        // minute against an endpoint it doesn't actually resolve), so this is refused
+        // immediately and clearly instead of hanging or silently downloading only one image.
+        raw.contains("multi-image Reddit gallery", ignoreCase = true) ->
+            AppError.Unsupported("This is a multi-image Reddit gallery post — MediaVault can only download single-image Reddit posts today.")
+
         raw.contains("No space left on device", ignoreCase = true) ->
             AppError.Storage("Not enough storage space to finish this download.")
 

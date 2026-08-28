@@ -26,6 +26,14 @@ data class YtDlpInfoJson(
     /** Present (possibly containing `null`s for unavailable items) when [type] is a collection. */
     val entries: List<YtDlpEntryJson?>? = null,
     @SerialName("playlist_count") val playlistCount: Int? = null,
+    /**
+     * Only set for a source yt-dlp's own pipeline can't turn into a video/audio download but
+     * *can* still resolve to one direct, downloadable image — a single-image Reddit post today
+     * (see `mediavault_ytdlp.py`'s `analyze()`). Every other field above stays whatever the
+     * resolving code populated (id/title/thumbnail/webpage_url/extractor), so this is additive
+     * to the existing shape rather than a distinct one.
+     */
+    val imageUrl: String? = null,
 )
 
 /** One lightweight entry inside a playlist/channel's `entries`, from flat extraction. */

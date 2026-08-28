@@ -22,7 +22,9 @@ MediaVault is a local-first Android media application combining:
 * Local media library
 * Built-in video/audio player
 * Multi-audio and subtitle selection
-* Torrent and magnet-link downloading
+* Torrent and magnet-link downloading — **DEFERRED from v1** (see §37's
+  2026-08-28 "Torrent deferred, Reddit image support added" entry); v1 focuses on
+  social/web media downloading
 * Download history/statistics
 * Supported-source browser
 * GitHub-based release/update information
@@ -96,7 +98,12 @@ Initial planned backend:
 
 Do not tightly couple the rest of the application to FFmpeg.
 
-### Torrent
+### Torrent — DEFERRED / FUTURE (2026-08-28)
+
+**Not part of active v1 development.** v1 focuses on social/web media downloading
+(see §37's 2026-08-28 "Torrent deferred, Reddit image support added" entry for the
+full reasoning). This section is kept as-written, unimplemented, for a future stage —
+nothing below has been built, and no torrent-specific code exists in the repository yet.
 
 Use a dedicated `TorrentEngine`.
 
@@ -528,7 +535,7 @@ Possible future implementations:
 
 * HTTP media downloader
 * yt-dlp downloader
-* Torrent downloader
+* Torrent downloader — **deferred from v1**, see §4's Torrent subsection
 
 Do not tightly couple them.
 
@@ -725,7 +732,8 @@ The first major application should attempt to include the planned platform capab
 * Subtitles
 * Local media scanning
 * Statistics
-* Torrent/magnet functionality
+* Torrent/magnet functionality — **deferred from v1** (2026-08-28, see §4/§37); v1
+  scope is social/web media downloading instead
 * Supported-source index/search
 * GitHub update information
 * Open-source documentation
@@ -1895,13 +1903,27 @@ _Prior state, before the real DownloadEngine stage:_
   network failure. No extractor/networking/downloader logic changed — classification only.
   3 unit tests in `YtDlpErrorMapperTest` cover it.
 
-Not yet started: torrent downloading, source search (beyond
-the Supported Sources catalog itself — §17's "tapping an item opens the appropriate
-analysis/download flow" is satisfied by returning to Home, not a source-aware analyzer),
-and update checking. Local media import (a user-picked file or folder, via SAF) exists
-as of the 2026-08-26 stage below — deliberately *not* full-device/gallery scanning,
-which this project has explicitly ruled out as a privacy matter, not just an
-unimplemented one; see that stage's own entry for why.
+Not yet started: source search (beyond the Supported Sources catalog itself — §17's
+"tapping an item opens the appropriate analysis/download flow" is satisfied by
+returning to Home, not a source-aware analyzer), and update checking. Local media
+import (a user-picked file or folder, via SAF) exists as of the 2026-08-26 stage
+below — deliberately *not* full-device/gallery scanning, which this project has
+explicitly ruled out as a privacy matter, not just an unimplemented one; see that
+stage's own entry for why.
+
+**Torrent downloading is deferred, not "not yet started" — a deliberate v1 scope
+decision made 2026-08-28 (see §37).** v1 focuses on social/web media downloading;
+the `TorrentEngine` interface and its Download/§4 spec sections remain written,
+unbuilt, for a future stage, and nothing about the current architecture blocks
+adding it later.
+
+Reddit image support was added 2026-08-28 (see §37): a single-image Reddit post
+(`reddit.com/r/.../comments/...` resolving to one direct image, e.g. `i.redd.it/...`)
+analyzes, previews, downloads, and opens in the Image Viewer exactly like an
+Instagram image, via `YtDlpExtractorEngine`'s own `analyze()`/`download()` — no new
+backend, no new `MediaType`, no new Kotlin routing case. A multi-image Reddit
+gallery post is explicitly unsupported (yt-dlp's Reddit extractor has no reliable
+gallery support) and refused with a clear message rather than attempted.
 
 The next implementation step must always be determined from the actual repository state, not from assumptions in this document.
 
@@ -3083,6 +3105,109 @@ A third real gap, found and fixed alongside the two above rather than separately
 **Unsupported, unchanged from the research stage:** Facebook images (still login-gated for every tool tested; no cookie-login flow added, per §25's privacy default) and Reddit images (a separate, smaller follow-up to the existing yt-dlp path, out of this milestone's scope) — neither was touched by this implementation.
 
 **Where this is documented:** this entry, the CHANGELOG's "Added" entry for this stage, and `THIRD-PARTY-NOTICES.md`'s new Instaloader row.
+
+---
+
+### 2026-08-28 — Torrent deferred, Reddit image support added
+
+**Product decision: Torrent/magnet-link downloading is deferred out of active v1 development.** v1 now
+focuses on social/web media downloading. §2, §4's Torrent subsection, §22, and §31 are all annotated
+DEFERRED/FUTURE in place — the `TorrentEngine` interface never existed in the codebase to begin with
+(only the spec sections describing it), so there was nothing to delete; the spec text stays exactly as
+written for whenever a future stage picks it up. No other generic abstraction (`ExtractorEngine`,
+`DownloadEngine`, `MediaProcessor`) was touched by this decision — all three were already designed
+backend-agnostic and none has any torrent-specific code baked in that would need undoing.
+
+**Reddit image support: extended the existing yt-dlp path, exactly as directed — no new backend, no
+new architecture.** Researched first, not assumed: a real local Python harness (yt-dlp's own
+`extract_info(url, download=False, process=False)` — the "light probe" mode that skips
+redirect-following/format-resolution) against real public Reddit posts showed:
+- A **single-image** post (`i.redd.it/*.jpeg` etc.) resolves cleanly and cheaply via the light probe:
+  `_type: "url_transparent"` with the resolved direct-image `url`, real `title`/`display_id`/
+  `thumbnails`, no exception, ~1–2s.
+- A **multi-image gallery** post (`reddit.com/gallery/...`) is **not reliably supported by yt-dlp's
+  Reddit extractor at all** — confirmed by direct testing, not assumed: running one through yt-dlp's
+  normal (non-light-probe) pipeline hung 60+ seconds before failing, and even the light probe's own
+  resolved sub-URL falls into a broken generic-extractor loop. This is a real upstream gap, not a
+  MediaVault defect, so per this task's explicit instruction it is refused outright with a clear
+  message rather than attempted, truncated to one image, or hacked around.
+- A **native Reddit video** post and a post linking an **external video embed** both also resolve via
+  `url_transparent` at the light-probe stage, so file-extension checking on the resolved URL (not just
+  the `_type` field) is what actually distinguishes "this is a direct image" from either of those —
+  confirmed live for both cases, and both correctly fall through unchanged to yt-dlp's existing full
+  pipeline.
+
+**Architecture:** `mediavault_ytdlp.py` gained `_is_reddit_url`/`_reddit_light_probe`/
+`_reddit_image_result` — `analyze()` and `download()` each run the light probe first, only for
+`reddit.com`/`redd.it` hosts, before ever reaching the existing (slower, occasionally hang-prone for
+this one platform) pipeline below. A gallery raises `ValueError`, mapped by a new branch in
+`YtDlpErrorMapper.toAppError()` to a clean `AppError.Unsupported`. A resolved single image returns the
+existing `YtDlpInfoJson` shape plus one new additive field, `imageUrl` (nullable, ignored by every
+existing video/playlist code path); `YtDlpResultMapper.toExtractionResult()` now checks `imageUrl !=
+null` before its existing `entries != null` (playlist) check, producing the *same*
+`ExtractionResult.Collection`/`MediaCollectionResult` a single-image Instagram post already produces —
+a single-image Reddit post is a one-item collection, exactly like the Instagram case, so the UI
+(preview card, Download button, Downloads list, Library, Image Viewer) needed zero new code. **Zero new
+`MediaType`, zero new `ExtractorEngine` implementation, zero new Gradle module** — this is entirely a
+yt-dlp/`YtDlpExtractorEngine` extension, per the task's explicit preference.
+
+**A real duplicate-download-logic smell fixed in passing:** `mediavault_instaloader.py`'s `download()`
+already had its own inline `requests.get(..., stream=True)`-to-file loop for Instagram's resolved image
+URLs; the new Reddit image path needed the identical logic. Rather than a second copy, both now call a
+new three-function shared module, `mediavault_direct_download.py` (`download_to_file(url, output_path)`)
+— the only new Python file this stage adds, and the only change to the existing Instagram download path
+(behavior unchanged, confirmed by the existing Instaloader tests still passing).
+
+**A real routing bug caught by review, not by a runtime crash:** `MediaVaultDownloadEngine`'s existing
+`preferredEngineIdOrNull()` unconditionally hinted `"instaloader"` for every `MediaType.IMAGE` task —
+correct when it was written (Instagram was the only image source, and yt-dlp/Instaloader can both
+legitimately claim an Instagram URL). With Reddit images now also `MediaType.IMAGE`, that same
+unconditional hint would have forced a Reddit image *download* through Instaloader — a backend whose
+own `canHandle` never recognizes `reddit.com` at all — even though `CompositeExtractorEngine` had
+already correctly resolved the *analysis* through yt-dlp moments earlier, because `preferredEngineId` is
+checked before Composite's own analyze-time memory. Fixed by making the hint function operate on the
+full `DownloadTaskEntity` (source URL included) instead of a bare `MediaType`, so it only ever hints
+`"instaloader"` when the source URL is actually `instagram.com` — a Reddit image task now correctly
+hints nothing, letting Composite's existing memory/`canHandle` resolution do the right thing exactly as
+it already does for every unambiguous single-backend case. Caught during this stage's own architecture
+review before it ever ran on-device; a regression test (`a Reddit image task hints nothing`) locks in
+why.
+
+**Verified live on a physical device (Pixel 7a)** against a real public Reddit image post
+(`r/pics/comments/1w0mfi4/sunrise_on_lake_ontario/`, resolving to `i.redd.it/u6q1zo1jb3mh1.jpeg`):
+analyze showed the real thumbnail/title ("Sunrise on Lake Ontario")/source ("Reddit") with a single
+Download button (never a gallery-style picker); Download completed and the task showed "Completed" in
+the Downloads screen's Completed section with the real thumbnail; it appeared in Library (Recent sort,
+top of list) with the correct thumbnail; "Open" from both Downloads and Library launched
+`ImageViewerScreen` (never `PlayerScreen`) showing the correct full-resolution real photo; no crash
+across the full flow. Gallery rejection and native-video/external-embed fallthrough were verified
+directly against the real, unmodified `mediavault_ytdlp.py` via a local (non-Chaquopy) Python harness
+rather than guessed — a multi-image gallery URL raised the expected `ValueError` in ~2s (not a 60s
+hang), and a native Reddit video URL resolved with real `formats` and no `imageUrl`, both confirmed
+before and after this stage's edits to rule out a regression in the shared bridge module. An on-device
+regression re-check of the same native-video URL hit `AppError.Timeout` from Reddit's own side — verified
+independently (a direct HTTPS request from the development machine's network to Reddit at the same time
+returned `HTTP 403: Blocked`, with the device's Wi-Fi itself confirmed connected/validated/high-signal
+throughout) as Reddit's own anti-bot/rate-limiting, not a code fault; the local harness re-run against
+the same unmodified code path is the authoritative regression evidence for this stage.
+
+**Exact remaining limitation:** multi-image Reddit galleries are unsupported and explicitly refused
+(`AppError.Unsupported`, clear in-app message) — not attempted, not silently truncated to one image.
+Revisiting this would mean either a dedicated Reddit gallery scraper (a real, separate piece of
+platform-specific code this task's own "no brittle Reddit-only hack" instruction rules out for now) or
+waiting on/contributing a fix upstream to yt-dlp's Reddit extractor.
+
+**Testing:** 8 new unit tests — `YtDlpResultMapperTest` (3: Collection detection, full field mapping,
+thumbnail fallback/preference), `YtDlpErrorMapperTest` (1: gallery-rejection message), and
+`MediaVaultDownloadEngineTest` (3: Instagram hints `"instaloader"`, Reddit hints nothing, a non-image
+task hints nothing) — all passing alongside the full existing suite for both touched modules
+(`core:extractor-ytdlp`, `app`), no regressions. Both modules build clean; a debug APK was built,
+installed, and used for the live device verification above.
+
+**Where this is documented:** this entry, the CHANGELOG's "Changed"/"Added" entries for this stage.
+`THIRD-PARTY-NOTICES.md` is unchanged — no new dependency was added (`requests` was already bundled for
+Instaloader's own download path; the new Reddit path reuses it via the shared
+`mediavault_direct_download.py` helper).
 
 ---
 

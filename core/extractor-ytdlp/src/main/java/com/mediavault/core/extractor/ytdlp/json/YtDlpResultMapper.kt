@@ -2,6 +2,8 @@ package com.mediavault.core.extractor.ytdlp.json
 
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.MediaCollectionItem
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import com.mediavault.core.domain.extractor.PlaylistItem
@@ -13,11 +15,40 @@ import kotlin.math.roundToInt
 
 /** Converts yt-dlp's raw info-dict shape into MediaVault's engine-agnostic domain model. */
 fun YtDlpInfoJson.toExtractionResult(): ExtractionResult =
-    if (entries != null) {
-        ExtractionResult.Playlist(toPlaylistAnalysisResult())
-    } else {
-        ExtractionResult.Single(toMediaAnalysisResult())
+    when {
+        imageUrl != null -> ExtractionResult.Collection(toMediaCollectionResult())
+        entries != null -> ExtractionResult.Playlist(toPlaylistAnalysisResult())
+        else -> ExtractionResult.Single(toMediaAnalysisResult())
     }
+
+/**
+ * A single-image Reddit post — always exactly one item (yt-dlp's Reddit extractor has no
+ * reliable multi-image/gallery support; see `mediavault_ytdlp.py`'s own `analyze()` for why a
+ * gallery post is rejected before it ever reaches here, rather than silently truncated to one
+ * image). Same [MediaCollectionResult] shape a multi-image Instagram carousel uses — a
+ * single-image post is just a one-item collection there too, so the rest of the app (download
+ * queueing, Library, the image viewer) needs no Reddit-specific code at all.
+ */
+private fun YtDlpInfoJson.toMediaCollectionResult(): MediaCollectionResult {
+    val bestThumbnail = thumbnail
+        ?: thumbnails.orEmpty().maxByOrNull { it.preference ?: Int.MIN_VALUE }?.url
+    val postId = id?.takeIf { it.isNotBlank() } ?: "unknown"
+    return MediaCollectionResult(
+        id = postId,
+        sourceName = extractorKey ?: extractor ?: "Unknown",
+        title = title?.takeIf { it.isNotBlank() }.orEmpty(),
+        thumbnailUrl = bestThumbnail ?: imageUrl,
+        webpageUrl = webpageUrl,
+        items = listOf(
+            MediaCollectionItem(
+                id = "${postId}_1",
+                index = 1,
+                imageUrl = requireNotNull(imageUrl),
+                thumbnailUrl = bestThumbnail ?: imageUrl,
+            ),
+        ),
+    )
+}
 
 private fun YtDlpInfoJson.toMediaAnalysisResult(): MediaAnalysisResult {
     val allFormats = formats.orEmpty()

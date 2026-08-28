@@ -15,7 +15,8 @@ import json
 import re
 
 import instaloader
-import requests
+
+import mediavault_direct_download
 
 _POST_URL_PATTERN = re.compile(r"instagram\.com/(?:p|reel|tv)/([^/?#]+)")
 
@@ -121,10 +122,4 @@ def download(task_id, url, format_id, output_path):
     node = nodes[index - 1]
     source_url = _node_url(node, bool(node.is_video))
 
-    response = requests.get(source_url, stream=True, timeout=30)
-    response.raise_for_status()
-    with open(output_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=65536):
-            if chunk:
-                f.write(chunk)
-    return output_path
+    return mediavault_direct_download.download_to_file(source_url, output_path)
