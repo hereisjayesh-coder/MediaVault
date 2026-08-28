@@ -56,6 +56,10 @@ data class DownloadTaskEntity(
     val qualityContainer: String? = null,
     val qualityHasVideo: Boolean? = null,
     val qualityHasAudio: Boolean? = null,
+    /** Mirrors `QualityDescriptor.requiresProcessing` — null (treated as false) for a playlist queued before merge-required playlist qualities were selectable. */
+    val qualityRequiresProcessing: Boolean? = null,
+    /** Mirrors `QualityDescriptor.audioLanguageCode` — only meaningful when [qualityRequiresProcessing] is true. */
+    val qualityAudioLanguageCode: String? = null,
     /** Media duration, known from analysis — carried through to the completed `MediaItemEntity`. */
     val durationSeconds: Long? = null,
     /** The resolved format's resolution label (e.g. "1080p"), for Library display. Null for audio. */

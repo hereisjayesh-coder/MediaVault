@@ -4,7 +4,6 @@ import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.PlaylistItem
-import com.mediavault.core.model.MediaFormat
 
 data class HomeUiState(
     val url: String = "",
@@ -53,14 +52,17 @@ data class PlaylistSelectionState(
 /**
  * The "pick one quality, then queue" step between selecting playlist items and actually
  * calling [com.mediavault.core.domain.download.DownloadEngine.enqueuePlaylist]. Quality is
- * resolved from the *first* selected item's own format list (playlist items don't carry
- * formats up front); every other item is matched against that same quality independently
- * once queued.
+ * resolved from the *first* selected item's own format list, paired into [DownloadOption]s the
+ * same way the single-item screen does — including merge-required video+audio pairing — via
+ * [com.mediavault.core.domain.download.buildDownloadOptions]. Every other item is matched
+ * against that same chosen option's [com.mediavault.core.domain.download.QualityDescriptor]
+ * independently once queued.
  */
 data class PlaylistDownloadSetupState(
     val items: List<PlaylistItem>,
     val isResolvingFormats: Boolean = true,
-    val formatOptions: List<MediaFormat> = emptyList(),
+    val downloadOptions: List<DownloadOption> = emptyList(),
+    /** The [DownloadOption.id] the user has chosen, if any. */
     val selectedFormatId: String? = null,
     val errorMessage: String? = null,
 )

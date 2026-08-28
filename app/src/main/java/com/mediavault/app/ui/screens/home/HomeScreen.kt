@@ -79,7 +79,6 @@ import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
-import com.mediavault.core.model.MediaFormat
 import java.time.LocalTime
 
 @Composable
@@ -121,7 +120,7 @@ fun HomeScreen(
         onDownloadEntirePlaylist = viewModel::downloadEntirePlaylist,
         onDownloadSelected = viewModel::downloadSelectedItems,
         onSkipAlreadyDownloadedToggled = viewModel::onSkipAlreadyDownloadedToggled,
-        onPlaylistFormatSelected = viewModel::onPlaylistFormatSelected,
+        onPlaylistOptionSelected = viewModel::onPlaylistOptionSelected,
         onQueuePlaylistClicked = viewModel::onQueuePlaylistClicked,
         onCancelPlaylistDownloadSetup = viewModel::cancelPlaylistDownloadSetup,
         onNetworkWarningConfirmed = viewModel::onNetworkWarningConfirmed,
@@ -145,7 +144,7 @@ private fun HomeScreenContent(
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
     onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
-    onPlaylistFormatSelected: (MediaFormat) -> Unit,
+    onPlaylistOptionSelected: (DownloadOption) -> Unit,
     onQueuePlaylistClicked: () -> Unit,
     onCancelPlaylistDownloadSetup: () -> Unit,
     onNetworkWarningConfirmed: () -> Unit,
@@ -221,7 +220,7 @@ private fun HomeScreenContent(
                         item {
                             PlaylistDownloadSetupCard(
                                 setup = setup,
-                                onFormatSelected = onPlaylistFormatSelected,
+                                onOptionSelected = onPlaylistOptionSelected,
                                 onCancelClicked = onCancelPlaylistDownloadSetup,
                             )
                         }
@@ -724,7 +723,7 @@ private fun PlaylistSelectionToolbar(
 @Composable
 private fun PlaylistDownloadSetupCard(
     setup: PlaylistDownloadSetupState,
-    onFormatSelected: (MediaFormat) -> Unit,
+    onOptionSelected: (DownloadOption) -> Unit,
     onCancelClicked: () -> Unit,
 ) {
     MediaVaultCard {
@@ -754,16 +753,22 @@ private fun PlaylistDownloadSetupCard(
 
             else -> {
                 Text(text = stringResource(R.string.home_select_format), style = MaterialTheme.typography.labelLarge)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    setup.formatOptions
-                        .sortedByDescending { it.estimatedSizeBytes ?: 0L }
-                        .forEach { format ->
-                            FormatRow(
-                                format = format,
-                                isSelected = format.formatId == setup.selectedFormatId,
-                                onClick = { onFormatSelected(format) },
-                            )
-                        }
+
+                // Same Video/Audio section grouping and rows as the single-item picker
+                // (AnalysisResultCard) — a merge-required (paired) option is shown selectable
+                // here exactly like there, instead of a second, duplicated row/section layout.
+                val sections = setup.downloadOptions.groupedBySection()
+
+                FormatSection(titleRes = R.string.home_section_video, options = sections[DownloadOptionSection.VIDEO].orEmpty()) { option ->
+                    VideoOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
+                }
+
+                FormatSection(titleRes = R.string.home_section_audio, options = sections[DownloadOptionSection.AUDIO].orEmpty()) { option ->
+                    AudioOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
+                }
+
+                FormatSection(titleRes = R.string.home_section_other, options = sections[DownloadOptionSection.OTHER].orEmpty()) { option ->
+                    VideoOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
                 }
             }
         }
@@ -846,34 +851,6 @@ private fun Thumbnail(
                     imageVector = Icons.Default.BrokenImage,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FormatRow(format: MediaFormat, isSelected: Boolean, onClick: () -> Unit) {
-    val isSelectable = format.isSelectableForDownload()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = isSelectable, onClick = onClick)
-            .alpha(if (isSelectable) 1f else 0.5f),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = isSelected, onClick = onClick, enabled = isSelectable)
-        Column {
-            Text(
-                text = formatFormatSummary(format),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (!isSelectable) {
-                Text(
-                    text = stringResource(R.string.home_format_requires_merge),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.error,
                 )
             }
         }
@@ -977,7 +954,7 @@ private fun PlaylistQueueActionBar(
     onQueueClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val selectedFormat = setup.formatOptions.firstOrNull { it.formatId == setup.selectedFormatId }
+    val selectedOption = setup.downloadOptions.firstOrNull { it.id == setup.selectedFormatId }
     ActionBarSurface(modifier) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -985,9 +962,9 @@ private fun PlaylistQueueActionBar(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            val qualityAndSize = if (selectedFormat != null) {
-                val total = estimatedPlaylistTotalSizeBytes(selectedFormat, setup.items.size)
-                listOfNotNull(playlistQualityLabel(selectedFormat), formatFileSizeLabel(total) ?: stringResource(R.string.home_playlist_bar_total_unknown))
+            val qualityAndSize = if (selectedOption != null) {
+                val total = estimatedPlaylistTotalSizeBytes(selectedOption, setup.items.size)
+                listOfNotNull(playlistQualityLabel(selectedOption), formatFileSizeLabel(total) ?: stringResource(R.string.home_playlist_bar_total_unknown))
                     .joinToString(" • ")
             } else {
                 stringResource(R.string.home_playlist_bar_prompt)

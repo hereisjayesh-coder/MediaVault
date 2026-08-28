@@ -155,9 +155,11 @@ class HomeFormattingTest {
             formatId = "140", resolutionLabel = null, container = "m4a", videoCodec = null,
             audioCodec = "aac", fps = null, estimatedSizeBytes = 5_000_000L, hasVideo = false, hasAudio = true,
         )
+        val videoOption = buildDownloadOptions(listOf(video)).single()
+        val audioOption = buildDownloadOptions(listOf(audio)).single()
 
-        assertEquals("1080p 60fps", playlistQualityLabel(video))
-        assertEquals("M4A", playlistQualityLabel(audio))
+        assertEquals("1080p 60fps", playlistQualityLabel(videoOption))
+        assertEquals("M4A", playlistQualityLabel(audioOption))
     }
 
     @Test
@@ -166,8 +168,25 @@ class HomeFormattingTest {
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
             audioCodec = "aac", fps = 30, estimatedSizeBytes = 10_000_000L, hasVideo = true, hasAudio = true,
         )
+        val option = buildDownloadOptions(listOf(format)).single()
 
-        assertEquals(30_000_000L, estimatedPlaylistTotalSizeBytes(format, 3))
+        assertEquals(30_000_000L, estimatedPlaylistTotalSizeBytes(option, 3))
+    }
+
+    @Test
+    fun `estimated playlist total for a merge-required quality uses the combined video+audio size`() {
+        val video = MediaFormat(
+            formatId = "v1", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
+            audioCodec = null, fps = 60, estimatedSizeBytes = 80_000_000L, hasVideo = true, hasAudio = false,
+        )
+        val audio = MediaFormat(
+            formatId = "a1", resolutionLabel = null, container = "m4a", videoCodec = null,
+            audioCodec = "aac", fps = null, estimatedSizeBytes = 4_000_000L, hasVideo = false, hasAudio = true,
+        )
+        val paired = buildDownloadOptions(listOf(video, audio)).single { it.requiresProcessing }
+
+        // 84 MB combined per item, times 3 items — never the video-only size alone.
+        assertEquals(252_000_000L, estimatedPlaylistTotalSizeBytes(paired, 3))
     }
 
     @Test
@@ -191,7 +210,8 @@ class HomeFormattingTest {
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
             audioCodec = "aac", fps = 30, estimatedSizeBytes = null, hasVideo = true, hasAudio = true,
         )
+        val option = buildDownloadOptions(listOf(format)).single()
 
-        assertNull(estimatedPlaylistTotalSizeBytes(format, 3))
+        assertNull(estimatedPlaylistTotalSizeBytes(option, 3))
     }
 }

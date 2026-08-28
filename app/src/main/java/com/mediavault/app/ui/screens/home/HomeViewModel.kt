@@ -31,14 +31,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/**
- * Gate for the playlist quality picker only. Unlike the single-item flow's
- * `DownloadOption`/`buildDownloadOptions` (which does pair a video-only format with an
- * audio-only one for FFmpeg to merge), a batch playlist download has no per-item audio pairing
- * to resolve yet, so a video-only format stays unselectable there.
- */
-fun MediaFormat.isSelectableForDownload(): Boolean = hasAudio && !(hasVideo && !hasAudio)
-
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val extractorEngine: ExtractorEngine,
@@ -321,7 +313,7 @@ class HomeViewModel @Inject constructor(
                         if (media == null) {
                             state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, errorMessage = "That item couldn't be resolved."))
                         } else {
-                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, formatOptions = media.formats))
+                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, downloadOptions = buildDownloadOptions(media.formats)))
                         }
                     }
                 }
@@ -334,11 +326,11 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun onPlaylistFormatSelected(format: MediaFormat) {
-        if (!format.isSelectableForDownload()) return
+    fun onPlaylistOptionSelected(option: DownloadOption) {
+        if (!option.isSelectable) return
         _uiState.update { state ->
             val setup = state.playlistDownloadSetup ?: return@update state
-            state.copy(playlistDownloadSetup = setup.copy(selectedFormatId = format.formatId))
+            state.copy(playlistDownloadSetup = setup.copy(selectedFormatId = option.id))
         }
     }
 
@@ -359,8 +351,8 @@ class HomeViewModel @Inject constructor(
     private fun confirmPlaylistQueue(bypassNetworkCheck: Boolean) {
         val playlist = (_uiState.value.result as? ExtractionResult.Playlist)?.playlist ?: return
         val setup = _uiState.value.playlistDownloadSetup ?: return
-        val formatId = setup.selectedFormatId ?: return
-        val format = setup.formatOptions.firstOrNull { it.formatId == formatId } ?: return
+        val optionId = setup.selectedFormatId ?: return
+        val option = setup.downloadOptions.firstOrNull { it.id == optionId } ?: return
 
         val items = setup.items.mapNotNull { item ->
             val url = item.url ?: return@mapNotNull null
@@ -375,7 +367,7 @@ class HomeViewModel @Inject constructor(
         }
         if (items.isEmpty()) return
 
-        val estimatedTotalBytes = estimatedPlaylistTotalSizeBytes(format, items.size) ?: 0L
+        val estimatedTotalBytes = estimatedPlaylistTotalSizeBytes(option, items.size) ?: 0L
 
         viewModelScope.launch {
             if (!bypassNetworkCheck) {
@@ -389,7 +381,7 @@ class HomeViewModel @Inject constructor(
                         return@launch
                     }
                     is NetworkPolicyDecision.QueueForWifi -> {
-                        enqueuePlaylistRequest(playlist, format, items)
+                        enqueuePlaylistRequest(playlist, option, items)
                         _uiState.update {
                             it.copy(
                                 playlistDownloadSetup = null,
@@ -403,21 +395,21 @@ class HomeViewModel @Inject constructor(
                     NetworkPolicyDecision.Allow -> Unit
                 }
             }
-            enqueuePlaylistRequest(playlist, format, items)
+            enqueuePlaylistRequest(playlist, option, items)
             _uiState.update {
                 it.copy(playlistDownloadSetup = null, playlistSelection = PlaylistSelectionState(), justQueued = true, infoMessage = null)
             }
         }
     }
 
-    private fun enqueuePlaylistRequest(playlist: PlaylistAnalysisResult, format: MediaFormat, items: List<PlaylistDownloadItem>) {
+    private fun enqueuePlaylistRequest(playlist: PlaylistAnalysisResult, option: DownloadOption, items: List<PlaylistDownloadItem>) {
         downloadEngine.enqueuePlaylist(
             PlaylistDownloadRequest(
                 playlistId = UUID.randomUUID().toString(),
                 playlistTitle = playlist.title,
                 playlistThumbnailUrl = playlist.thumbnailUrl,
                 sourceName = playlist.sourceName,
-                qualityDescriptor = QualityDescriptor.from(format),
+                qualityDescriptor = QualityDescriptor.from(option),
                 skipAlreadyDownloaded = _uiState.value.playlistSelection.skipAlreadyDownloaded,
                 items = items,
             ),

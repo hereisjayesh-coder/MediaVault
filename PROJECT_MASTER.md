@@ -771,7 +771,76 @@ This file is the permanent project memory.
 
 ## 34. Current Project State
 
-_Last updated: 2026-08-27, after the Subtitle Display Styles stage._
+_Last updated: 2026-08-28, after the Playlist Merged-Format Downloads stage._
+
+* **Playlist downloads now support formats that require a separate video+audio merge**,
+  closing the gap the Cross-Platform Media Compatibility QA pass (below) recorded as a known
+  limitation: the playlist quality-picker used to disable every video-only format with
+  "Requires merging — not available yet," even though the single-item picker had already
+  supported merging via `MediaProcessor`/FFmpeg since an earlier stage.
+  - **Root cause**: the playlist quality-picker worked off the raw `MediaFormat` list and a
+    standalone gate, `HomeViewModel.isSelectableForDownload()` (`hasAudio && !(hasVideo &&
+    !hasAudio)`), which rejected every video-only format unconditionally — it never checked
+    whether a compatible audio-only track existed to pair it with. Separately,
+    `QualityDescriptor` (the cross-item "same quality" fingerprint every other playlist item
+    is matched against) only described a single raw format's shape, with no way to express
+    "pair this resolution with this audio language" — so even a fixed UI gate would have had
+    nothing to persist or re-match a merge-required selection against.
+  - **Fix reuses the existing single-item pairing/merge pipeline rather than duplicating it**:
+    the playlist quality-picker now calls the same `buildDownloadOptions()` the single-item
+    screen already used, and renders the same `DownloadOption`-based Video/Audio
+    sections/rows (`VideoOptionRow`/`AudioOptionRow`/`FormatSection`) — a merge-required
+    option is selectable there exactly like on the single-item screen, no second row/section
+    layout. `QualityDescriptor` gained two fields, `requiresProcessing` and
+    `audioLanguageCode` (mirroring `DownloadOption.requiresProcessing` and the paired audio
+    track's language), and `QualityDescriptor.from()` now derives from a `DownloadOption`
+    rather than a raw `MediaFormat`. Matching moved from `List<MediaFormat>.findMatching()` to
+    a single `List<DownloadOption>.findMatching()`: each playlist item rebuilds its own
+    `buildDownloadOptions()` list at resolution time and is matched by resolution +
+    audio-language identity for a merge-required quality, or by exact shape for a direct one —
+    one matching function, not two, and never a fallback to a different resolution or
+    language. `MediaVaultDownloadEngine.resolvePlaylistFormats()` sets the resolved task's
+    `audioFormatId` exactly like the single-item enqueue path does, so
+    `runSplitStreamDownload()`/`mediaProcessor.merge()` — the same FFmpeg remux code path —
+    runs unmodified for a playlist item.
+  - **Combined size, language preservation, no silent downgrade**: the playlist setup bar's
+    total-size estimate now uses `DownloadOption.combinedEstimatedSizeBytes` (video+audio
+    summed) instead of a single format's size; the audio language chosen on the first
+    resolved item is carried in `QualityDescriptor.audioLanguageCode` and required to match
+    exactly on every other item — an item offering the resolution only in a different
+    language, or not at all, fails clearly with "The selected quality isn't available for
+    this item" rather than silently substituting a language or quality tier.
+  - **Room schema version 6** (migration 5→6, purely additive): `qualityRequiresProcessing`/
+    `qualityAudioLanguageCode` columns on `download_tasks`, null for every task queued before
+    this stage — `QualityDescriptor.requiresProcessing` defaults `false` for a null column,
+    exactly the "direct quality" behavior those rows already had. Playlist order, duplicate
+    detection, retry, pause/resume, cancellation, and process-death recovery are all unchanged
+    — they operate on `DownloadTaskEntity`/`DownloadStatus`, not on the quality-matching logic
+    that changed.
+  - Single-video (non-playlist) merged downloads are untouched — same `DownloadRequest`,
+    same `enqueueDownloadRequest()`, same `runSplitStreamDownload()`.
+  - **Verified live on a physical device (Pixel 7a)** against a real, small selection (2
+    items) from the legitimate "Official Blender Open Movies" YouTube playlist, containing
+    genuine split video/audio DASH streams: analyzed the playlist, selected 2 items, chose a
+    4K merge-required quality ("+audio [en]") that would previously have been disabled,
+    queued, and confirmed via logcat that FFmpegKit actually ran a merge session for the
+    playlist item (`ffmpeg-kit: Loading ffmpeg-kit.` / `Loaded ffmpeg-kit-custom-arm64-v8a...`)
+    — the same engine code path the single-item flow already used. The item reached
+    `COMPLETED`, appeared in Library with correct duration/resolution/size
+    ("6:31 • 3840x1608 • 691 MB"), and played back with a real `AudioTrack` audio session
+    (confirmed via `dumpsys audio`) and visible video frames (confirmed via screenshot). The
+    second selected item, whose source genuinely doesn't offer that exact resolution+language
+    pairing, failed independently with "The selected quality isn't available for this item"
+    while the first item continued and completed — playlist progress and per-item failure
+    isolation both confirmed live, not just by unit test. A single-video merged download
+    (Sintel, a different split-stream source) was re-run afterward and completed normally,
+    confirming no regression to the pre-existing single-item pipeline.
+  - **Known limitation, unchanged by this stage**: a merge-required quality is still matched
+    by exact audio-language identity only — an item that offers the chosen resolution but
+    only in a different language than the one first resolved fails that item rather than
+    offering a language substitution; this is the same "never silently downgrade" contract
+    the rest of the playlist flow already used for resolution/container, applied consistently
+    to language.
 
 * **Subtitle appearance is now user-configurable — Classic / Clean / Outlined.** A small,
   isolated addition on top of the existing Media3 subtitle-rendering path; no navigation,

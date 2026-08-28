@@ -263,7 +263,7 @@ class HomeViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
 
         val setup = viewModel.uiState.value.playlistDownloadSetup
-        assertEquals(listOf(muxed), setup!!.formatOptions)
+        assertEquals(listOf("m1"), setup!!.downloadOptions.map { it.id })
         assertTrue(!setup.isResolvingFormats)
     }
 
@@ -288,7 +288,7 @@ class HomeViewModelTest {
         viewModel.downloadEntirePlaylist()
         dispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onPlaylistOptionSelected(viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.id == muxed.formatId })
         viewModel.onQueuePlaylistClicked()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -309,7 +309,7 @@ class HomeViewModelTest {
 
         viewModel.downloadEntirePlaylist()
         dispatcher.scheduler.advanceUntilIdle()
-        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onPlaylistOptionSelected(viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.id == muxed.formatId })
         viewModel.onQueuePlaylistClicked()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -325,6 +325,62 @@ class HomeViewModelTest {
         viewModel.cancelPlaylistDownloadSetup()
 
         assertNull(viewModel.uiState.value.playlistDownloadSetup)
+    }
+
+    // --- Playlist merge-required (paired video+audio) quality selection ---------------
+
+    @Test
+    fun `a merge-required playlist quality is now selectable, unlike before merge support existed`() = runTest {
+        loadPlaylist()
+        val video = sampleFormat("v1080", hasVideo = true, hasAudio = false)
+        val audio = sampleFormat("a-en", hasVideo = false, hasAudio = true, languageCode = "en")
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(video, audio))))
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val paired = viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.requiresProcessing }
+        assertEquals("v1080+a-en", paired.id)
+
+        viewModel.onPlaylistOptionSelected(paired)
+
+        assertEquals(paired.id, viewModel.uiState.value.playlistDownloadSetup!!.selectedFormatId)
+    }
+
+    @Test
+    fun `queuing a merge-required playlist quality carries requiresProcessing and the paired audio language`() = runTest {
+        loadPlaylist()
+        val video = sampleFormat("v1080", hasVideo = true, hasAudio = false)
+        val english = sampleFormat("a-en", hasVideo = false, hasAudio = true, languageCode = "en")
+        val spanish = sampleFormat("a-es", hasVideo = false, hasAudio = true, languageCode = "es")
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(video, english, spanish))))
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+        val paired = viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.requiresProcessing && it.audioFormat?.languageCode == "en" }
+        viewModel.onPlaylistOptionSelected(paired)
+        viewModel.onQueuePlaylistClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val request = fakeDownloadEngine.enqueuedPlaylists.single()
+        assertTrue(request.qualityDescriptor.requiresProcessing)
+        assertEquals("en", request.qualityDescriptor.audioLanguageCode)
+        assertEquals("1080p", request.qualityDescriptor.resolutionLabel)
+    }
+
+    @Test
+    fun `a video-only quality with no audio anywhere is a direct, selectable option, same as the single-item picker`() = runTest {
+        loadPlaylist()
+        val silentVideo = sampleFormat("v1", hasVideo = true, hasAudio = false)
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Single(sampleMedia(formats = listOf(silentVideo))))
+
+        viewModel.downloadEntirePlaylist()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // No audio-only format anywhere -> a direct, already-complete option, not unavailable.
+        val option = viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single()
+        assertTrue(option.isSelectable)
+        assertTrue(!option.requiresProcessing)
     }
 
     // --- Format selection & download -------------------------------------------------
@@ -512,7 +568,7 @@ class HomeViewModelTest {
 
         viewModel.downloadEntirePlaylist()
         dispatcher.scheduler.advanceUntilIdle()
-        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onPlaylistOptionSelected(viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.id == muxed.formatId })
         viewModel.onQueuePlaylistClicked()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -531,7 +587,7 @@ class HomeViewModelTest {
 
         viewModel.downloadEntirePlaylist()
         dispatcher.scheduler.advanceUntilIdle()
-        viewModel.onPlaylistFormatSelected(muxed)
+        viewModel.onPlaylistOptionSelected(viewModel.uiState.value.playlistDownloadSetup!!.downloadOptions.single { it.id == muxed.formatId })
         viewModel.onQueuePlaylistClicked()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -550,6 +606,7 @@ class HomeViewModelTest {
         hasVideo: Boolean,
         hasAudio: Boolean,
         container: String = "mp4",
+        languageCode: String? = null,
     ) = MediaFormat(
         formatId = id,
         resolutionLabel = if (hasVideo) "1080p" else null,
@@ -560,6 +617,7 @@ class HomeViewModelTest {
         estimatedSizeBytes = 100_000_000L,
         hasVideo = hasVideo,
         hasAudio = hasAudio,
+        languageCode = languageCode,
         supportsResume = true,
     )
 

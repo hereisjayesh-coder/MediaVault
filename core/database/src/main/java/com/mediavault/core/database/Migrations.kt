@@ -61,3 +61,17 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         db.execSQL("UPDATE media_items SET lastWatchedAtEpochMs = addedAtEpochMs WHERE lastPlaybackPositionMs > 0")
     }
 }
+
+/**
+ * Adds the two quality-descriptor fields a merge-required (paired video+audio) playlist quality
+ * needs on top of the existing shape fields from [MIGRATION_1_2] — see `QualityDescriptor`.
+ * Purely additive; both columns are null for every pre-existing playlist task, which
+ * `QualityDescriptor`'s own `requiresProcessing = false` default already treats as "this task's
+ * quality was a direct one", exactly the only kind that existed before this migration.
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN qualityRequiresProcessing INTEGER")
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN qualityAudioLanguageCode TEXT")
+    }
+}

@@ -17,6 +17,7 @@ import com.mediavault.core.domain.download.DownloadProgress
 import com.mediavault.core.domain.download.DownloadRequest
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
+import com.mediavault.core.domain.download.buildDownloadOptions
 import com.mediavault.core.domain.download.findMatching
 import com.mediavault.core.domain.extractor.ExtractionEvent
 import com.mediavault.core.domain.extractor.ExtractionRequest
@@ -168,21 +169,28 @@ class MediaVaultDownloadEngine @Inject constructor(
             when (val outcome = extractorEngine.analyze(current.sourceUrl, current.id)) {
                 is AppResult.Success -> {
                     val media = (outcome.data as? ExtractionResult.Single)?.media
-                    val format = media?.formats?.findMatching(descriptor)
+                    // Rebuilds this item's own video+audio pairing independently — same
+                    // `buildDownloadOptions` the single-item flow uses, so a merge-required
+                    // quality resolves through the exact same pairing/language logic, never a
+                    // second, duplicated implementation of it.
+                    val option = media?.formats?.let(::buildDownloadOptions)?.findMatching(descriptor)
                     when {
                         media == null -> fail(current.id, AppError.Unsupported("This item is a nested playlist and can't be resolved directly."))
-                        format == null -> fail(current.id, AppError.Unsupported("The selected quality isn't available for this item."))
+                        option == null -> fail(current.id, AppError.Unsupported("The selected quality isn't available for this item."))
                         else -> {
+                            val primaryFormat = option.videoFormat ?: option.audioFormat
                             dao.update(
                                 current.copy(
                                     status = DownloadStatus.QUEUED,
-                                    formatId = format.formatId,
-                                    container = format.container,
-                                    mediaType = if (format.hasVideo) MediaType.VIDEO else MediaType.AUDIO,
-                                    totalBytes = format.estimatedSizeBytes,
-                                    canResume = format.supportsResume,
+                                    formatId = primaryFormat?.formatId,
+                                    audioFormatId = option.audioFormat?.formatId.takeIf { option.requiresProcessing },
+                                    container = option.outputContainer,
+                                    mediaType = if (option.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
+                                    totalBytes = option.combinedEstimatedSizeBytes,
+                                    // A split video+audio task is never byte-offset-resumable — same rule as the single-item flow.
+                                    canResume = if (option.requiresProcessing) false else primaryFormat?.supportsResume ?: false,
                                     durationSeconds = media.durationSeconds ?: current.durationSeconds,
-                                    resolutionLabel = format.resolutionLabel,
+                                    resolutionLabel = option.videoFormat?.resolutionLabel,
                                     updatedAtEpochMs = System.currentTimeMillis(),
                                 ),
                             )
@@ -652,6 +660,8 @@ internal fun buildPlaylistTaskEntities(
         qualityContainer = request.qualityDescriptor.container,
         qualityHasVideo = request.qualityDescriptor.hasVideo,
         qualityHasAudio = request.qualityDescriptor.hasAudio,
+        qualityRequiresProcessing = request.qualityDescriptor.requiresProcessing,
+        qualityAudioLanguageCode = request.qualityDescriptor.audioLanguageCode,
         durationSeconds = item.durationSeconds,
         resolutionLabel = null, // unknown until this item's own format resolves
         // Offset by item order, not wall-clock arrival, so playlist order survives even
@@ -690,7 +700,14 @@ private fun DownloadTaskEntity.toQualityDescriptor(): QualityDescriptor? {
     val container = qualityContainer ?: return null
     val hasVideo = qualityHasVideo ?: return null
     val hasAudio = qualityHasAudio ?: return null
-    return QualityDescriptor(qualityResolutionLabel, container, hasVideo, hasAudio)
+    return QualityDescriptor(
+        resolutionLabel = qualityResolutionLabel,
+        container = container,
+        hasVideo = hasVideo,
+        hasAudio = hasAudio,
+        requiresProcessing = qualityRequiresProcessing ?: false,
+        audioLanguageCode = qualityAudioLanguageCode,
+    )
 }
 
 private fun DownloadTaskEntity.toDownloadProgress(): DownloadProgress = DownloadProgress(

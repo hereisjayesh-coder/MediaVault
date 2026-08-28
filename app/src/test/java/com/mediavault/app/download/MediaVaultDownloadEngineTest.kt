@@ -65,7 +65,27 @@ class MediaVaultDownloadEngineTest {
         assertEquals("mp4", task.qualityContainer)
         assertEquals(true, task.qualityHasVideo)
         assertEquals(true, task.qualityHasAudio)
+        assertEquals(false, task.qualityRequiresProcessing)
+        assertNull(task.qualityAudioLanguageCode)
         assertEquals(DownloadStatus.ANALYZING, task.status)
+    }
+
+    @Test
+    fun `a merge-required quality persists requiresProcessing and the paired audio language per task`() {
+        val mergeDescriptor = QualityDescriptor(
+            resolutionLabel = "1080p",
+            container = "mp4",
+            hasVideo = true,
+            hasAudio = true,
+            requiresProcessing = true,
+            audioLanguageCode = "en",
+        )
+        val playlistRequest = request(listOf(item("a", 1))).copy(qualityDescriptor = mergeDescriptor)
+
+        val task = buildPlaylistTaskEntities(playlistRequest, emptySet(), 1_000L).single()
+
+        assertEquals(true, task.qualityRequiresProcessing)
+        assertEquals("en", task.qualityAudioLanguageCode)
     }
 
     @Test

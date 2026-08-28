@@ -91,7 +91,6 @@
     <string name="download_notification_active_generic">Downloading…</string>
 
     <string name="home_select_format">Select a format</string>
-    <string name="home_format_requires_merge">Requires merging — not available yet</string>
     <string name="home_download_button">Download</string>
     <string name="home_network_warn_title">Mobile data warning</string>
     <string name="home_network_warn_proceed">Download anyway</string>

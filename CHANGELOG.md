@@ -5,6 +5,41 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Merged Formats in Playlist Downloads
+
+- **Playlist downloads no longer disable formats that require a separate video+audio merge.**
+  The playlist quality-picker previously rejected every video-only format outright
+  ("Requires merging — not available yet"), even though the single-item picker had already
+  supported FFmpeg merging for a while — this was a gap in the playlist quality-selection
+  path specifically, not a missing merge capability.
+- The playlist picker now reuses the exact same `buildDownloadOptions()`/`DownloadOption`
+  pairing the single-item screen uses (same Video/Audio sections and rows), and each playlist
+  item resolves its own compatible video+audio pairing independently via a new
+  `List<DownloadOption>.findMatching()` — no duplicated merge or pairing logic. The selected
+  audio language is preserved and matched exactly on every other item; an item missing that
+  exact resolution+language pairing fails clearly for that item alone, never a silent
+  substitution, and never blocks the rest of the playlist.
+- The playlist setup bar's estimated total size now sums video+audio per item
+  (`DownloadOption.combinedEstimatedSizeBytes`) for a merge-required quality, instead of a
+  single format's size.
+- Room database bumped to schema version 6 with another purely additive migration
+  (`qualityRequiresProcessing`/`qualityAudioLanguageCode` on `download_tasks`) — every
+  pre-existing playlist task is unaffected. Playlist order, duplicate detection, retry,
+  pause/resume, cancellation, and process-death recovery are all unchanged.
+- **Verified live on a physical device (Pixel 7a)** against 2 items selected from the real,
+  legitimate "Official Blender Open Movies" YouTube playlist (genuine split video/audio DASH
+  streams): selected a 4K merge-required quality that was previously disabled, queued it, and
+  confirmed via logcat that FFmpegKit ran a real merge session — the same engine path the
+  single-item flow already used. The item completed, appeared in Library with correct
+  duration/resolution/size, and played back with a real `AudioTrack` session and visible video.
+  The second selected item — whose source genuinely doesn't offer that exact
+  resolution+language pairing — failed independently with a clear message while the first item
+  completed, confirming per-item failure isolation. A single-video merged download (a
+  different source, Sintel) was re-run afterward and completed normally — no regression.
+- **Known limitation**: a merge-required quality still matches by exact audio-language
+  identity only; an item offering the same resolution in a different language than the one
+  first resolved fails that item rather than substituting a different language.
+
 ### Fixed — Cross-Platform Media Compatibility QA (YouTube/Instagram/Reddit/Facebook)
 
 A live QA pass against real public URLs across all four platforms, using the app's actual
@@ -37,11 +72,11 @@ validate it against.
   URLs are both unsupported by yt-dlp's own extractors for those platforms (video-first
   design); a Reddit image post reproducibly failed with a source/network-level error fetching
   the actual image asset (not a MediaVault-side bug). Separately, **YouTube playlist bulk
-  downloads that require video+audio merging are blocked entirely** ("Requires merging — not
+  downloads that require video+audio merging were blocked entirely** ("Requires merging — not
   available yet") in the playlist quality-picker specifically — a real, pre-existing gap
   distinct from this milestone's media-type-detection scope, left unfixed here since fixing it
   means touching the playlist download-options path, not the video/audio/image classification
-  this QA pass targeted.
+  this QA pass targeted. **Fixed in the "Merged Formats in Playlist Downloads" stage above.**
 
 ### Added — Dedicated Audio Player Mode
 

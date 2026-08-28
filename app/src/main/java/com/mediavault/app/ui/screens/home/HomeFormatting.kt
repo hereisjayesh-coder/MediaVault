@@ -120,24 +120,19 @@ fun selectedOptionSummaryLabel(option: DownloadOption): String {
     return listOfNotNull(title, size).joinToString(" • ")
 }
 
-/** Short quality label for a raw [MediaFormat] (the playlist quality picker works off the format list directly, before it's wrapped into a [DownloadOption]). */
-fun playlistQualityLabel(format: MediaFormat): String = if (format.hasVideo) {
-    listOfNotNull(
-        format.resolutionLabel,
-        format.fps?.takeIf { it > 0 }?.let { "${it}fps" },
-    ).joinToString(" ").ifBlank { format.container.uppercase() }
-} else {
-    format.container.takeIf { it != "unknown" }?.uppercase() ?: "Audio"
-}
+/** Short quality label for a playlist quality-picker row — reuses the same title logic as the single-item picker's own rows, whichever section [option] belongs in. */
+fun playlistQualityLabel(option: DownloadOption): String =
+    if (option.videoFormat != null) videoOptionTitle(option) else audioOptionTitle(option)
 
 /**
  * Rough aggregate estimate for the playlist download-setup bar: every item priced the same as
- * [format]'s own size, since playlist items don't get their own resolved format list until each
- * is analyzed individually at download time — an estimate, never a guarantee. Null when the
- * chosen format's own size is unknown, never a guessed number.
+ * [option]'s own final size (already the video+audio sum for a merge-required option — see
+ * [DownloadOption.combinedEstimatedSizeBytes]), since playlist items don't get their own
+ * resolved format list until each is analyzed individually at download time — an estimate,
+ * never a guarantee. Null when the chosen option's own size is unknown, never a guessed number.
  */
-fun estimatedPlaylistTotalSizeBytes(format: MediaFormat?, itemCount: Int): Long? {
-    val perItem = format?.estimatedSizeBytes ?: return null
+fun estimatedPlaylistTotalSizeBytes(option: DownloadOption?, itemCount: Int): Long? {
+    val perItem = option?.combinedEstimatedSizeBytes ?: return null
     return perItem * itemCount
 }
 

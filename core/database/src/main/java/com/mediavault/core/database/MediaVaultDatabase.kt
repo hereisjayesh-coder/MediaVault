@@ -15,7 +15,7 @@ const val MEDIAVAULT_DATABASE_NAME = "mediavault.db"
         DownloadTaskEntity::class,
         MediaItemEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
