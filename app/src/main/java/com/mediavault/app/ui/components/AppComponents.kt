@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -130,6 +131,7 @@ fun MediaThumbnail(
                     imageVector = when (mediaType) {
                         MediaType.AUDIO -> Icons.Default.Audiotrack
                         MediaType.VIDEO -> Icons.Default.VideoLibrary
+                        MediaType.IMAGE -> Icons.Default.Photo
                         null -> Icons.Default.BrokenImage
                     },
                     contentDescription = null,

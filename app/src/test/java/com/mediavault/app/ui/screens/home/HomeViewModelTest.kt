@@ -6,6 +6,8 @@ import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.MediaCollectionItem
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import com.mediavault.core.domain.extractor.PlaylistItem
@@ -598,6 +600,156 @@ class HomeViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(1, fakeDownloadEngine.enqueuedPlaylists.size)
+        assertTrue(viewModel.uiState.value.justQueued)
+    }
+
+    // --- Image collection (single image / carousel) download --------------------------
+
+    private fun collectionItem(index: Int, id: String = "shortcode_$index") = MediaCollectionItem(
+        id = id,
+        index = index,
+        imageUrl = "https://cdn.example.com/img$index.jpg",
+        thumbnailUrl = "https://cdn.example.com/thumb$index.jpg",
+    )
+
+    private fun sampleCollection(items: List<MediaCollectionItem>, webpageUrl: String? = "https://instagram.com/p/shortcode/") =
+        MediaCollectionResult(
+            id = "shortcode",
+            sourceName = "Instagram",
+            title = "A caption",
+            thumbnailUrl = "https://cdn.example.com/thumb1.jpg",
+            webpageUrl = webpageUrl,
+            items = items,
+        )
+
+    private suspend fun loadCollection(items: List<MediaCollectionItem>) {
+        fakeEngine.nextResult = AppResult.Success(ExtractionResult.Collection(sampleCollection(items)))
+        viewModel.onUrlChanged("https://instagram.com/p/shortcode/")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun `downloading a single-image collection enqueues exactly one image task, ungrouped`() = runTest {
+        loadCollection(listOf(collectionItem(1)))
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val request = fakeDownloadEngine.enqueued.single()
+        assertEquals(MediaType.IMAGE, request.mediaType)
+        assertEquals("1", request.formatId)
+        assertEquals("https://instagram.com/p/shortcode/", request.sourceUrl)
+        assertNull(request.playlistContext) // a "batch of one" gets no group header
+        assertTrue(viewModel.uiState.value.justQueued)
+    }
+
+    @Test
+    fun `downloading an entire carousel enqueues one task per item, in order, grouped`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2), collectionItem(3)))
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val requests = fakeDownloadEngine.enqueued
+        assertEquals(3, requests.size)
+        assertEquals(listOf("1", "2", "3"), requests.map { it.formatId })
+        assertEquals(listOf(1, 2, 3), requests.map { it.playlistContext?.itemIndex })
+        // Every item shares the same group id, and only one group id was generated.
+        val groupIds = requests.mapNotNull { it.playlistContext?.playlistId }.toSet()
+        assertEquals(1, groupIds.size)
+    }
+
+    @Test
+    fun `downloading selected carousel items only enqueues those items`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2), collectionItem(3)))
+        viewModel.onCollectionItemTapped(collectionItem(1))
+        viewModel.onCollectionItemTapped(collectionItem(3))
+
+        viewModel.downloadSelectedCollectionItems()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("1", "3"), fakeDownloadEngine.enqueued.map { it.formatId })
+    }
+
+    @Test
+    fun `a selected subset of a carousel is still numbered against the full collection size, not the batch size`() = runTest {
+        // Confirmed live on a Pixel 7a: downloading only items 2 and 4 out of a real 5-image
+        // carousel previously labeled them "(2/2)" and "(4/2)" — numbered against the
+        // 2-item *download batch*, not the collection's real 5-item shape, producing a
+        // nonsensical "(4/2)" (position 4 of only 2).
+        loadCollection(listOf(collectionItem(1), collectionItem(2), collectionItem(3), collectionItem(4), collectionItem(5)))
+        viewModel.onCollectionItemTapped(collectionItem(2))
+        viewModel.onCollectionItemTapped(collectionItem(4))
+
+        viewModel.downloadSelectedCollectionItems()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val titles = fakeDownloadEngine.enqueued.map { it.title }
+        assertTrue(titles.any { it.endsWith("(2/5)") })
+        assertTrue(titles.any { it.endsWith("(4/5)") })
+    }
+
+    @Test
+    fun `downloading a carousel with nothing selected asks the user to select first`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2)))
+
+        viewModel.downloadSelectedCollectionItems()
+
+        assertEquals("Select at least one item first.", viewModel.uiState.value.infoMessage)
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+    }
+
+    @Test
+    fun `an already-downloaded carousel item is skipped when the skip toggle is on`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2)))
+        fakeDownloadEngine.alreadyDownloadedSourceMediaIds = setOf(collectionItem(1).id)
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("2"), fakeDownloadEngine.enqueued.map { it.formatId })
+    }
+
+    @Test
+    fun `an already-downloaded carousel item still queues when the skip toggle is off`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2)))
+        fakeDownloadEngine.alreadyDownloadedSourceMediaIds = setOf(collectionItem(1).id)
+        viewModel.onSkipAlreadyDownloadedToggled(false)
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("1", "2"), fakeDownloadEngine.enqueued.map { it.formatId })
+    }
+
+    @Test
+    fun `a blocked collection download is never enqueued and shows the block reason`() = runTest {
+        loadCollection(listOf(collectionItem(1)))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Block("Today's mobile-data budget is used up.")
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+        assertEquals("Today's mobile-data budget is used up.", viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun `a risky collection download waits for confirmation, then enqueues the same items once confirmed`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2)))
+        fakeNetworkPolicyManager.decision = NetworkPolicyDecision.Warn("This may exceed today's remaining mobile-data budget.")
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(fakeDownloadEngine.enqueued.isEmpty())
+        assertTrue(viewModel.uiState.value.networkWarning is NetworkWarning.Collection)
+
+        viewModel.onNetworkWarningConfirmed()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("1", "2"), fakeDownloadEngine.enqueued.map { it.formatId })
         assertTrue(viewModel.uiState.value.justQueued)
     }
 

@@ -119,6 +119,8 @@ class MediaVaultDownloadEngine @Inject constructor(
                     sourceMediaId = request.sourceMediaId,
                     playlistId = request.playlistContext?.playlistId,
                     playlistItemIndex = request.playlistContext?.itemIndex,
+                    playlistTitle = request.playlistContext?.playlistTitle,
+                    playlistThumbnailUrl = request.playlistContext?.playlistThumbnailUrl,
                     durationSeconds = request.durationSeconds,
                     resolutionLabel = request.resolutionLabel,
                     createdAtEpochMs = now,
@@ -392,6 +394,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             sourceUrl = task.sourceUrl,
             formatId = task.formatId.orEmpty(),
             destinationPath = cachePath,
+            preferredEngineId = task.mediaType.preferredEngineIdOrNull(),
         )
 
         extractorEngine.download(request).collect { event ->
@@ -690,6 +693,15 @@ internal fun DownloadTaskEntity.retryNextStatusOrNull(): DownloadStatus? {
  */
 internal fun DownloadTaskEntity.isRemovable(): Boolean =
     status == DownloadStatus.FAILED || status == DownloadStatus.CANCELLED || status == DownloadStatus.COMPLETED
+
+/**
+ * Routing hint for [com.mediavault.app.extractor.CompositeExtractorEngine] — see
+ * [ExtractionRequest.preferredEngineId]'s own KDoc for why this exists at all. Only meaningful
+ * where more than one backend's `canHandle` can agree on the same URL (an Instagram post: a
+ * video-first backend and an image backend); every other [MediaType] has exactly one backend
+ * that would ever claim it, so no hint is needed and this correctly returns null.
+ */
+internal fun MediaType.preferredEngineIdOrNull(): String? = if (this == MediaType.IMAGE) "instaloader" else null
 
 /** Pure: which playlists have format resolution stuck (an ANALYZING task with no live coroutine behind it — e.g. after process death). */
 internal fun List<DownloadTaskEntity>.playlistIdsNeedingResolution(): List<String> =

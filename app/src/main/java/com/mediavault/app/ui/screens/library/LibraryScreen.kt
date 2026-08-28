@@ -73,12 +73,15 @@ import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.screens.home.formatDurationLabel
 import com.mediavault.app.ui.screens.home.formatFileSizeLabel
 import com.mediavault.core.database.entity.MediaItemEntity
+import com.mediavault.core.model.MediaType
 import kotlinx.coroutines.delay
 
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
     onOpenPlayer: (String) -> Unit = {},
+    /** A `MediaType.IMAGE` item never opens in the video/audio Player — see `ImageViewerScreen`. */
+    onOpenImageViewer: (String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -119,7 +122,7 @@ fun LibraryScreen(
         onSearchQueryChanged = viewModel::onSearchQueryChanged,
         onSortOrderChanged = viewModel::onSortOrderChanged,
         onAddMediaClicked = { showImportChooser = true },
-        onPlay = { onOpenPlayer(it.id) },
+        onPlay = { item -> if (item.mediaType == MediaType.IMAGE) onOpenImageViewer(item.id) else onOpenPlayer(item.id) },
         onShare = { item ->
             val uri = viewModel.shareUriFor(item) ?: return@LibraryScreenContent
             val mimeType = mimeTypeFor(item)

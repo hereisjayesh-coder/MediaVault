@@ -27,6 +27,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mediavault.app.ui.screens.downloads.DownloadsScreen
 import com.mediavault.app.ui.screens.home.HomeScreen
+import com.mediavault.app.ui.screens.imageviewer.ImageViewerScreen
+import com.mediavault.app.ui.screens.imageviewer.ImageViewerViewModel
 import com.mediavault.app.ui.screens.legal.LegalDocumentScreen
 import com.mediavault.app.ui.screens.library.LibraryScreen
 import com.mediavault.app.ui.screens.player.PlayerHubScreen
@@ -41,6 +43,7 @@ import com.mediavault.app.R
 private const val SOURCES_ROUTE = "sources"
 private const val SOURCE_DETAIL_ROUTE = "sources/{${SourceDetailViewModel.SOURCE_ID_ARG}}"
 private const val PLAYER_ITEM_ROUTE = "player/{${PlayerViewModel.MEDIA_ITEM_ID_ARG}}"
+private const val IMAGE_VIEWER_ROUTE = "image/{${ImageViewerViewModel.MEDIA_ITEM_ID_ARG}}"
 private const val SETTINGS_PRIVACY_ROUTE = "settings/privacy"
 private const val SETTINGS_TERMS_ROUTE = "settings/terms"
 private const val SETTINGS_LICENSES_ROUTE = "settings/licenses"
@@ -158,10 +161,16 @@ fun MediaVaultNavHost() {
                 )
             }
             composable(MediaVaultDestination.DOWNLOADS.route) {
-                DownloadsScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
+                DownloadsScreen(
+                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                    onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
+                )
             }
             composable(MediaVaultDestination.LIBRARY.route) {
-                LibraryScreen(onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") })
+                LibraryScreen(
+                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                    onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
+                )
             }
             composable(MediaVaultDestination.PLAYER.route) {
                 PlayerHubScreen(
@@ -194,6 +203,14 @@ fun MediaVaultNavHost() {
                 arguments = listOf(navArgument(PlayerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
             ) {
                 PlayerScreen(onBackToLibrary = { navController.popBackStack() })
+            }
+
+            // A downloaded image's dedicated preview — never the video/audio Player route above.
+            composable(
+                route = IMAGE_VIEWER_ROUTE,
+                arguments = listOf(navArgument(ImageViewerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
+            ) {
+                ImageViewerScreen(onBack = { navController.popBackStack() })
             }
 
             composable(SOURCES_ROUTE) {

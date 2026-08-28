@@ -2922,4 +2922,168 @@ affected areas exercised live on-device.
 
 ---
 
+### 2026-08-28 — Second extraction backend researched for image/social-post media: Instaloader (MIT) recommended for Instagram, gallery-dl (GPL-2.0) rejected, no app code changed yet
+
+**Decision:** This is a **research and proof-of-concept stage only** — nothing described here is
+integrated into the app. It directly follows up the "image support left unbuilt for lack of a real
+extractable case" entry immediately above: that entry said image support should only be built once
+a real, working extraction case is confirmed by live testing, not by trusting a catalog entry. This
+stage went looking for that real case, outside `yt-dlp` entirely, via an isolated Python
+virtual-environment harness (not Chaquopy, not the app — see "Where this is documented" below) run
+against real, public, current posts from official/brand accounts (`@nasa` on Instagram, `r/pics` on
+Reddit) — the same "real content, honest results" standard the QA pass above used.
+
+**Two candidate backends were installed and tested: `gallery-dl` and `Instaloader`.** Both are
+pure-Python with a single shared runtime dependency (`requests`), so both are Chaquopy-compatible
+in principle (no native/compiled extensions to cross-compile for `arm64-v8a`/`x86_64`, matching why
+Chaquopy was viable for yt-dlp in the first place — see the 2026-08-24 entry above). The decision
+between them came down to license and actual test results, not packaging.
+
+**Test matrix (both backends, plus the existing yt-dlp `2026.8.19` baseline for regression cases),
+run against real public posts:**
+
+| Case | yt-dlp (existing, unchanged) | gallery-dl `1.32.9` | Instaloader `4.15.3` |
+|---|---|---|---|
+| Instagram single image (`instagram.com/p/DW41Gcbjbgd/`, @nasa) | Not attempted (already known UNSUPPORTED — no video) | **FAIL** — HTTP redirect to Instagram's login page (`AbortExtraction`) | **PASS**, unauthenticated — 2 images, real JPEGs (279 KB, 293 KB) downloaded, verified by magic bytes |
+| Instagram carousel (`instagram.com/p/DSqFHXOk2Pn/`, @nasa, 5 images) | Not attempted | **FAIL** — same login redirect | **PASS**, unauthenticated — `mediacount: 5`, all 5 items enumerated with per-item `display_url`, all 5 downloaded as real JPEGs (319–439 KB each) |
+| Instagram Reel/video (regression) | **PASS** (already verified live, unchanged by this research) | Not applicable — image-only tool, video stays on yt-dlp regardless of this decision | Informational only: correctly resolved `typename: GraphVideo`, `is_video: true`, and a real `video_url` — confirms Instaloader *could* also serve video, but this project keeps yt-dlp as the sole video backend per this task's own constraint |
+| Facebook image post (`facebook.com/NASA/photos`) | Already known UNSUPPORTED (QA pass above) | **FAIL** — explicit `AuthRequired`: *"You must be logged in to continue viewing images."* | Not applicable — Instaloader is Instagram-only, has no Facebook extractor at all |
+| Facebook video (regression) | **PASS** (already verified live, unchanged by this research) | Not applicable | Not applicable |
+| Reddit image post (`reddit.com/r/pics/comments/1w0mfi4/sunrise_on_lake_ontario/`) | **Resolves correctly but fails to download**: yt-dlp's own Reddit extractor authenticates via its existing "session via old reddit" cookie handshake, downloads real JSON metadata, and correctly identifies the direct asset (`i.redd.it/u6q1zo1jb3mh1.jpeg`) — it then hands that URL to the generic extractor, which has no "just save these bytes" path for a bare image URL and errors `Unsupported URL`. **A plain HTTP GET of that same resolved URL succeeds** (200, real JPEG, 312,497 bytes) — proven directly in the PoC harness. | **FAIL** — `reddit.com`'s listing *and* single-post JSON endpoints both returned an HTTP 403 anti-bot challenge page to gallery-dl's session, reproducibly, even with a realistic browser `User-Agent` set explicitly | Not applicable — Instagram-only tool |
+| Reddit video (regression) | **PASS** — inferred from `RedditIE` being a mature, version-pinned yt-dlp extractor this research does not touch; not freshly re-run live this stage (Reddit's listing/RSS endpoints were rate-limiting — HTTP 429 — the discovery step, not `RedditIE` itself) per this project's "don't repeat successful tests unnecessarily" rule | Not applicable | Not applicable |
+
+**License and runtime findings (verified against each package's actual bundled `LICENSE` file, not
+just PyPI metadata):**
+
+* **gallery-dl `1.32.9`: GPL-2.0-only** (verified against the literal GPLv2 text in its own
+  `dist-info/licenses/LICENSE`). This is the same class of problem the 2026-08-24 Chaquopy-vs-
+  `youtubedl-android` entry above already rejected once: bundling GPL-licensed source into the APK
+  (which is what Chaquopy does — it embeds actual Python source/bytecode as app assets) puts the
+  combined work under GPL's distribution obligations, in direct conflict with this project's MIT
+  license. **Rejected on license grounds alone**, independent of its test results.
+* **Instaloader `4.15.3`: MIT** (verified against its own bundled `LICENSE`) — fully compatible,
+  same permissive category as yt-dlp (Unlicense) and Chaquopy (MIT).
+* **Runtime footprint**: gallery-dl is 8.1 MB of pure-Python source (plus `requests`/`urllib3`/
+  `certifi`/`idna`/`charset_normalizer`, ~3.2 MB combined, not currently installed for yt-dlp since
+  its Chaquopy `pip install` line has no `[default]` extras). Instaloader is 744 KB plus the same
+  shared `requests` family — under 4 MB total added to the APK if adopted alone. Neither has a
+  compiled/native dependency of its own; both declare only `requests` as a hard requirement
+  (verified via each package's `Requires-Dist` metadata).
+* **Authentication**: Instaloader has a first-class, documented anonymous mode (`anonymous_copy()`)
+  and only raises a specific `LoginRequiredException` for content that genuinely needs it (private
+  profiles, stories) — every case in the matrix above worked with zero cookies/login. gallery-dl's
+  Instagram and Facebook extractors both required a login session for every case tested here; its
+  Reddit extractor was blocked before authentication even became relevant (an anti-bot challenge,
+  not a login wall).
+
+**Why Reddit doesn't need a second backend at all:** the failure mode there isn't "no extractor can
+find the image" — yt-dlp already finds it correctly, every time, using access it already has. The
+gap is narrowly that nothing in the existing pipeline will save a resolved direct-image URL's bytes
+once yt-dlp's own extractor hands one back instead of a further-parseable page. Closing this is a
+small, self-contained addition to `mediavault_ytdlp.py`/`YtDlpResultMapper` (detect this specific
+"resolved to a direct, non-video media URL" shape and let `ExtractorEngine.download()` do a plain
+byte-fetch instead of invoking `yt_dlp.YoutubeDL.download()`) — **not** part of the Instaloader
+decision, and deliberately scoped as its own future, much smaller follow-up rather than bundled in
+here.
+
+**Why Facebook image support is not being pursued:** every unauthenticated tool tested here —
+yt-dlp (already known, QA pass above) and gallery-dl (this stage) — hits an explicit login
+requirement for Facebook photo content, not a missing-extractor gap. The only way past that is a
+user-supplied logged-in session (cookies), which conflicts with §25's "no unnecessary accounts"
+privacy default and would need real product/legal sign-off before being considered, not a quiet
+extractor addition. Documented here as a confirmed, tested limitation rather than left ambiguous.
+
+**Recommended architecture, if/when Instagram image support is actually built** (proposed here for
+review — no part of it exists in the codebase yet):
+
+* `ExtractorEngine`'s public shape (`canHandle`/`analyze`/`download`/`cancel`) does not change.
+  A second real implementation, `InstaloaderExtractorEngine` (new `core:extractor-instaloader`
+  module, mirroring `core:extractor-ytdlp`'s structure exactly — same Chaquopy setup pattern, same
+  thin bridge-script convention), sits behind the same interface.
+* A new, small `CompositeExtractorEngine` (Strategy/Chain-of-Responsibility over an injected
+  `Set<ExtractorEngine>` via Hilt multibinding, yt-dlp ordered first per this task's "yt-dlp remains
+  primary" constraint) becomes the one thing `ExtractorModule` binds to `ExtractorEngine`. It is the
+  *only* place that knows more than one backend exists — the UI, `DownloadEngine`, and everything
+  else keep depending on the plain `ExtractorEngine` interface, unchanged. A `taskId -> engine` map
+  lets `download`/`cancel` be routed to whichever backend's `analyze` actually claimed that task.
+  **This is also the answer to "can another engineer add a third backend easily": implement
+  `ExtractorEngine` in a new module, add one line to the multibinding set — nothing else changes.**
+* `MediaType` gains one new case, `IMAGE` — a real, stored file type (Library display, export,
+  etc.), symmetric with the existing `VIDEO`/`AUDIO`. **`COLLECTION` is deliberately *not* proposed
+  as a `MediaType`** — nothing is ever stored as "a collection"; a downloaded carousel is N
+  independent `MediaType.IMAGE` files. "Collection" belongs at the *analysis* layer only: a new
+  `ExtractionResult.Collection(val collection: MediaCollectionResult)` case, added the same way
+  `ExtractionResult.Playlist` was added alongside `Single` — `MediaCollectionResult` is a small,
+  purely image-shaped sibling to `PlaylistAnalysisResult` (id/title/caption/thumbnail + ordered
+  `MediaCollectionItem`s), never `MediaFormat` (whose codec/fps/bitrate fields describe video/audio
+  streams and mean nothing for a JPEG — reusing it for images would be a modeling mismatch, not
+  reuse).
+* **No new download-engine code.** A single image reuses `DownloadEngine.enqueue`/
+  `MediaVaultDownloadEngine.runSingleStreamDownload` exactly as-is — from that layer's perspective
+  it is just another `DownloadRequest` whose `ExtractorEngine.download()` happens to be backed by
+  Instaloader instead of yt-dlp. A carousel reuses `DownloadEngine.enqueuePlaylist`/
+  `PlaylistDownloadRequest` exactly as-is — from that layer's perspective a carousel *is* a
+  playlist whose items happen to be images: same queue, same per-item progress/pause/resume/retry,
+  same duplicate detection, same process-death recovery, zero new code. This reuse is the single
+  biggest reason image support is cheap once a real backend exists: the hard, already-tested parts
+  (queueing N independent items from one source) were already built for video playlists.
+* UI: `HomeViewModel`/`HomeScreen` would gain an `ExtractionResult.Collection` branch alongside the
+  existing `Single`/`Playlist` ones, reusing the playlist selection-toolbar pattern (multi-select,
+  "download all"/"download selected") but skipping the quality-picker step entirely — a JPEG has no
+  quality tiers to choose between. A Library image viewer is explicitly **out of scope** of this
+  proposal; it is a real, separate product/UI decision this research does not make.
+
+**Whether to proceed:** **Yes, for Instagram, via Instaloader** — a real backend passed every
+tested case unauthenticated, on a permissive license, with a small, native-dependency-free runtime
+footprint, and the architecture above reuses almost the entire existing playlist/queue/download
+stack rather than inventing a parallel one. **Not for Facebook** (confirmed login-gated, no
+extractor gap to close) and **not via gallery-dl at all** (GPL-2.0, and it failed every test case in
+this environment regardless). Reddit's image gap is real but does not require this decision — it is
+a small, separate follow-up to the existing yt-dlp path. None of the architecture above has been
+built; it is a recommendation for a future, explicitly-scoped milestone.
+
+**Where this is documented:** this entry and the CHANGELOG's "Researched" entry are the only record
+— the proof-of-concept harness (`il_probe.py`, a standalone Python venv, no Chaquopy/Android
+involved) lives outside the repository (the working machine's scratch directory) and was never
+intended to be committed, per this task's explicit "do not commit production integration" and "PoC
+only" instructions. `THIRD-PARTY-NOTICES.md` is intentionally not updated yet — nothing from this
+research ships in the app.
+
+---
+
+### 2026-08-28 — Instagram image/carousel support implemented: `CompositeExtractorEngine`, `MediaType.IMAGE`, and a real Chaquopy correction to the researched architecture
+
+**Decision:** Built the Instagram image/carousel support the 2026-08-28 research entry above recommended, with one load-bearing architecture correction discovered during implementation (not anticipated by that research) and two real bugs found and fixed during Pixel 7a verification.
+
+**The Chaquopy correction — the single biggest deviation from the plan.** The research entry proposed a standalone `core:extractor-instaloader` module mirroring `core:extractor-ytdlp`. Building exactly that compiled and packaged successfully, but failed at runtime on-device with `ModuleNotFoundError: No module named 'mediavault_instaloader'` — traced (via Chaquopy's own documentation, confirmed after the fact) to a hard, undocumented-until-you-hit-it constraint: **Chaquopy's Gradle plugin can only be applied in one module per app; applying it a second time builds without error but silently drops that module's Python source at runtime.** There is no supported way to have two separately-Chaquopy-enabled library modules in one app. Fix: `InstaloaderExtractorEngine`, its error/result mappers, and `mediavault_instaloader.py` all moved into `core:extractor-ytdlp` (both `instaloader==4.15.3` and `yt-dlp==2026.8.19` now pip-installed into that module's one shared Python environment); the standalone module was deleted. `InstaloaderExtractorEngine` keeps its own Kotlin package (`com.mediavault.core.extractor.instaloader`) for code-level separation — only the Gradle module and Python/pip environment are now shared, not the class boundaries. A future third Python-backed extractor must live in this same module for the same reason; a future *non*-Python backend (a plain HTTP-based one, say) has no such constraint and can be its own module freely.
+
+**Architecture actually implemented, otherwise as researched:**
+- `CompositeExtractorEngine` (`app/extractor/`) is the sole `ExtractorEngine` binding (`ExtractorModule.kt`), built from a Hilt `@IntoSet` multibinding of `YtDlpExtractorEngine` and `InstaloaderExtractorEngine` — neither the UI nor `DownloadEngine` know either concrete backend exists. Routing: a backend is a candidate only when its own `canHandle` (a local, offline check) matches; candidates are tried in priority order (yt-dlp first) and `analyze` falls through to the next candidate only on failure — the real case being yt-dlp correctly recognizing an Instagram URL but finding no video, at which point Instaloader gets a genuine turn. `Composite` has zero Instagram/platform-specific knowledge — every such decision stays inside each backend's own `canHandle`/error mapping.
+- **A real routing gap the research didn't foresee**: two backends can both legitimately claim the same URL (an Instagram post — yt-dlp for a Reel, Instaloader for an image), so `download()`/`cancel()`, called later with no `analyze` context, can't always re-derive the right backend from the URL alone. Fixed with `ExtractionRequest.preferredEngineId` (a new, generic, opaque hint field — meaningless to a single-backend engine, checked first by `Composite`, falling back to an in-memory "who last resolved this URL" map, then a plain first-match guess). `MediaVaultDownloadEngine` sets it from `task.mediaType == MediaType.IMAGE` — the one place in the whole app, besides `ExtractorModule`, that has any notion "instaloader" exists — keeping `Composite` itself fully generic. This specifically closes a correctness gap for resuming a paused/interrupted image download after process death, when nothing else remembers which backend produced it.
+- `MediaType` gained `IMAGE`. `ExtractionResult` gained `Collection(MediaCollectionResult)`, parallel to the existing `Playlist` — a single image and a multi-image carousel are the *same* shape (`items.size == 1` vs `> 1`), so there is no separate "single image" domain type or UI code path. `MediaCollectionResult`/`MediaCollectionItem` (new, `core:domain`) are deliberately not built from `MediaFormat` — its codec/fps/bitrate fields describe a video/audio stream and mean nothing for a static image.
+- **Zero new `DownloadEngine` methods** — a carousel is downloaded as N ordinary `DownloadEngine.enqueue()` calls (the existing single-item entry point), each tagged with `PlaylistDownloadContext` (a field that existed, unused, since the original Playlist Download Engine milestone) when there's more than one item, so it reuses the *exact* existing playlist-grouping/progress-aggregation the Downloads screen's "Playlists" section already renders — confirmed live, no code there needed to change at all. A single image (or a single selected item) enqueues as an ordinary standalone task, not a "group of one." `PlaylistDownloadContext` gained `playlistTitle`/`playlistThumbnailUrl` (previously absent — only `PlaylistDownloadRequest`'s own group-entity-building path had ever set those denormalized fields) so this new caller can populate the same group header the video-playlist path always could.
+- A new `ImageViewerScreen`/`ImageViewerViewModel` (`app/ui/screens/imageviewer/`, route `image/{mediaItemId}`) is a deliberately small, read-focused screen — full-bleed image, title, back, Share — entirely separate from `PlayerScreen`/`PlayerViewModel`/`PlayerEngine`, which are untouched. `LibraryScreen`'s and `DownloadsScreen`'s "open" actions branch on `MediaType.IMAGE` to route here instead of the video Player (`DownloadsViewModel`'s one-shot navigation signal was generalized from a bare `mediaItemId` to a `DownloadsOpenTarget` sealed type — `Player`/`ImageViewer` — since it previously had no way to know which route was correct without looking up the Library row's media type first). `LibraryRepository.saveToGallery()` gained a third `MediaType.IMAGE` branch (`MediaStore.Images.Media`/`DIRECTORY_PICTURES`) — the existing video/audio-only `if` there would otherwise have silently saved a downloaded image into the Music collection.
+
+**Two real bugs found and fixed during this stage's own Pixel 7a testing, not caught by unit tests beforehand:**
+- **A real Instagram caption can run to several paragraphs** (confirmed live: a NASA carousel post's caption plus its own appended "Image descriptions:" accessibility alt-text). The per-item download title was originally the caption verbatim — with no cap — and overflowed the entire Downloads screen instead of a normal one-line row. Fixed: `collectionItemTitle` now clips to the caption's first non-blank line, further capped at 80 characters with an ellipsis, for the *title* specifically — `MediaCollectionResult.title` itself stays the full, untruncated caption for wherever it's genuinely shown in full (the analysis preview card).
+- **Downloading a selected subset of a carousel numbered items against the wrong denominator**: selecting only images 2 and 4 out of a real 5-image post labeled them "(2/2)" and "(4/2)" — against the 2-item *download batch* size, not the carousel's real 5-item shape, producing a nonsensical "(4/2)" (position 4 of only 2). Root cause: `collectionItemTitle` was called with the selected batch's own size as `totalCount` instead of `collection.items.size`. Fixed to always number against the full collection, confirmed live by re-downloading the same subset and by a new regression test.
+
+**Verified live on a physical device (Pixel 7a)**, all 8 required checks, against real public Instagram posts (a NASA astronaut single-image post, and a real 5-image NASA carousel — the same posts the prior research stage validated Instaloader against):
+1. **Single-image analysis** — real thumbnail/caption/source shown, a single "Download" button, no selection toolbar (a batch of one).
+2. **Actual image download** — completed via the same `runSingleStreamDownload` path a muxed video/audio-only download already used; verified the real byte count reaches the UI too (see the size-reporting fix below).
+3. **Library appearance** — the downloaded image appeared in Library with a real thumbnail and file size, correctly typed `MediaType.IMAGE`.
+4. **Image viewer** — "Open" from both Library and Downloads routed to `ImageViewerScreen` (never `PlayerScreen`), showing the correct full-bleed image and title.
+5. **Carousel analysis** — a real 5-image post correctly showed "5 images", all five distinct real thumbnails in source order, and the multi-select toolbar.
+6. **Download all / selected** — both exercised live: "Download selected (2)" (items 2 and 4) queued exactly those two, independently; a second pass with "Download all" and "Skip already downloaded" on correctly skipped the already-completed 2 and 4 and queued only 1, 3, 5 — real, live proof of duplicate detection against genuinely different items, not just a unit-test fixture.
+7. **Order preserved** — confirmed both in the picker (items 1–5 showed their real, source-ordered thumbnails) and in the Downloads group ("1.", "3.", "5." rows, correctly keeping their *original* post position after the duplicate-skip filter, never renumbered to 1/2/3).
+8. **No crash** — a full Home → Downloads → Library → Player → Settings sweep after all of the above, including Library rows carrying both the old (pre-fix, overlong) and new (clipped) title formats side by side, rendered and navigated cleanly.
+
+A third real gap, found and fixed alongside the two above rather than separately: `InstaloaderExtractorEngine.download()` originally reported no real byte count (only one indeterminate progress event before an image's single HTTP GET, matching the "no segmented transfer to report progress on" reasoning) — but `MediaVaultDownloadEngine` only ever records `bytesTransferred` from a `Progress` event, never by independently checking the file, so every downloaded image would have shown no size anywhere (Library, Downloads, Details) despite being genuinely, fully downloaded. Fixed by emitting one real `Progress` event (actual file size, stat'd after the download completes) immediately before `Completed`.
+
+**Unsupported, unchanged from the research stage:** Facebook images (still login-gated for every tool tested; no cookie-login flow added, per §25's privacy default) and Reddit images (a separate, smaller follow-up to the existing yt-dlp path, out of this milestone's scope) — neither was touched by this implementation.
+
+**Where this is documented:** this entry, the CHANGELOG's "Added" entry for this stage, and `THIRD-PARTY-NOTICES.md`'s new Instaloader row.
+
+---
+
 **END OF MASTER SPECIFICATION**

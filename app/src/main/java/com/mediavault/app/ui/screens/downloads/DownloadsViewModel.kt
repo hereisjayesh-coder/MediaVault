@@ -7,6 +7,7 @@ import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.domain.download.DownloadProgress
 import com.mediavault.core.domain.download.PlaylistProgress
 import com.mediavault.core.domain.download.toPlaylistProgressGroups
+import com.mediavault.core.model.MediaType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,10 +40,10 @@ class DownloadsViewModel @Inject constructor(
     // Kept separate from `uiState` (which is entirely derived from `downloadEngine.observeAll()`)
     // rather than folding into `DownloadsUiState` — a one-shot navigation signal isn't part of
     // "what the download list looks like."
-    private val _openMediaItemId = MutableStateFlow<String?>(null)
-    val openMediaItemId: StateFlow<String?> = _openMediaItemId.asStateFlow()
+    private val _openTarget = MutableStateFlow<DownloadsOpenTarget?>(null)
+    val openTarget: StateFlow<DownloadsOpenTarget?> = _openTarget.asStateFlow()
 
-    // Same one-shot pattern as `_openMediaItemId`, for the failure case — a task whose
+    // Same one-shot pattern as `_openTarget`, for the failure case — a task whose
     // Library row can no longer be resolved (e.g. deleted/renamed out from under it).
     private val _openInPlayerError = MutableStateFlow<String?>(null)
     val openInPlayerError: StateFlow<String?> = _openInPlayerError.asStateFlow()
@@ -70,22 +71,33 @@ class DownloadsViewModel @Inject constructor(
      */
     fun openInPlayer(taskId: String) {
         viewModelScope.launch {
-            val mediaItemId = libraryRepository.getBySourceDownloadTaskId(taskId)?.id
-            if (mediaItemId == null) {
+            val item = libraryRepository.getBySourceDownloadTaskId(taskId)
+            if (item == null) {
                 _openInPlayerError.value = "Couldn't find this item in your Library. It may have been removed or renamed."
                 return@launch
             }
-            _openMediaItemId.value = mediaItemId
+            _openTarget.value = if (item.mediaType == MediaType.IMAGE) {
+                DownloadsOpenTarget.ImageViewer(item.id)
+            } else {
+                DownloadsOpenTarget.Player(item.id)
+            }
         }
     }
 
     fun consumeOpenInPlayer() {
-        _openMediaItemId.update { null }
+        _openTarget.update { null }
     }
 
     fun consumeOpenInPlayerError() {
         _openInPlayerError.update { null }
     }
+}
+
+/** Where "Open" on a completed task should navigate — never the video/audio Player for a `MediaType.IMAGE` item. */
+sealed class DownloadsOpenTarget {
+    abstract val mediaItemId: String
+    data class Player(override val mediaItemId: String) : DownloadsOpenTarget()
+    data class ImageViewer(override val mediaItemId: String) : DownloadsOpenTarget()
 }
 
 data class DownloadsUiState(

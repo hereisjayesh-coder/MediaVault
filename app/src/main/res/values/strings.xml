@@ -31,6 +31,15 @@
     <string name="home_playlist_setup_resolving">Checking available quality…</string>
     <string name="home_playlist_setup_queue">Queue %1$d item(s)</string>
 
+    <string name="home_collection_item_count">%1$d images</string>
+    <string name="home_collection_item_index">Image %1$d</string>
+    <string name="home_download_all_images">Download all</string>
+    <string name="home_download_selected_images">Download selected (%1$d)</string>
+
+    <string name="image_viewer_back">Back</string>
+    <string name="image_viewer_share">Share</string>
+    <string name="image_viewer_not_found">Couldn\'t find this image. It may have been removed.</string>
+
     <string name="home_popular_sources">Popular Sources</string>
     <string name="home_quick_actions">Quick Actions</string>
     <string name="home_quick_action_downloads_subtitle">View queue</string>

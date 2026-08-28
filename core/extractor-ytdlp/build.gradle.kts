@@ -38,9 +38,18 @@ chaquopy {
         // Must match the build machine's Python major.minor version.
         version = "3.14"
         pip {
-            // Pinned so the extraction-engine version is reproducible and independent of
-            // the app version, per the ExtractorEngine architecture rule.
+            // Pinned so each extraction-engine version is reproducible and independent of
+            // the app version, per the ExtractorEngine architecture rule. Both yt-dlp and
+            // Instaloader are installed here, in this one module — Chaquopy's Gradle plugin
+            // can only be applied in a single module per app (confirmed the hard way: applying
+            // it a second time in a separate core:extractor-instaloader module built
+            // successfully but silently dropped that module's Python source at runtime,
+            // `ModuleNotFoundError: No module named 'mediavault_instaloader'` — see
+            // PROJECT_MASTER.md's decision log). `InstaloaderExtractorEngine` still lives in
+            // its own Kotlin package (`com.mediavault.core.extractor.instaloader`) for code
+            // separation; only the Gradle module and Python/pip environment are shared.
             install("yt-dlp==2026.8.19")
+            install("instaloader==4.15.3")
         }
     }
 }

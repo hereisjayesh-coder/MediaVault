@@ -46,9 +46,14 @@ import com.mediavault.core.domain.download.PlaylistProgress
 import com.mediavault.core.model.DownloadStatus
 
 @Composable
-fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlayer: (String) -> Unit = {}) {
+fun DownloadsScreen(
+    viewModel: DownloadsViewModel = hiltViewModel(),
+    onOpenPlayer: (String) -> Unit = {},
+    /** A completed `MediaType.IMAGE` task's "Open" never opens the video/audio Player — see `ImageViewerScreen`. */
+    onOpenImageViewer: (String) -> Unit = {},
+) {
     val uiState by viewModel.uiState.collectAsState()
-    val openMediaItemId by viewModel.openMediaItemId.collectAsState()
+    val openTarget by viewModel.openTarget.collectAsState()
     val openInPlayerError by viewModel.openInPlayerError.collectAsState()
 
     // Only a COMPLETED task's removal needs confirmation — its Library media staying put isn't
@@ -57,9 +62,12 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = hiltViewModel(), onOpenPlaye
     // removals never touch any media, so they act immediately with no dialog.
     var pendingCompletedRemoval by remember { mutableStateOf<DownloadProgress?>(null) }
 
-    LaunchedEffect(openMediaItemId) {
-        val mediaItemId = openMediaItemId ?: return@LaunchedEffect
-        onOpenPlayer(mediaItemId)
+    LaunchedEffect(openTarget) {
+        when (val target = openTarget) {
+            is DownloadsOpenTarget.Player -> onOpenPlayer(target.mediaItemId)
+            is DownloadsOpenTarget.ImageViewer -> onOpenImageViewer(target.mediaItemId)
+            null -> return@LaunchedEffect
+        }
         viewModel.consumeOpenInPlayer()
     }
 

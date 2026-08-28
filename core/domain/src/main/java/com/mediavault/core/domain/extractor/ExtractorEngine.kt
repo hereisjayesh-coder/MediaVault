@@ -49,6 +49,8 @@ interface ExtractorEngine {
 sealed class ExtractionResult {
     data class Single(val media: MediaAnalysisResult) : ExtractionResult()
     data class Playlist(val playlist: PlaylistAnalysisResult) : ExtractionResult()
+    /** An image post or image carousel — see [MediaCollectionResult]. */
+    data class Collection(val collection: MediaCollectionResult) : ExtractionResult()
 }
 
 data class MediaAnalysisResult(
@@ -75,6 +77,18 @@ data class ExtractionRequest(
      * chosen SAF destination once [ExtractionEvent.Completed] arrives.
      */
     val destinationPath: String,
+    /**
+     * Opaque hint for a routing/composite [ExtractorEngine] implementation whose backends'
+     * [canHandle] can overlap for the same URL (e.g. an Instagram post is recognized by both a
+     * video-first backend and an image backend) — set to the [ExtractorEngine.engineId] that
+     * actually resolved this request's [analyze][ExtractorEngine.analyze] call, so a later
+     * [download]/[cancel] (including after process death, when an in-memory "which backend
+     * resolved this" record is gone) is routed to the *same* backend rather than re-derived
+     * from [sourceUrl] alone, which is ambiguous exactly when this hint matters. A single,
+     * non-composite engine implementation ignores this entirely. Null means "no preference —
+     * derive it the usual way," always correct for a source only one backend recognizes.
+     */
+    val preferredEngineId: String? = null,
 )
 
 sealed class ExtractionEvent {

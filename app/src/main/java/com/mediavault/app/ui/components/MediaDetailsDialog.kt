@@ -30,7 +30,7 @@ fun MediaDetailsDialog(item: MediaItemEntity, onDismiss: () -> Unit) {
         title = { Text(stringResource(R.string.library_details_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DetailRow(stringResource(R.string.library_details_type), if (item.mediaType == MediaType.AUDIO) "Audio" else "Video")
+                DetailRow(stringResource(R.string.library_details_type), mediaTypeLabel(item.mediaType))
                 formatDurationLabel(item.durationMs?.let { it / 1000 })?.let { DetailRow(stringResource(R.string.library_details_duration), it) }
                 item.resolutionLabel?.let { DetailRow(stringResource(R.string.library_details_resolution), it) }
                 formatFileSizeLabel(item.sizeBytes)?.let { DetailRow(stringResource(R.string.library_details_size), it) }
@@ -43,6 +43,12 @@ fun MediaDetailsDialog(item: MediaItemEntity, onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.library_details_close)) }
         },
     )
+}
+
+private fun mediaTypeLabel(mediaType: MediaType): String = when (mediaType) {
+    MediaType.AUDIO -> "Audio"
+    MediaType.VIDEO -> "Video"
+    MediaType.IMAGE -> "Image"
 }
 
 @Composable

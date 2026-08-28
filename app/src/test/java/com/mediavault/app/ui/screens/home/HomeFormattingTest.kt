@@ -4,6 +4,7 @@ import com.mediavault.core.domain.download.buildDownloadOptions
 import com.mediavault.core.model.MediaFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeFormattingTest {
@@ -213,5 +214,67 @@ class HomeFormattingTest {
         val option = buildDownloadOptions(listOf(format)).single()
 
         assertNull(estimatedPlaylistTotalSizeBytes(option, 3))
+    }
+
+    // --- Image collection titles / container detection --------------------------------
+
+    private fun sampleCollection(title: String = "A caption") = com.mediavault.core.domain.extractor.MediaCollectionResult(
+        id = "abc", sourceName = "Instagram", title = title, thumbnailUrl = null, webpageUrl = null, items = emptyList(),
+    )
+
+    private fun sampleItem(index: Int) = com.mediavault.core.domain.extractor.MediaCollectionItem(
+        id = "abc_$index", index = index, imageUrl = "https://cdn.example.com/i$index.jpg", thumbnailUrl = null,
+    )
+
+    @Test
+    fun `a single-image title uses the caption verbatim, with no numbering`() {
+        assertEquals("A caption", collectionItemTitle(sampleCollection(), sampleItem(1), totalCount = 1))
+    }
+
+    @Test
+    fun `a single image with no caption falls back to a generic title, never blank`() {
+        assertEquals("Image", collectionItemTitle(sampleCollection(title = ""), sampleItem(1), totalCount = 1))
+    }
+
+    @Test
+    fun `a carousel item title numbers the caption against the total item count`() {
+        assertEquals("A caption (2/5)", collectionItemTitle(sampleCollection(), sampleItem(2), totalCount = 5))
+    }
+
+    @Test
+    fun `a carousel item with no caption falls back to a generic numbered title`() {
+        assertEquals("Image 3", collectionItemTitle(sampleCollection(title = "  "), sampleItem(3), totalCount = 5))
+    }
+
+    @Test
+    fun `a long caption is clipped to one short line, never overflowing the Downloads or Library row it becomes a title in`() {
+        // Confirmed live on a Pixel 7a: a real NASA Instagram carousel's caption plus its own
+        // appended "Image descriptions:" alt-text ran to several paragraphs and, before this
+        // clip existed, became the stored task title verbatim — overflowing the entire
+        // Downloads screen instead of a normal one-line row.
+        val longCaption = "A".repeat(200)
+        val title = collectionItemTitle(sampleCollection(title = longCaption), sampleItem(1), totalCount = 1)
+
+        assertTrue(title.length <= 81) // 80 chars + the ellipsis character
+        assertTrue(title.endsWith("…"))
+    }
+
+    @Test
+    fun `a multi-line caption's title uses only the first non-blank line`() {
+        val caption = "\n\nTwas the night before Christmas\nSecond paragraph goes on for a while here"
+        val title = collectionItemTitle(sampleCollection(title = caption), sampleItem(1), totalCount = 1)
+
+        assertEquals("Twas the night before Christmas", title)
+    }
+
+    @Test
+    fun `image container is sniffed from a known extension in the direct URL`() {
+        assertEquals("png", imageContainerFor("https://cdn.example.com/photo.png?w=1080"))
+        assertEquals("webp", imageContainerFor("https://cdn.example.com/photo.webp"))
+    }
+
+    @Test
+    fun `image container defaults to jpg when the URL has no recognizable extension`() {
+        assertEquals("jpg", imageContainerFor("https://cdn.example.com/i/abc123def"))
     }
 }

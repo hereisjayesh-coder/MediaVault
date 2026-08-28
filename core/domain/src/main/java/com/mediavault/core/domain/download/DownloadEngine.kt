@@ -94,6 +94,15 @@ data class PlaylistDownloadContext(
     val playlistId: String,
     /** 1-based position within the playlist — preserves download order. */
     val itemIndex: Int,
+    /**
+     * Denormalized group-header display fields — see [com.mediavault.core.database.entity.DownloadTaskEntity.playlistTitle]/`playlistThumbnailUrl`.
+     * Null is fine for a request that groups tasks without needing its own header (the group
+     * simply shows no title/thumbnail until a sibling task in the same [playlistId] supplies
+     * one) — callers that do have a natural title/thumbnail (e.g. an image collection) should
+     * set these so [com.mediavault.core.domain.download.PlaylistProgress] can display them.
+     */
+    val playlistTitle: String? = null,
+    val playlistThumbnailUrl: String? = null,
 )
 
 /** One playlist-wide "download these" operation — see [DownloadEngine.enqueuePlaylist]. */

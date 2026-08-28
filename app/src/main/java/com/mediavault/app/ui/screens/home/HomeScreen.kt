@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SignalCellularAlt
@@ -77,6 +78,8 @@ import com.mediavault.core.domain.download.DownloadOptionSection
 import com.mediavault.core.domain.download.groupedBySection
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.MediaCollectionItem
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import java.time.LocalTime
@@ -123,6 +126,9 @@ fun HomeScreen(
         onPlaylistOptionSelected = viewModel::onPlaylistOptionSelected,
         onQueuePlaylistClicked = viewModel::onQueuePlaylistClicked,
         onCancelPlaylistDownloadSetup = viewModel::cancelPlaylistDownloadSetup,
+        onCollectionItemTapped = viewModel::onCollectionItemTapped,
+        onDownloadEntireCollection = viewModel::downloadEntireCollection,
+        onDownloadSelectedCollectionItems = viewModel::downloadSelectedCollectionItems,
         onNetworkWarningConfirmed = viewModel::onNetworkWarningConfirmed,
         onNetworkWarningDismissed = viewModel::onNetworkWarningDismissed,
         onNavigateToDestination = onNavigateToDestination,
@@ -147,6 +153,9 @@ private fun HomeScreenContent(
     onPlaylistOptionSelected: (DownloadOption) -> Unit,
     onQueuePlaylistClicked: () -> Unit,
     onCancelPlaylistDownloadSetup: () -> Unit,
+    onCollectionItemTapped: (MediaCollectionItem) -> Unit,
+    onDownloadEntireCollection: () -> Unit,
+    onDownloadSelectedCollectionItems: () -> Unit,
     onNetworkWarningConfirmed: () -> Unit,
     onNetworkWarningDismissed: () -> Unit,
     onNavigateToDestination: (MediaVaultDestination) -> Unit,
@@ -231,6 +240,35 @@ private fun HomeScreenContent(
                             isSelected = playlistItem.id in uiState.playlistSelection.selectedItemIds,
                             onClick = { onPlaylistItemTapped(playlistItem) },
                         )
+                    }
+                }
+
+                is ExtractionResult.Collection -> {
+                    val collection = result.collection
+                    item {
+                        CollectionHeader(
+                            collection = collection,
+                            onDownloadSingleImage = onDownloadEntireCollection,
+                        )
+                    }
+                    if (collection.items.size > 1) {
+                        item {
+                            CollectionSelectionToolbar(
+                                selection = uiState.playlistSelection,
+                                onBeginRangeSelection = onBeginRangeSelection,
+                                onCancelSelection = onCancelSelection,
+                                onDownloadAll = onDownloadEntireCollection,
+                                onDownloadSelected = onDownloadSelectedCollectionItems,
+                                onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
+                            )
+                        }
+                        items(collection.items, key = { it.id }) { collectionItem ->
+                            CollectionItemRow(
+                                item = collectionItem,
+                                isSelected = collectionItem.id in uiState.playlistSelection.selectedItemIds,
+                                onClick = { onCollectionItemTapped(collectionItem) },
+                            )
+                        }
                     }
                 }
 
@@ -670,6 +708,52 @@ private fun PlaylistSelectionToolbar(
     onDownloadSelected: () -> Unit,
     onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
 ) {
+    SelectionToolbar(
+        selection = selection,
+        onBeginRangeSelection = onBeginRangeSelection,
+        onCancelSelection = onCancelSelection,
+        onDownloadAll = onDownloadEntirePlaylist,
+        onDownloadSelected = onDownloadSelected,
+        onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
+        downloadAllLabel = stringResource(R.string.home_download_playlist),
+        downloadSelectedLabel = stringResource(R.string.home_download_selected, selection.selectedItemIds.size),
+    )
+}
+
+/** Same multi-select toolbar as [PlaylistSelectionToolbar], worded for an image collection. Only shown for a genuine multi-image carousel — a single image skips selection entirely (see [CollectionHeader]). */
+@Composable
+private fun CollectionSelectionToolbar(
+    selection: PlaylistSelectionState,
+    onBeginRangeSelection: () -> Unit,
+    onCancelSelection: () -> Unit,
+    onDownloadAll: () -> Unit,
+    onDownloadSelected: () -> Unit,
+    onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
+) {
+    SelectionToolbar(
+        selection = selection,
+        onBeginRangeSelection = onBeginRangeSelection,
+        onCancelSelection = onCancelSelection,
+        onDownloadAll = onDownloadAll,
+        onDownloadSelected = onDownloadSelected,
+        onSkipAlreadyDownloadedToggled = onSkipAlreadyDownloadedToggled,
+        downloadAllLabel = stringResource(R.string.home_download_all_images),
+        downloadSelectedLabel = stringResource(R.string.home_download_selected_images, selection.selectedItemIds.size),
+    )
+}
+
+/** Range-select/skip-toggle/download toolbar shared by a video playlist and an image collection — the mechanics (toggle vs. range selection, skip-already-downloaded, "all" vs. "selected") don't depend on what kind of item is being selected, only the button wording does. */
+@Composable
+private fun SelectionToolbar(
+    selection: PlaylistSelectionState,
+    onBeginRangeSelection: () -> Unit,
+    onCancelSelection: () -> Unit,
+    onDownloadAll: () -> Unit,
+    onDownloadSelected: () -> Unit,
+    onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
+    downloadAllLabel: String,
+    downloadSelectedLabel: String,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onBeginRangeSelection, enabled = !selection.isRangeSelectionActive) {
@@ -704,17 +788,17 @@ private fun PlaylistSelectionToolbar(
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
-                onClick = onDownloadEntirePlaylist,
+                onClick = onDownloadAll,
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
-                Text(stringResource(R.string.home_download_playlist))
+                Text(downloadAllLabel)
             }
             Button(
                 onClick = onDownloadSelected,
                 enabled = selection.selectedItemIds.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
-                Text(stringResource(R.string.home_download_selected, selection.selectedItemIds.size))
+                Text(downloadSelectedLabel)
             }
         }
     }
@@ -825,6 +909,86 @@ private fun PlaylistItemRow(item: PlaylistItem, isSelected: Boolean, onClick: ()
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Preview card for an image post or carousel. A single image (the common "just one photo"
+ * post) gets its own inline Download button here — no selection toolbar/item list makes
+ * sense for a batch of one. A genuine multi-image carousel shows only the count here;
+ * [CollectionSelectionToolbar]/`CollectionItemRow` below it handle picking which images.
+ */
+@Composable
+private fun CollectionHeader(collection: MediaCollectionResult, onDownloadSingleImage: () -> Unit) {
+    val isSingleImage = collection.items.size <= 1
+    MediaVaultCard {
+        Icon(
+            imageVector = Icons.Default.Photo,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+
+        Thumbnail(collection.thumbnailUrl)
+
+        if (collection.title.isNotBlank()) {
+            Text(text = collection.title, style = MaterialTheme.typography.titleMedium, maxLines = 3)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = collection.sourceName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            if (!isSingleImage) {
+                Text(
+                    text = stringResource(R.string.home_collection_item_count, collection.items.size),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (isSingleImage) {
+            Button(
+                onClick = onDownloadSingleImage,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = collection.items.isNotEmpty(),
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(text = stringResource(R.string.home_download_button), modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionItemRow(item: MediaCollectionItem, isSelected: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = isSelected, onCheckedChange = { onClick() })
+
+            Thumbnail(
+                thumbnailUrl = item.thumbnailUrl,
+                modifier = Modifier
+                    .width(96.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(6.dp)),
+            )
+
+            Text(
+                text = stringResource(R.string.home_collection_item_index, item.index),
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }

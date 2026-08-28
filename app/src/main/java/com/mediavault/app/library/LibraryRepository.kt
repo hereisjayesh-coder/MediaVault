@@ -216,12 +216,16 @@ class AndroidLibraryRepository @Inject constructor(
         // no business deleting as a side effect of an unrelated "also save a copy" action.
         val ownsPrivateFile = sourceUri.scheme == "file" && item.canDeleteUnderlyingFile()
 
-        val collection = if (item.mediaType == MediaType.VIDEO) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val collection = when (item.mediaType) {
+            MediaType.VIDEO -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            MediaType.AUDIO -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            MediaType.IMAGE -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         }
-        val relativeDir = if (item.mediaType == MediaType.VIDEO) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_MUSIC
+        val relativeDir = when (item.mediaType) {
+            MediaType.VIDEO -> Environment.DIRECTORY_MOVIES
+            MediaType.AUDIO -> Environment.DIRECTORY_MUSIC
+            MediaType.IMAGE -> Environment.DIRECTORY_PICTURES
+        }
         val insertValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, exportFileName(item))
             put(MediaStore.MediaColumns.MIME_TYPE, mimeTypeFor(item))

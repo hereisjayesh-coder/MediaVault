@@ -1,6 +1,8 @@
 package com.mediavault.app.ui.screens.home
 
 import com.mediavault.core.domain.download.DownloadOption
+import com.mediavault.core.domain.extractor.MediaCollectionItem
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.model.MediaFormat
 
 /** "596" -> "9:56", "3725" -> "1:02:05". Returns null when there's nothing to show. */
@@ -138,3 +140,45 @@ fun estimatedPlaylistTotalSizeBytes(option: DownloadOption?, itemCount: Int): Lo
 
 /** Never invents a language name — just shows the raw code the source reported, exactly like [com.mediavault.core.model.MediaTrackInfo]'s own contract. */
 private fun languageSuffix(languageCode: String?): String = languageCode?.let { " [$it]" }.orEmpty()
+
+/**
+ * Title to store for one enqueued image download: the post's own caption when it has one
+ * (numbered against [totalCount] so sibling images in the same carousel are distinguishable in
+ * the Library/Downloads list), falling back to a generic "Image"/"Image N" — never blank, never
+ * inventing wording the source didn't provide. [captionTitleLine] caps it to one short line —
+ * a Downloads/Library row title is UI real estate, not a caption-display field, and a real
+ * Instagram caption can run to several paragraphs (confirmed live: a NASA post's caption plus
+ * its own appended accessibility alt-text overflowed the entire Downloads screen before this
+ * cap existed). The full, untruncated caption stays intact on [MediaCollectionResult.title]
+ * for wherever a caption genuinely should be shown in full (the analysis preview card).
+ */
+fun collectionItemTitle(collection: MediaCollectionResult, item: MediaCollectionItem, totalCount: Int): String {
+    val caption = captionTitleLine(collection.title)
+    return when {
+        totalCount <= 1 && caption.isNotEmpty() -> caption
+        totalCount <= 1 -> "Image"
+        caption.isNotEmpty() -> "$caption (${item.index}/$totalCount)"
+        else -> "Image ${item.index}"
+    }
+}
+
+private const val MAX_CAPTION_TITLE_LENGTH = 80
+
+/** The caption's first line, further capped to [MAX_CAPTION_TITLE_LENGTH] characters with an ellipsis — never a guess at what the rest says, just a visible clip of what's actually there. */
+private fun captionTitleLine(caption: String): String {
+    val firstLine = caption.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    return if (firstLine.length > MAX_CAPTION_TITLE_LENGTH) {
+        firstLine.take(MAX_CAPTION_TITLE_LENGTH).trimEnd() + "…"
+    } else {
+        firstLine
+    }
+}
+
+private val KNOWN_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "heic")
+
+/** The saved file's extension for a downloaded image: sniffed from the direct URL's own path when it looks like a real image extension, otherwise "jpg" — the container every image source tested so far actually serves, never a guess dressed up as certainty. */
+fun imageContainerFor(imageUrl: String): String {
+    val path = imageUrl.substringBefore('?').substringBefore('#')
+    val extension = path.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+    return extension.takeIf { it in KNOWN_IMAGE_EXTENSIONS } ?: "jpg"
+}

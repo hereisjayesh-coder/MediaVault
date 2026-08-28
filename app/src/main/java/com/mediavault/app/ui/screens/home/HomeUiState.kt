@@ -12,6 +12,7 @@ data class HomeUiState(
     /** Non-error status feedback, e.g. confirming a selection action that can't actually download yet. */
     val infoMessage: String? = null,
     val result: ExtractionResult? = null,
+    /** Multi-select state for [ExtractionResult.Playlist] *and* [ExtractionResult.Collection] alike — the same toggle/range-select/skip-already-downloaded concept applies to both, just over different item types. */
     val playlistSelection: PlaylistSelectionState = PlaylistSelectionState(),
     /** Real device status (storage free space, network transport) — read once when Home loads. */
     val freeStorageBytes: Long? = null,
@@ -33,6 +34,7 @@ sealed class NetworkWarning {
     abstract val reason: String
     data class Single(override val reason: String) : NetworkWarning()
     data class Playlist(override val reason: String) : NetworkWarning()
+    data class Collection(override val reason: String) : NetworkWarning()
 }
 
 /**

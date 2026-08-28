@@ -54,14 +54,27 @@ class DownloadsViewModelTest {
     )
 
     @Test
-    fun `opening a completed task resolves the library item it produced`() = runTest {
+    fun `opening a completed video task resolves it as a Player target`() = runTest {
         libraryRepository.setItems(listOf(libraryItem(id = "media-1", sourceDownloadTaskId = "task-1")))
         val viewModel = viewModel()
 
         viewModel.openInPlayer("task-1")
         dispatcher.scheduler.runCurrent()
 
-        assertEquals("media-1", viewModel.openMediaItemId.value)
+        assertEquals(DownloadsOpenTarget.Player("media-1"), viewModel.openTarget.value)
+    }
+
+    @Test
+    fun `opening a completed image task resolves it as an ImageViewer target, never the Player`() = runTest {
+        libraryRepository.setItems(
+            listOf(libraryItem(id = "media-1", sourceDownloadTaskId = "task-1").copy(mediaType = MediaType.IMAGE)),
+        )
+        val viewModel = viewModel()
+
+        viewModel.openInPlayer("task-1")
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(DownloadsOpenTarget.ImageViewer("media-1"), viewModel.openTarget.value)
     }
 
     @Test
@@ -73,7 +86,7 @@ class DownloadsViewModelTest {
 
         viewModel.consumeOpenInPlayer()
 
-        assertNull(viewModel.openMediaItemId.value)
+        assertNull(viewModel.openTarget.value)
     }
 
     @Test
@@ -84,7 +97,7 @@ class DownloadsViewModelTest {
         viewModel.openInPlayer("task-1")
         dispatcher.scheduler.runCurrent()
 
-        assertNull(viewModel.openMediaItemId.value)
+        assertNull(viewModel.openTarget.value)
         assertEquals(
             "Couldn't find this item in your Library. It may have been removed or renamed.",
             viewModel.openInPlayerError.value,

@@ -7,6 +7,7 @@ import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.download.DownloadRequest
+import com.mediavault.core.domain.download.PlaylistDownloadContext
 import com.mediavault.core.domain.download.PlaylistDownloadItem
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
@@ -14,6 +15,8 @@ import com.mediavault.core.domain.download.buildDownloadOptions
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
+import com.mediavault.core.domain.extractor.MediaCollectionItem
+import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.domain.network.NetworkPolicyDecision
@@ -135,6 +138,10 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { it.copy(networkWarning = null) }
                 confirmPlaylistQueue(bypassNetworkCheck = true)
             }
+            is NetworkWarning.Collection -> {
+                _uiState.update { it.copy(networkWarning = null) }
+                confirmCollectionQueue(pendingCollectionDownloadItems, bypassNetworkCheck = true)
+            }
             null -> Unit
         }
     }
@@ -220,29 +227,42 @@ class HomeViewModel @Inject constructor(
     /** Toggles one item, or — while range selection is active — supplies the range's start/end. */
     fun onPlaylistItemTapped(item: PlaylistItem) {
         if (!item.isAvailable) return
+        handleItemTapped(item.id, currentPlaylistItems().filter { it.isAvailable }.map { it.id })
+    }
 
+    /** Same toggle/range-select behavior as [onPlaylistItemTapped], for an image collection's items — every collection item is always available (an unresolvable one simply never appears in [MediaCollectionResult.items]), unlike a playlist entry. */
+    fun onCollectionItemTapped(item: MediaCollectionItem) {
+        handleItemTapped(item.id, currentCollectionItems().map { it.id })
+    }
+
+    /**
+     * Shared toggle/range-selection logic for both playlist and image-collection multi-select
+     * — the algorithm (toggle outside range mode; anchor, then select the enclosed span, once
+     * range mode is active) doesn't depend on what kind of item is being selected, only on
+     * stable ids and their order within [selectableIds].
+     */
+    private fun handleItemTapped(itemId: String, selectableIds: List<String>) {
         val selection = _uiState.value.playlistSelection
         if (!selection.isRangeSelectionActive) {
-            toggleItemSelected(item.id)
+            toggleItemSelected(itemId)
             return
         }
 
         val anchorId = selection.rangeAnchorId
         if (anchorId == null) {
-            _uiState.update { it.copy(playlistSelection = selection.copy(rangeAnchorId = item.id)) }
+            _uiState.update { it.copy(playlistSelection = selection.copy(rangeAnchorId = itemId)) }
             return
         }
 
-        val items = currentPlaylistItems()
-        val anchorIndex = items.indexOfFirst { it.id == anchorId }
-        val endIndex = items.indexOfFirst { it.id == item.id }
+        val anchorIndex = selectableIds.indexOf(anchorId)
+        val endIndex = selectableIds.indexOf(itemId)
         if (anchorIndex == -1 || endIndex == -1) {
             cancelSelection()
             return
         }
 
         val (from, to) = if (anchorIndex <= endIndex) anchorIndex to endIndex else endIndex to anchorIndex
-        val rangeIds = items.subList(from, to + 1).filter { it.isAvailable }.map { it.id }.toSet()
+        val rangeIds = selectableIds.subList(from, to + 1).toSet()
 
         _uiState.update {
             it.copy(
@@ -418,6 +438,123 @@ class HomeViewModel @Inject constructor(
 
     private fun currentPlaylistItems(): List<PlaylistItem> =
         (_uiState.value.result as? ExtractionResult.Playlist)?.playlist?.items.orEmpty()
+
+    // --- Image collection (single image or carousel) download -------------------------
+    // Unlike a video playlist, every item's direct URL is already known from the one
+    // analyze() call that produced the ExtractionResult.Collection — there is no per-item
+    // "resolve its own format list later" step, so this reuses DownloadEngine.enqueue()
+    // (the plain single-item entry point) once per selected image, grouped via
+    // DownloadRequest.playlistContext, rather than DownloadEngine.enqueuePlaylist (built
+    // for video items that each need independent resolution). See PROJECT_MASTER.md's
+    // Instagram image support decision log entry for the full reasoning.
+
+    private fun currentCollectionItems(): List<MediaCollectionItem> =
+        (_uiState.value.result as? ExtractionResult.Collection)?.collection?.items.orEmpty()
+
+    /** A single-image post is just a one-item collection — the same entry point handles both, no separate "Download" action needed. */
+    fun downloadEntireCollection() {
+        beginCollectionDownload(currentCollectionItems())
+    }
+
+    fun downloadSelectedCollectionItems() {
+        val selectedIds = _uiState.value.playlistSelection.selectedItemIds
+        if (selectedIds.isEmpty()) {
+            _uiState.update { it.copy(infoMessage = "Select at least one item first.") }
+            return
+        }
+        beginCollectionDownload(currentCollectionItems().filter { it.id in selectedIds })
+    }
+
+    /** Remembers the pending batch across a [NetworkWarning.Collection] confirmation — mirrors `analyzeJob`/`activeTaskId` as plain ViewModel bookkeeping the UI never renders, rather than growing [HomeUiState]. */
+    private var pendingCollectionDownloadItems: List<MediaCollectionItem> = emptyList()
+
+    private fun beginCollectionDownload(items: List<MediaCollectionItem>) {
+        if (items.isEmpty()) return
+        pendingCollectionDownloadItems = items
+        confirmCollectionQueue(items, bypassNetworkCheck = false)
+    }
+
+    /** Same [NetworkPolicyManager] gate as the single-item/playlist paths — see [beginEnqueueSelectedFormat]. Image sizes are usually unknown ahead of download (no guessed number), so this most often evaluates against a 0-byte estimate and simply allows — a real block/warn still applies whenever a size is actually known. */
+    private fun confirmCollectionQueue(items: List<MediaCollectionItem>, bypassNetworkCheck: Boolean) {
+        val collection = (_uiState.value.result as? ExtractionResult.Collection)?.collection ?: return
+        val estimatedTotalBytes = items.sumOf { it.estimatedSizeBytes ?: 0L }
+
+        viewModelScope.launch {
+            if (!bypassNetworkCheck) {
+                when (val decision = networkPolicyManager.evaluate(estimatedTotalBytes)) {
+                    is NetworkPolicyDecision.Block -> {
+                        _uiState.update { it.copy(errorMessage = decision.reason) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.Warn -> {
+                        _uiState.update { it.copy(networkWarning = NetworkWarning.Collection(decision.reason)) }
+                        return@launch
+                    }
+                    is NetworkPolicyDecision.QueueForWifi -> {
+                        enqueueCollectionItems(collection, items)
+                        _uiState.update {
+                            it.copy(
+                                playlistSelection = PlaylistSelectionState(),
+                                justQueued = true,
+                                infoMessage = "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.",
+                            )
+                        }
+                        return@launch
+                    }
+                    NetworkPolicyDecision.Allow -> Unit
+                }
+            }
+            enqueueCollectionItems(collection, items)
+            _uiState.update { it.copy(playlistSelection = PlaylistSelectionState(), justQueued = true, infoMessage = null) }
+        }
+    }
+
+    /**
+     * Enqueues one plain [DownloadRequest] per image via the existing single-item
+     * [DownloadEngine.enqueue] — no new download-engine method. A genuine multi-image
+     * carousel groups its tasks via [PlaylistDownloadContext] (reusing the exact same
+     * grouping/progress-aggregation the Downloads screen's "Playlists" section already
+     * renders); a single image enqueues as an ordinary standalone task instead, since a
+     * "playlist of one" would show a group header for nothing. Skips an item already
+     * downloaded before when the same toggle used for playlists is on, checked one at a
+     * time so a partially-duplicate batch still queues the genuinely-new items.
+     */
+    private suspend fun enqueueCollectionItems(collection: MediaCollectionResult, items: List<MediaCollectionItem>) {
+        val groupId = if (items.size > 1) UUID.randomUUID().toString() else null
+        val skipAlreadyDownloaded = _uiState.value.playlistSelection.skipAlreadyDownloaded
+        val sourceUrl = collection.webpageUrl ?: _uiState.value.url.trim()
+
+        for (item in items) {
+            if (skipAlreadyDownloaded && downloadEngine.isAlreadyDownloaded(item.id)) continue
+            downloadEngine.enqueue(
+                DownloadRequest(
+                    taskId = UUID.randomUUID().toString(),
+                    sourceUrl = sourceUrl,
+                    formatId = item.index.toString(),
+                    // Numbered against the *full* collection's item count, not the size of
+                    // this particular download batch — downloading only items 2 and 4 out of
+                    // 5 must still label them "(2/5)"/"(4/5)", never "(2/2)"/"(4/2)" against a
+                    // batch size that has nothing to do with the post's actual shape.
+                    title = collectionItemTitle(collection, item, collection.items.size),
+                    sourceName = collection.sourceName,
+                    thumbnailUrl = item.thumbnailUrl,
+                    container = imageContainerFor(item.imageUrl),
+                    mediaType = MediaType.IMAGE,
+                    expectedSizeBytes = item.estimatedSizeBytes,
+                    canResume = false,
+                    sourceMediaId = item.id,
+                    playlistContext = groupId?.let {
+                        PlaylistDownloadContext(
+                            playlistId = it,
+                            itemIndex = item.index,
+                            playlistTitle = collection.title.ifBlank { null },
+                            playlistThumbnailUrl = collection.thumbnailUrl,
+                        )
+                    },
+                ),
+            )
+        }
+    }
 
     /**
      * Resets everything about an in-progress or completed link analysis back to the clean
