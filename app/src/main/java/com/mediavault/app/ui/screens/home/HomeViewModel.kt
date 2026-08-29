@@ -5,13 +5,17 @@ import androidx.lifecycle.viewModelScope
 import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
-import com.mediavault.core.domain.download.DownloadOption
 import com.mediavault.core.domain.download.DownloadRequest
+import com.mediavault.core.domain.download.FormatSelectionModel
 import com.mediavault.core.domain.download.PlaylistDownloadContext
 import com.mediavault.core.domain.download.PlaylistDownloadItem
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
-import com.mediavault.core.domain.download.buildDownloadOptions
+import com.mediavault.core.domain.download.QualityTier
+import com.mediavault.core.domain.download.ResolvedSelection
+import com.mediavault.core.domain.download.SelectedAudioTrack
+import com.mediavault.core.domain.download.resolveSelection
+import com.mediavault.core.domain.download.toFormatSelectionModel
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
@@ -21,7 +25,6 @@ import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.domain.network.NetworkPolicyDecision
 import com.mediavault.core.domain.network.NetworkPolicyManager
-import com.mediavault.core.model.MediaFormat
 import com.mediavault.core.model.MediaType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
@@ -78,9 +81,9 @@ class HomeViewModel @Inject constructor(
                 errorMessage = null,
                 infoMessage = null,
                 result = null,
-                downloadOptions = emptyList(),
+                formatSelection = null,
                 playlistSelection = PlaylistSelectionState(),
-                selectedFormatId = null,
+                selectedQuality = SelectedQualityState(),
                 justQueued = false,
             )
         }
@@ -88,8 +91,8 @@ class HomeViewModel @Inject constructor(
         analyzeJob = viewModelScope.launch {
             when (val outcome = extractorEngine.analyze(url, taskId)) {
                 is AppResult.Success -> _uiState.update {
-                    val options = (outcome.data as? ExtractionResult.Single)?.media?.formats?.let(::buildDownloadOptions).orEmpty()
-                    it.copy(isAnalyzing = false, result = outcome.data, downloadOptions = options, errorMessage = null)
+                    val model = (outcome.data as? ExtractionResult.Single)?.media?.formats?.toFormatSelectionModel()
+                    it.copy(isAnalyzing = false, result = outcome.data, formatSelection = model, errorMessage = null)
                 }
 
                 is AppResult.Failure -> _uiState.update {
@@ -112,14 +115,45 @@ class HomeViewModel @Inject constructor(
 
     // --- Single-item format selection & download --------------------------------------
 
-    fun onDownloadOptionSelected(option: DownloadOption) {
-        if (!option.isSelectable) return
-        _uiState.update { it.copy(selectedFormatId = option.id, justQueued = false) }
+    fun onQualityTierSelected(tier: QualityTier) {
+        val model = _uiState.value.formatSelection ?: return
+        _uiState.update { it.copy(selectedQuality = it.selectedQuality.withTierSelected(tier, model), justQueued = false) }
     }
+
+    fun onVideoVariantSelected(formatId: String) {
+        _uiState.update { it.copy(selectedQuality = it.selectedQuality.copy(videoVariantFormatId = formatId), justQueued = false) }
+    }
+
+    fun onIncludeMultipleAudioToggled(enabled: Boolean) {
+        _uiState.update {
+            val current = it.selectedQuality
+            // Turning multi-select off collapses back to at most one track rather than clearing
+            // the pick entirely — the user's most recent single choice is the least surprising
+            // thing to keep selected.
+            val trimmed = if (enabled) current.selectedAudioFormatIds else current.selectedAudioFormatIds.take(1).toSet()
+            it.copy(selectedQuality = current.copy(includeMultipleAudio = enabled, selectedAudioFormatIds = trimmed))
+        }
+    }
+
+    /** Single-select (radio) while [SelectedQualityState.includeMultipleAudio] is off — matches the pre-redesign audio picker's own behavior; toggling it on switches this to checkbox-style multi-select. */
+    fun onAudioTrackToggled(formatId: String) {
+        _uiState.update {
+            val current = it.selectedQuality
+            val updatedIds = if (current.includeMultipleAudio) {
+                if (formatId in current.selectedAudioFormatIds) current.selectedAudioFormatIds - formatId else current.selectedAudioFormatIds + formatId
+            } else {
+                setOf(formatId)
+            }
+            it.copy(selectedQuality = current.copy(selectedAudioFormatIds = updatedIds), justQueued = false)
+        }
+    }
+
+    private fun currentResolvedSelection(): ResolvedSelection? =
+        _uiState.value.formatSelection?.resolve(_uiState.value.selectedQuality)
 
     /** Called by the screen when Download is tapped. Downloads are app-private by default — no folder picker needed. */
     fun onDownloadClicked() {
-        if (_uiState.value.selectedFormatId == null) return
+        if (currentResolvedSelection() == null) return
         beginEnqueueSelectedFormat(bypassNetworkCheck = false)
     }
 
@@ -160,14 +194,9 @@ class HomeViewModel @Inject constructor(
      */
     private fun beginEnqueueSelectedFormat(bypassNetworkCheck: Boolean) {
         val media = (_uiState.value.result as? ExtractionResult.Single)?.media ?: return
-        val optionId = _uiState.value.selectedFormatId ?: return
-        val option = _uiState.value.downloadOptions.firstOrNull { it.id == optionId } ?: return
-        // Direct: whichever of the two is present (a muxed format sets only videoFormat; an
-        // audio-only format sets only audioFormat). Paired: always the video-only format —
-        // DownloadRequest.formatId is documented as "the video format when audioFormatId is set".
-        val primaryFormat = option.videoFormat ?: option.audioFormat ?: return
+        val selection = currentResolvedSelection() ?: return
         val sourceUrl = media.webpageUrl ?: _uiState.value.url.trim()
-        val estimatedSizeBytes = option.combinedEstimatedSizeBytes ?: 0L
+        val estimatedSizeBytes = selection.combinedEstimatedSizeBytes ?: 0L
 
         viewModelScope.launch {
             if (!bypassNetworkCheck) {
@@ -181,40 +210,36 @@ class HomeViewModel @Inject constructor(
                         return@launch
                     }
                     is NetworkPolicyDecision.QueueForWifi -> {
-                        enqueueDownloadRequest(media, option, primaryFormat, sourceUrl)
+                        enqueueDownloadRequest(media, selection, sourceUrl)
                         _uiState.update { it.copy(justQueued = true, infoMessage = "Waiting for Wi-Fi — this exceeds your per-download mobile-data limit.") }
                         return@launch
                     }
                     NetworkPolicyDecision.Allow -> Unit
                 }
             }
-            enqueueDownloadRequest(media, option, primaryFormat, sourceUrl)
+            enqueueDownloadRequest(media, selection, sourceUrl)
             _uiState.update { it.copy(justQueued = true, infoMessage = null) }
         }
     }
 
-    private fun enqueueDownloadRequest(
-        media: MediaAnalysisResult,
-        option: DownloadOption,
-        primaryFormat: MediaFormat,
-        sourceUrl: String,
-    ) {
+    private fun enqueueDownloadRequest(media: MediaAnalysisResult, selection: ResolvedSelection, sourceUrl: String) {
+        val primaryFormatId = selection.primaryFormatId ?: return
         downloadEngine.enqueue(
             DownloadRequest(
                 taskId = UUID.randomUUID().toString(),
                 sourceUrl = sourceUrl,
-                formatId = primaryFormat.formatId,
-                audioFormatId = option.audioFormat?.formatId.takeIf { option.requiresProcessing },
+                formatId = primaryFormatId,
+                audioTracks = selection.audioFormats.map { SelectedAudioTrack(it.formatId, it.languageCode) }.takeIf { selection.requiresProcessing }.orEmpty(),
                 title = media.title,
                 sourceName = media.sourceName,
                 thumbnailUrl = media.thumbnailUrl,
-                container = option.outputContainer,
-                mediaType = if (option.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
-                expectedSizeBytes = option.combinedEstimatedSizeBytes,
+                container = selection.outputContainer,
+                mediaType = if (selection.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
+                expectedSizeBytes = selection.combinedEstimatedSizeBytes,
                 durationSeconds = media.durationSeconds,
-                resolutionLabel = option.videoFormat?.resolutionLabel,
+                resolutionLabel = selection.videoFormat?.resolutionLabel,
                 // A split video+audio task is never byte-offset-resumable — see MediaVaultDownloadEngine's pause/cancel handling.
-                canResume = if (option.requiresProcessing) false else primaryFormat.supportsResume,
+                canResume = if (selection.requiresProcessing) false else selection.videoFormat?.supportsResume ?: selection.audioFormats.firstOrNull()?.supportsResume ?: false,
                 sourceMediaId = media.id,
             ),
         )
@@ -333,7 +358,7 @@ class HomeViewModel @Inject constructor(
                         if (media == null) {
                             state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, errorMessage = "That item couldn't be resolved."))
                         } else {
-                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, downloadOptions = buildDownloadOptions(media.formats)))
+                            state.copy(playlistDownloadSetup = setup.copy(isResolvingFormats = false, formatSelection = media.formats.toFormatSelectionModel()))
                         }
                     }
                 }
@@ -346,11 +371,40 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun onPlaylistOptionSelected(option: DownloadOption) {
-        if (!option.isSelectable) return
+    fun onPlaylistQualityTierSelected(tier: QualityTier) {
         _uiState.update { state ->
             val setup = state.playlistDownloadSetup ?: return@update state
-            state.copy(playlistDownloadSetup = setup.copy(selectedFormatId = option.id))
+            val model = setup.formatSelection ?: return@update state
+            state.copy(playlistDownloadSetup = setup.copy(selectedQuality = setup.selectedQuality.withTierSelected(tier, model)))
+        }
+    }
+
+    fun onPlaylistVideoVariantSelected(formatId: String) {
+        _uiState.update { state ->
+            val setup = state.playlistDownloadSetup ?: return@update state
+            state.copy(playlistDownloadSetup = setup.copy(selectedQuality = setup.selectedQuality.copy(videoVariantFormatId = formatId)))
+        }
+    }
+
+    fun onPlaylistIncludeMultipleAudioToggled(enabled: Boolean) {
+        _uiState.update { state ->
+            val setup = state.playlistDownloadSetup ?: return@update state
+            val current = setup.selectedQuality
+            val trimmed = if (enabled) current.selectedAudioFormatIds else current.selectedAudioFormatIds.take(1).toSet()
+            state.copy(playlistDownloadSetup = setup.copy(selectedQuality = current.copy(includeMultipleAudio = enabled, selectedAudioFormatIds = trimmed)))
+        }
+    }
+
+    fun onPlaylistAudioTrackToggled(formatId: String) {
+        _uiState.update { state ->
+            val setup = state.playlistDownloadSetup ?: return@update state
+            val current = setup.selectedQuality
+            val updatedIds = if (current.includeMultipleAudio) {
+                if (formatId in current.selectedAudioFormatIds) current.selectedAudioFormatIds - formatId else current.selectedAudioFormatIds + formatId
+            } else {
+                setOf(formatId)
+            }
+            state.copy(playlistDownloadSetup = setup.copy(selectedQuality = current.copy(selectedAudioFormatIds = updatedIds)))
         }
     }
 
@@ -363,7 +417,7 @@ class HomeViewModel @Inject constructor(
     /** Called by the screen when Queue is tapped in the playlist setup step. */
     fun onQueuePlaylistClicked() {
         val setup = _uiState.value.playlistDownloadSetup ?: return
-        if (setup.selectedFormatId == null) return
+        if (setup.formatSelection?.resolve(setup.selectedQuality) == null) return
         confirmPlaylistQueue(bypassNetworkCheck = false)
     }
 
@@ -371,8 +425,8 @@ class HomeViewModel @Inject constructor(
     private fun confirmPlaylistQueue(bypassNetworkCheck: Boolean) {
         val playlist = (_uiState.value.result as? ExtractionResult.Playlist)?.playlist ?: return
         val setup = _uiState.value.playlistDownloadSetup ?: return
-        val optionId = setup.selectedFormatId ?: return
-        val option = setup.downloadOptions.firstOrNull { it.id == optionId } ?: return
+        val model = setup.formatSelection ?: return
+        val selection = model.resolve(setup.selectedQuality) ?: return
 
         val items = setup.items.mapNotNull { item ->
             val url = item.url ?: return@mapNotNull null
@@ -387,7 +441,7 @@ class HomeViewModel @Inject constructor(
         }
         if (items.isEmpty()) return
 
-        val estimatedTotalBytes = estimatedPlaylistTotalSizeBytes(option, items.size) ?: 0L
+        val estimatedTotalBytes = estimatedPlaylistTotalSizeBytes(selection, items.size) ?: 0L
 
         viewModelScope.launch {
             if (!bypassNetworkCheck) {
@@ -401,7 +455,7 @@ class HomeViewModel @Inject constructor(
                         return@launch
                     }
                     is NetworkPolicyDecision.QueueForWifi -> {
-                        enqueuePlaylistRequest(playlist, option, items)
+                        enqueuePlaylistRequest(playlist, selection, items)
                         _uiState.update {
                             it.copy(
                                 playlistDownloadSetup = null,
@@ -415,21 +469,21 @@ class HomeViewModel @Inject constructor(
                     NetworkPolicyDecision.Allow -> Unit
                 }
             }
-            enqueuePlaylistRequest(playlist, option, items)
+            enqueuePlaylistRequest(playlist, selection, items)
             _uiState.update {
                 it.copy(playlistDownloadSetup = null, playlistSelection = PlaylistSelectionState(), justQueued = true, infoMessage = null)
             }
         }
     }
 
-    private fun enqueuePlaylistRequest(playlist: PlaylistAnalysisResult, option: DownloadOption, items: List<PlaylistDownloadItem>) {
+    private fun enqueuePlaylistRequest(playlist: PlaylistAnalysisResult, selection: ResolvedSelection, items: List<PlaylistDownloadItem>) {
         downloadEngine.enqueuePlaylist(
             PlaylistDownloadRequest(
                 playlistId = UUID.randomUUID().toString(),
                 playlistTitle = playlist.title,
                 playlistThumbnailUrl = playlist.thumbnailUrl,
                 sourceName = playlist.sourceName,
-                qualityDescriptor = QualityDescriptor.from(option),
+                qualityDescriptor = QualityDescriptor.from(selection.videoFormat, selection.audioFormats),
                 skipAlreadyDownloaded = _uiState.value.playlistSelection.skipAlreadyDownloaded,
                 items = items,
             ),

@@ -7,27 +7,23 @@ import org.junit.Test
 
 class QualityDescriptorTest {
 
-    private fun video(
-        id: String,
-        resolutionLabel: String? = "1080p",
-        container: String = "mp4",
-        hasAudio: Boolean = true,
-    ) = MediaFormat(
+    private fun video(id: String, heightPx: Int = 1080, hasAudio: Boolean = false) = MediaFormat(
         formatId = id,
-        resolutionLabel = resolutionLabel,
-        container = container,
+        resolutionLabel = "${heightPx}p",
+        container = "mp4",
         videoCodec = "avc1",
         audioCodec = if (hasAudio) "aac" else null,
         fps = 30,
         estimatedSizeBytes = 100_000L,
         hasVideo = true,
         hasAudio = hasAudio,
+        heightPx = heightPx,
     )
 
-    private fun audio(id: String, container: String = "m4a", languageCode: String? = null) = MediaFormat(
+    private fun audio(id: String, languageCode: String? = null) = MediaFormat(
         formatId = id,
         resolutionLabel = null,
-        container = container,
+        container = "m4a",
         videoCodec = null,
         audioCodec = "aac",
         fps = null,
@@ -37,99 +33,95 @@ class QualityDescriptorTest {
         languageCode = languageCode,
     )
 
-    // --- from(DownloadOption) ---------------------------------------------------------------
+    // --- from() --------------------------------------------------------------------------------
 
     @Test
-    fun `from a direct muxed option derives a descriptor from its shape`() {
-        val option = buildDownloadOptions(listOf(video("m1"))).single()
+    fun `from a direct muxed pick derives the tier with no audio languages`() {
+        val descriptor = QualityDescriptor.from(video("m1", heightPx = 1080, hasAudio = true), emptyList())
 
-        val descriptor = QualityDescriptor.from(option)
-
-        assertEquals(QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true, requiresProcessing = false, audioLanguageCode = null), descriptor)
+        assertEquals(QualityDescriptor(QualityTier.FULL_HD_1080P, emptyList()), descriptor)
     }
 
     @Test
-    fun `from a merge-required paired option carries requiresProcessing and the paired audio language`() {
-        val options = buildDownloadOptions(listOf(video("v1", hasAudio = false), audio("a-en", languageCode = "en")))
-        val paired = options.single { it.requiresProcessing }
+    fun `from a direct audio-only pick has a null tier`() {
+        val descriptor = QualityDescriptor.from(null, listOf(audio("a1", languageCode = "en")))
 
-        val descriptor = QualityDescriptor.from(paired)
-
-        assertEquals("1080p", descriptor.resolutionLabel)
-        assertEquals(true, descriptor.requiresProcessing)
-        assertEquals("en", descriptor.audioLanguageCode)
-        assertEquals(true, descriptor.hasVideo)
-        assertEquals(true, descriptor.hasAudio)
-    }
-
-    // --- findMatching: direct qualities --------------------------------------------------
-
-    @Test
-    fun `findMatching returns the direct option whose shape matches exactly`() {
-        val target = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true)
-        val options = buildDownloadOptions(
-            listOf(video("1", resolutionLabel = "720p"), video("2", resolutionLabel = "1080p"), video("3", resolutionLabel = "1080p", container = "webm")),
-        )
-
-        assertEquals("2", options.findMatching(target)?.id)
+        assertNull(descriptor.tier)
+        assertEquals(listOf("en"), descriptor.audioLanguageCodes)
     }
 
     @Test
-    fun `findMatching returns null rather than substituting a different resolution`() {
-        val target = QualityDescriptor("4K", "mp4", hasVideo = true, hasAudio = true)
-        val options = buildDownloadOptions(listOf(video("1", resolutionLabel = "1080p"), video("2", resolutionLabel = "720p")))
+    fun `from a multi-audio pick carries every selected language`() {
+        val descriptor = QualityDescriptor.from(video("v1"), listOf(audio("a-en", "en"), audio("a-hi", "hi")))
 
-        assertNull(options.findMatching(target))
+        assertEquals(QualityTier.FULL_HD_1080P, descriptor.tier)
+        assertEquals(setOf("en", "hi"), descriptor.audioLanguageCodes.toSet())
+    }
+
+    // --- resolveForPlaylist: video tier matching -----------------------------------------------
+
+    @Test
+    fun `resolveForPlaylist finds the same tier on another item`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, emptyList())
+        val formats = listOf(video("1", heightPx = 720, hasAudio = true), video("2", heightPx = 1080, hasAudio = true))
+
+        val resolved = formats.resolveForPlaylist(target)
+
+        assertEquals("2", resolved?.videoFormat?.formatId)
     }
 
     @Test
-    fun `findMatching on an empty list returns null`() {
-        val target = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true)
+    fun `resolveForPlaylist returns null rather than substituting a different tier`() {
+        val target = QualityDescriptor(QualityTier.UHD_4K, emptyList())
+        val formats = listOf(video("1", heightPx = 1080, hasAudio = true), video("2", heightPx = 720, hasAudio = true))
 
-        assertNull(emptyList<DownloadOption>().findMatching(target))
-    }
-
-    // --- findMatching: merge-required qualities -------------------------------------------
-
-    @Test
-    fun `findMatching pairs a merge-required quality with the same resolution and audio language on another item`() {
-        val target = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true, requiresProcessing = true, audioLanguageCode = "en")
-        val options = buildDownloadOptions(
-            listOf(video("v1", hasAudio = false), audio("a-en", languageCode = "en"), audio("a-es", languageCode = "es")),
-        )
-
-        val matched = options.findMatching(target)
-
-        assertEquals("en", matched?.audioFormat?.languageCode)
+        assertNull(formats.resolveForPlaylist(target))
     }
 
     @Test
-    fun `findMatching never falls back to a different audio language for a merge-required quality`() {
-        val target = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true, requiresProcessing = true, audioLanguageCode = "en")
-        // This item only offers Spanish audio — "en" genuinely isn't available here.
-        val options = buildDownloadOptions(listOf(video("v1", hasAudio = false), audio("a-es", languageCode = "es")))
+    fun `resolveForPlaylist on an empty format list returns null for a video quality`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, emptyList())
 
-        assertNull(options.findMatching(target))
+        assertNull(emptyList<MediaFormat>().resolveForPlaylist(target))
+    }
+
+    // --- resolveForPlaylist: audio language matching -------------------------------------------
+
+    @Test
+    fun `resolveForPlaylist matches every requested audio language independently on another item`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, listOf("en", "hi"))
+        val formats = listOf(video("v1", hasAudio = false), audio("a-en", "en"), audio("a-hi", "hi"), audio("a-es", "es"))
+
+        val resolved = formats.resolveForPlaylist(target)
+
+        assertEquals(setOf("en", "hi"), resolved?.audioFormats?.map { it.languageCode }?.toSet())
     }
 
     @Test
-    fun `findMatching never substitutes a direct option for a merge-required quality or vice versa`() {
-        val direct = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true, requiresProcessing = false)
-        // This item's 1080p is muxed already — no paired option exists for it at all.
-        val options = buildDownloadOptions(listOf(video("v1", hasAudio = true)))
+    fun `resolveForPlaylist fails the whole item when even one requested language is missing, never substituting another`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, listOf("en", "hi"))
+        // This item only offers English — Hindi genuinely isn't available here.
+        val formats = listOf(video("v1", hasAudio = false), audio("a-en", "en"))
 
-        val target = direct.copy(requiresProcessing = true)
-
-        assertNull(options.findMatching(target))
+        assertNull(formats.resolveForPlaylist(target))
     }
 
     @Test
-    fun `findMatching skips an unselectable video-only option with no compatible audio`() {
-        val target = QualityDescriptor("1080p", "mp4", hasVideo = true, hasAudio = true, requiresProcessing = true, audioLanguageCode = null)
-        // No audio-only format anywhere on this item -> the video-only format becomes a direct
-        // (not paired) option, so a merge-required target must not match it.
-        val options = buildDownloadOptions(listOf(video("v1", hasAudio = false)))
+    fun `resolveForPlaylist never substitutes a direct pick for a merge-required one or vice versa`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, listOf("en"))
+        // This item's 1080p is muxed already — no separate audio track exists to merge in.
+        val formats = listOf(video("v1", hasAudio = true))
 
-        assertNull(options.findMatching(target))
+        assertNull(formats.resolveForPlaylist(target))
+    }
+
+    @Test
+    fun `resolveForPlaylist with no requested audio languages resolves a direct pick`() {
+        val target = QualityDescriptor(QualityTier.FULL_HD_1080P, emptyList())
+        val formats = listOf(video("v1", hasAudio = true))
+
+        val resolved = formats.resolveForPlaylist(target)
+
+        assertEquals(false, resolved?.requiresProcessing)
     }
 }

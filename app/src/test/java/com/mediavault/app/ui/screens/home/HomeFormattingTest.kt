@@ -1,6 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
-import com.mediavault.core.domain.download.buildDownloadOptions
+import com.mediavault.core.domain.download.resolveSelection
 import com.mediavault.core.model.MediaFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -80,87 +80,84 @@ class HomeFormattingTest {
         assertEquals("M4A • 5 MB • audio only (aac)", formatFormatSummary(format))
     }
 
-    // --- Download option rows (video/audio section formatting) ------------------------
+    // --- Quality-tier variant / audio-track row formatting ------------------------------
 
     @Test
-    fun `a muxed direct option correctly reports its own embedded audio, not 'video only'`() {
-        val muxed = MediaFormat(
-            formatId = "22",
-            resolutionLabel = "720p",
-            container = "mp4",
-            videoCodec = "avc1",
-            audioCodec = "aac",
-            fps = 30,
-            estimatedSizeBytes = 100_000_000L,
-            hasVideo = true,
-            hasAudio = true,
-        )
-
-        val option = buildDownloadOptions(listOf(muxed)).single()
-
-        assertEquals("Includes audio (aac)", audioAvailabilityLabel(option))
-        assertEquals("720p 30fps", videoOptionTitle(option))
-        assertEquals("MP4 • avc1 • 95 MB • Includes audio (aac)", videoOptionSubtitle(option))
-    }
-
-    @Test
-    fun `a paired video-only option reports the merged-in audio track`() {
-        val video = MediaFormat(
+    fun `variant title shows resolution and fps`() {
+        val format = MediaFormat(
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
-            audioCodec = null, fps = 30, estimatedSizeBytes = 80_000_000L, hasVideo = true, hasAudio = false,
-        )
-        val audio = MediaFormat(
-            formatId = "140", resolutionLabel = null, container = "m4a", videoCodec = null,
-            audioCodec = "aac", fps = null, estimatedSizeBytes = 4_000_000L, hasVideo = false, hasAudio = true,
-            languageCode = "en",
+            audioCodec = null, fps = 60, estimatedSizeBytes = 100_000_000L, hasVideo = true, hasAudio = false,
         )
 
-        val option = buildDownloadOptions(listOf(video, audio)).single { it.requiresProcessing }
-
-        assertEquals("+ audio (aac) [en]", audioAvailabilityLabel(option))
+        assertEquals("1080p 60fps", videoVariantTitle(format))
     }
 
     @Test
-    fun `an unavailable video-only option reports no audio available`() {
-        val video = MediaFormat(
+    fun `variant subtitle shows container codec and size, never the audio question`() {
+        val format = MediaFormat(
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
-            audioCodec = null, fps = 30, estimatedSizeBytes = 80_000_000L, hasVideo = true, hasAudio = false,
+            audioCodec = null, fps = 30, estimatedSizeBytes = 100_000_000L, hasVideo = true, hasAudio = false,
         )
 
-        val option = buildDownloadOptions(listOf(video)).single()
-
-        assertEquals("No audio available", audioAvailabilityLabel(option))
+        assertEquals("MP4 • avc1 • 95 MB", videoVariantSubtitle(format))
     }
 
     @Test
-    fun `an audio-only option shows format, bitrate, size, and language`() {
+    fun `audio language display name resolves a real name from the ISO code, never a raw code when one is resolvable`() {
+        assertEquals("Hindi", audioLanguageDisplayName("hi"))
+        assertEquals("English", audioLanguageDisplayName("en"))
+    }
+
+    @Test
+    fun `audio language display name falls back to the raw code when Locale has no real name for it`() {
+        // "xx" is a syntactically valid but unassigned ISO 639-1 code — Locale resolves no
+        // localized name for it, so the raw code itself is the honest thing to show.
+        assertEquals("xx", audioLanguageDisplayName("xx"))
+    }
+
+    @Test
+    fun `audio language display name is a plain unknown label when the source reported no code at all`() {
+        assertEquals("Unknown language", audioLanguageDisplayName(null))
+    }
+
+    @Test
+    fun `audio track subtitle shows codec bitrate and size, language is the row's own title instead`() {
         val audio = MediaFormat(
             formatId = "140", resolutionLabel = null, container = "m4a", videoCodec = null,
             audioCodec = "aac", fps = null, estimatedSizeBytes = 5_000_000L, hasVideo = false, hasAudio = true,
             languageCode = "en", bitrateKbps = 128,
         )
 
-        val option = buildDownloadOptions(listOf(audio)).single()
-
-        assertEquals("M4A", audioOptionTitle(option))
-        assertEquals("aac • 128 kbps • 5 MB • [en]", audioOptionSubtitle(option))
+        assertEquals("aac • 128 kbps • 5 MB", audioTrackSubtitle(audio))
     }
 
     @Test
-    fun `playlist quality label shows resolution and fps for video, container for audio`() {
+    fun `selected quality label combines the video variant with every selected audio language`() {
+        val video = MediaFormat(
+            formatId = "137", resolutionLabel = "720p", container = "mp4", videoCodec = "avc1",
+            audioCodec = null, fps = 30, estimatedSizeBytes = 147_000_000L, hasVideo = true, hasAudio = false,
+        )
+        val english = MediaFormat(
+            formatId = "en", resolutionLabel = null, container = "m4a", videoCodec = null, audioCodec = "aac",
+            fps = null, estimatedSizeBytes = 85_000_000L, hasVideo = false, hasAudio = true, languageCode = "en",
+        )
+        val hindi = english.copy(formatId = "hi", languageCode = "hi", estimatedSizeBytes = 88_000_000L)
+
+        val selection = resolveSelection(video, listOf(english, hindi))
+
+        assertEquals("720p 30fps + English, Hindi", selectedQualityLabel(selection))
+        // formatFileSizeLabel uses binary (1024-based) MB, so 320,000,000 decimal bytes rounds to 305 MB, not 320.
+        assertEquals("720p 30fps + English, Hindi • ≈305 MB", selectedQualitySummaryLabel(selection))
+    }
+
+    @Test
+    fun `selected quality label for a direct pick omits the plus-audio suffix entirely`() {
         val video = MediaFormat(
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
             audioCodec = "aac", fps = 60, estimatedSizeBytes = 100_000_000L, hasVideo = true, hasAudio = true,
         )
-        val audio = MediaFormat(
-            formatId = "140", resolutionLabel = null, container = "m4a", videoCodec = null,
-            audioCodec = "aac", fps = null, estimatedSizeBytes = 5_000_000L, hasVideo = false, hasAudio = true,
-        )
-        val videoOption = buildDownloadOptions(listOf(video)).single()
-        val audioOption = buildDownloadOptions(listOf(audio)).single()
 
-        assertEquals("1080p 60fps", playlistQualityLabel(videoOption))
-        assertEquals("M4A", playlistQualityLabel(audioOption))
+        assertEquals("1080p 60fps", selectedQualityLabel(resolveSelection(video, emptyList())))
     }
 
     @Test
@@ -169,9 +166,8 @@ class HomeFormattingTest {
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
             audioCodec = "aac", fps = 30, estimatedSizeBytes = 10_000_000L, hasVideo = true, hasAudio = true,
         )
-        val option = buildDownloadOptions(listOf(format)).single()
 
-        assertEquals(30_000_000L, estimatedPlaylistTotalSizeBytes(option, 3))
+        assertEquals(30_000_000L, estimatedPlaylistTotalSizeBytes(resolveSelection(format, emptyList()), 3))
     }
 
     @Test
@@ -184,25 +180,9 @@ class HomeFormattingTest {
             formatId = "a1", resolutionLabel = null, container = "m4a", videoCodec = null,
             audioCodec = "aac", fps = null, estimatedSizeBytes = 4_000_000L, hasVideo = false, hasAudio = true,
         )
-        val paired = buildDownloadOptions(listOf(video, audio)).single { it.requiresProcessing }
 
         // 84 MB combined per item, times 3 items — never the video-only size alone.
-        assertEquals(252_000_000L, estimatedPlaylistTotalSizeBytes(paired, 3))
-    }
-
-    @Test
-    fun `selected option summary combines title and final size`() {
-        val video = MediaFormat(
-            formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
-            audioCodec = null, fps = 60, estimatedSizeBytes = 80_000_000L, hasVideo = true, hasAudio = false,
-        )
-        val audio = MediaFormat(
-            formatId = "140", resolutionLabel = null, container = "m4a", videoCodec = null,
-            audioCodec = "aac", fps = null, estimatedSizeBytes = 4_000_000L, hasVideo = false, hasAudio = true,
-        )
-        val option = buildDownloadOptions(listOf(video, audio)).single { it.requiresProcessing }
-
-        assertEquals("1080p 60fps • 80 MB", selectedOptionSummaryLabel(option))
+        assertEquals(252_000_000L, estimatedPlaylistTotalSizeBytes(resolveSelection(video, listOf(audio)), 3))
     }
 
     @Test
@@ -211,9 +191,8 @@ class HomeFormattingTest {
             formatId = "137", resolutionLabel = "1080p", container = "mp4", videoCodec = "avc1",
             audioCodec = "aac", fps = 30, estimatedSizeBytes = null, hasVideo = true, hasAudio = true,
         )
-        val option = buildDownloadOptions(listOf(format)).single()
 
-        assertNull(estimatedPlaylistTotalSizeBytes(option, 3))
+        assertNull(estimatedPlaylistTotalSizeBytes(resolveSelection(format, emptyList()), 3))
     }
 
     // --- Image collection titles / container detection --------------------------------

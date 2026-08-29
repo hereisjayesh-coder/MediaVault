@@ -15,9 +15,13 @@ interface MediaProcessor {
     val processorId: String
 
     /**
-     * Remuxes (never re-encodes/transcodes) [MergeRequest.videoPath] and [MergeRequest.audioPath]
-     * into one file at [MergeRequest.outputPath]. Emits progress while running, then exactly one
-     * terminal [ProcessingEvent.Completed] or [ProcessingEvent.Failed].
+     * Remuxes (never re-encodes/transcodes) [MergeRequest.videoPath] and every one of
+     * [MergeRequest.audioTracks] into one file at [MergeRequest.outputPath], tagging each
+     * resulting audio stream with its own [AudioTrackInput.languageCode] when known. One track
+     * behaves exactly as the single-video-plus-single-audio merge always has; more than one
+     * track muxes all of them into that same one file — never a separate file per track. Emits
+     * progress while running, then exactly one terminal [ProcessingEvent.Completed] or
+     * [ProcessingEvent.Failed].
      */
     fun merge(request: MergeRequest): Flow<ProcessingEvent>
 
@@ -27,15 +31,19 @@ interface MediaProcessor {
 
 data class MergeRequest(
     val taskId: String,
-    /** Real, writable filesystem paths — same convention as [com.mediavault.core.domain.extractor.ExtractionRequest.destinationPath]. */
+    /** Real, writable filesystem path — same convention as [com.mediavault.core.domain.extractor.ExtractionRequest.destinationPath]. */
     val videoPath: String,
-    val audioPath: String,
+    /** One or more separately-downloaded audio streams to mux into the same output file, in the order they should appear as tracks. */
+    val audioTracks: List<AudioTrackInput>,
     val outputPath: String,
-    /** File extension of [outputPath], e.g. "mp4"/"webm"/"mkv" — see `mergeOutputContainer` in `DownloadOption.kt` for how this is chosen. */
+    /** File extension of [outputPath], e.g. "mp4"/"webm"/"mkv" — see `mergeOutputContainer` in `FormatSelectionModel.kt` for how this is chosen. */
     val outputContainer: String,
     /** When known, lets the processor estimate a completion percentage from FFmpeg's own reported processed-time; null yields indeterminate progress. */
     val estimatedDurationSeconds: Long? = null,
 )
+
+/** One audio stream to mux in, and the language to tag it with in the output container's metadata — never guessed, only ever what the source itself reported. */
+data class AudioTrackInput(val path: String, val languageCode: String? = null)
 
 sealed class ProcessingEvent {
     data class Progress(val taskId: String, val percent: Int?) : ProcessingEvent()

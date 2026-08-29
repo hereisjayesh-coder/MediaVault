@@ -42,6 +42,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -73,15 +75,17 @@ import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.util.NetworkStatus
-import com.mediavault.core.domain.download.DownloadOption
-import com.mediavault.core.domain.download.DownloadOptionSection
-import com.mediavault.core.domain.download.groupedBySection
+import com.mediavault.core.domain.download.FormatSelectionModel
+import com.mediavault.core.domain.download.QualityTier
+import com.mediavault.core.domain.download.ResolvedSelection
+import com.mediavault.core.domain.download.VideoQualityGroup
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.MediaCollectionItem
 import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
+import com.mediavault.core.model.MediaFormat
 import java.time.LocalTime
 
 @Composable
@@ -115,7 +119,14 @@ fun HomeScreen(
         onUrlChanged = viewModel::onUrlChanged,
         onAnalyzeClick = viewModel::analyze,
         onCancelClick = viewModel::cancelInFlightAnalysis,
-        onDownloadOptionSelected = viewModel::onDownloadOptionSelected,
+        qualityPickerActions = remember(viewModel) {
+            QualityPickerActions(
+                onTierSelected = viewModel::onQualityTierSelected,
+                onVariantSelected = viewModel::onVideoVariantSelected,
+                onIncludeMultipleAudioToggled = viewModel::onIncludeMultipleAudioToggled,
+                onAudioTrackToggled = viewModel::onAudioTrackToggled,
+            )
+        },
         onDownloadClicked = viewModel::onDownloadClicked,
         onPlaylistItemTapped = viewModel::onPlaylistItemTapped,
         onBeginRangeSelection = viewModel::beginRangeSelection,
@@ -123,7 +134,14 @@ fun HomeScreen(
         onDownloadEntirePlaylist = viewModel::downloadEntirePlaylist,
         onDownloadSelected = viewModel::downloadSelectedItems,
         onSkipAlreadyDownloadedToggled = viewModel::onSkipAlreadyDownloadedToggled,
-        onPlaylistOptionSelected = viewModel::onPlaylistOptionSelected,
+        playlistQualityPickerActions = remember(viewModel) {
+            QualityPickerActions(
+                onTierSelected = viewModel::onPlaylistQualityTierSelected,
+                onVariantSelected = viewModel::onPlaylistVideoVariantSelected,
+                onIncludeMultipleAudioToggled = viewModel::onPlaylistIncludeMultipleAudioToggled,
+                onAudioTrackToggled = viewModel::onPlaylistAudioTrackToggled,
+            )
+        },
         onQueuePlaylistClicked = viewModel::onQueuePlaylistClicked,
         onCancelPlaylistDownloadSetup = viewModel::cancelPlaylistDownloadSetup,
         onCollectionItemTapped = viewModel::onCollectionItemTapped,
@@ -142,7 +160,7 @@ private fun HomeScreenContent(
     onUrlChanged: (String) -> Unit,
     onAnalyzeClick: () -> Unit,
     onCancelClick: () -> Unit,
-    onDownloadOptionSelected: (DownloadOption) -> Unit,
+    qualityPickerActions: QualityPickerActions,
     onDownloadClicked: () -> Unit,
     onPlaylistItemTapped: (PlaylistItem) -> Unit,
     onBeginRangeSelection: () -> Unit,
@@ -150,7 +168,7 @@ private fun HomeScreenContent(
     onDownloadEntirePlaylist: () -> Unit,
     onDownloadSelected: () -> Unit,
     onSkipAlreadyDownloadedToggled: (Boolean) -> Unit,
-    onPlaylistOptionSelected: (DownloadOption) -> Unit,
+    playlistQualityPickerActions: QualityPickerActions,
     onQueuePlaylistClicked: () -> Unit,
     onCancelPlaylistDownloadSetup: () -> Unit,
     onCollectionItemTapped: (MediaCollectionItem) -> Unit,
@@ -162,13 +180,13 @@ private fun HomeScreenContent(
     onNavigateToSources: () -> Unit,
 ) {
     val showDiscovery = uiState.result == null && !uiState.isAnalyzing
-    val selectedOption = uiState.downloadOptions.firstOrNull { it.id == uiState.selectedFormatId }
+    val selectedSelection = uiState.formatSelection?.resolve(uiState.selectedQuality)
     val setup = uiState.playlistDownloadSetup
 
     // Exactly one persistent bottom bar can apply at a time: the single-item format picker's
     // Download bar takes priority while a Single result is showing; the playlist quality-setup
     // step's Queue bar only applies once that step is open.
-    val showDownloadBar = uiState.result is ExtractionResult.Single && uiState.downloadOptions.isNotEmpty()
+    val showDownloadBar = uiState.result is ExtractionResult.Single && uiState.formatSelection != null
     val showPlaylistBar = uiState.result is ExtractionResult.Playlist && setup != null
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -207,9 +225,9 @@ private fun HomeScreenContent(
                 is ExtractionResult.Single -> item {
                     AnalysisResultCard(
                         result = result.media,
-                        downloadOptions = uiState.downloadOptions,
-                        selectedFormatId = uiState.selectedFormatId,
-                        onDownloadOptionSelected = onDownloadOptionSelected,
+                        formatSelection = uiState.formatSelection,
+                        selectedQuality = uiState.selectedQuality,
+                        actions = qualityPickerActions,
                     )
                 }
 
@@ -229,7 +247,7 @@ private fun HomeScreenContent(
                         item {
                             PlaylistDownloadSetupCard(
                                 setup = setup,
-                                onOptionSelected = onPlaylistOptionSelected,
+                                actions = playlistQualityPickerActions,
                                 onCancelClicked = onCancelPlaylistDownloadSetup,
                             )
                         }
@@ -290,7 +308,7 @@ private fun HomeScreenContent(
 
         if (showDownloadBar) {
             DownloadActionBar(
-                selectedOption = selectedOption,
+                selectedSelection = selectedSelection,
                 onDownloadClicked = onDownloadClicked,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
@@ -600,9 +618,9 @@ private fun MessageCard(message: String, isError: Boolean) {
 @Composable
 private fun AnalysisResultCard(
     result: MediaAnalysisResult,
-    downloadOptions: List<DownloadOption>,
-    selectedFormatId: String?,
-    onDownloadOptionSelected: (DownloadOption) -> Unit,
+    formatSelection: FormatSelectionModel?,
+    selectedQuality: SelectedQualityState,
+    actions: QualityPickerActions,
 ) {
     MediaVaultCard {
         Thumbnail(result.thumbnailUrl)
@@ -621,47 +639,134 @@ private fun AnalysisResultCard(
             }
         }
 
-        if (downloadOptions.isNotEmpty()) {
-            Text(
-                text = stringResource(R.string.home_select_format),
-                style = MaterialTheme.typography.labelLarge,
-            )
-
-            val sections = downloadOptions.groupedBySection()
-
-            FormatSection(titleRes = R.string.home_section_video, options = sections[DownloadOptionSection.VIDEO].orEmpty()) { option ->
-                VideoOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
-            }
-
-            FormatSection(titleRes = R.string.home_section_audio, options = sections[DownloadOptionSection.AUDIO].orEmpty()) { option ->
-                AudioOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
-            }
-
-            // A defensive catch-all — every option buildDownloadOptions produces today lands in
-            // VIDEO or AUDIO, but a future format shape it doesn't yet classify still shows up
-            // here rather than being silently dropped from the picker.
-            FormatSection(titleRes = R.string.home_section_other, options = sections[DownloadOptionSection.OTHER].orEmpty()) { option ->
-                VideoOptionRow(option = option, isSelected = option.id == selectedFormatId, onClick = { onDownloadOptionSelected(option) })
-            }
+        if (formatSelection != null) {
+            QualityPickerSection(model = formatSelection, selection = selectedQuality, actions = actions)
         }
     }
 }
 
-/** One labeled group of rows in the format picker — omitted entirely when [options] is empty, so an unused section never shows a bare "Video"/"Audio" heading with nothing under it. */
+/**
+ * The whole format picker for one [FormatSelectionModel]: quality tiers (only ever a handful of
+ * chips, never the 100+ raw rows a modern source can report — see
+ * [com.mediavault.core.domain.download.QualityTier]), that tier's own variant picker when it
+ * genuinely has more than one, and an Audio section — multi-select once a video tier needing a
+ * separate track is picked, single-select for a bare audio-only source. Shared identically by
+ * the single-item screen and the playlist quality-setup step (see each's own call site).
+ */
 @Composable
-private fun FormatSection(
-    titleRes: Int,
-    options: List<DownloadOption>,
-    row: @Composable (DownloadOption) -> Unit,
+private fun QualityPickerSection(
+    model: FormatSelectionModel,
+    selection: SelectedQualityState,
+    actions: QualityPickerActions,
 ) {
-    if (options.isEmpty()) return
+    if (model.videoQualityGroups.isEmpty() && model.audioTracks.isEmpty()) return
+
+    if (model.videoQualityGroups.isNotEmpty()) {
+        Text(text = stringResource(R.string.home_section_video), style = MaterialTheme.typography.labelLarge)
+        QualityTierRow(groups = model.videoQualityGroups, selectedTier = selection.tier, onTierSelected = actions.onTierSelected)
+
+        val selectedGroup = model.videoQualityGroups.firstOrNull { it.tier == selection.tier }
+        if (selectedGroup != null && selectedGroup.variants.size > 1) {
+            VariantPicker(
+                variants = selectedGroup.variants,
+                selectedFormatId = selection.videoVariantFormatId ?: selectedGroup.bestVariant.formatId,
+                onVariantSelected = actions.onVariantSelected,
+            )
+        }
+
+        val selectedVariant = selectedGroup?.variants?.firstOrNull { it.formatId == selection.videoVariantFormatId } ?: selectedGroup?.bestVariant
+        if (selectedGroup != null && selectedVariant?.hasAudio != true && model.audioTracks.isNotEmpty()) {
+            AudioTrackSection(tracks = model.audioTracks, selection = selection, actions = actions)
+        }
+    } else {
+        Text(text = stringResource(R.string.home_section_audio), style = MaterialTheme.typography.labelLarge)
+        AudioTrackSection(tracks = model.audioTracks, selection = selection, actions = actions)
+    }
+}
+
+/** A horizontal row of quality-tier chips — only tiers this source actually offers, never the full 4K/2K/1080p/720p/480p/Lower set padded out with unavailable ones. */
+@Composable
+private fun QualityTierRow(groups: List<VideoQualityGroup>, selectedTier: QualityTier?, onTierSelected: (QualityTier) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(groups, key = { it.tier }) { group ->
+            FilterChip(
+                selected = group.tier == selectedTier,
+                onClick = { onTierSelected(group.tier) },
+                label = { Text(group.tier.label) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer),
+            )
+        }
+    }
+}
+
+/**
+ * Shown only when the selected tier genuinely offers more than one variant (a different
+ * codec/container/frame-rate at the same resolution) — per this picker's "useful variants only
+ * when needed" requirement, a single-variant tier never shows this at all.
+ */
+@Composable
+private fun VariantPicker(variants: List<MediaFormat>, selectedFormatId: String, onVariantSelected: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            text = stringResource(titleRes),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        options.forEach { option -> row(option) }
+        Text(text = stringResource(R.string.home_variant_section_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        variants.forEach { variant ->
+            DownloadOptionRow(
+                title = videoVariantTitle(variant),
+                subtitle = videoVariantSubtitle(variant),
+                isSelected = variant.formatId == selectedFormatId,
+                isSelectable = true,
+                unavailableReason = null,
+                onClick = { onVariantSelected(variant.formatId) },
+            )
+        }
+    }
+}
+
+/**
+ * Every available audio track as its own row, language as the title (see
+ * [audioLanguageDisplayName] — never a guess), single-select (radio) until
+ * [SelectedQualityState.includeMultipleAudio] is switched on, which turns every row into a
+ * checkbox and reveals the toggle can add as many tracks as the user wants muxed into the final
+ * file — see [ResolvedSelection.requiresProcessing][com.mediavault.core.domain.download.ResolvedSelection.requiresProcessing].
+ */
+@Composable
+private fun AudioTrackSection(tracks: List<MediaFormat>, selection: SelectedQualityState, actions: QualityPickerActions) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(text = stringResource(R.string.home_section_audio), style = MaterialTheme.typography.labelLarge)
+
+        if (tracks.size > 1) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = selection.includeMultipleAudio, onCheckedChange = actions.onIncludeMultipleAudioToggled)
+                Text(text = stringResource(R.string.home_include_multiple_audio), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+
+        tracks.forEach { track ->
+            val isSelected = track.formatId in selection.selectedAudioFormatIds
+            if (selection.includeMultipleAudio) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { actions.onAudioTrackToggled(track.formatId) }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = isSelected, onCheckedChange = { actions.onAudioTrackToggled(track.formatId) })
+                    Column {
+                        Text(text = audioLanguageDisplayName(track.languageCode), style = MaterialTheme.typography.bodyMedium)
+                        Text(text = audioTrackSubtitle(track), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                DownloadOptionRow(
+                    title = audioLanguageDisplayName(track.languageCode),
+                    subtitle = audioTrackSubtitle(track),
+                    isSelected = isSelected,
+                    isSelectable = true,
+                    unavailableReason = null,
+                    onClick = { actions.onAudioTrackToggled(track.formatId) },
+                )
+            }
+        }
     }
 }
 
@@ -807,7 +912,7 @@ private fun SelectionToolbar(
 @Composable
 private fun PlaylistDownloadSetupCard(
     setup: PlaylistDownloadSetupState,
-    onOptionSelected: (DownloadOption) -> Unit,
+    actions: QualityPickerActions,
     onCancelClicked: () -> Unit,
 ) {
     MediaVaultCard {
@@ -838,21 +943,12 @@ private fun PlaylistDownloadSetupCard(
             else -> {
                 Text(text = stringResource(R.string.home_select_format), style = MaterialTheme.typography.labelLarge)
 
-                // Same Video/Audio section grouping and rows as the single-item picker
-                // (AnalysisResultCard) — a merge-required (paired) option is shown selectable
-                // here exactly like there, instead of a second, duplicated row/section layout.
-                val sections = setup.downloadOptions.groupedBySection()
-
-                FormatSection(titleRes = R.string.home_section_video, options = sections[DownloadOptionSection.VIDEO].orEmpty()) { option ->
-                    VideoOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
-                }
-
-                FormatSection(titleRes = R.string.home_section_audio, options = sections[DownloadOptionSection.AUDIO].orEmpty()) { option ->
-                    AudioOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
-                }
-
-                FormatSection(titleRes = R.string.home_section_other, options = sections[DownloadOptionSection.OTHER].orEmpty()) { option ->
-                    VideoOptionRow(option = option, isSelected = option.id == setup.selectedFormatId, onClick = { onOptionSelected(option) })
+                // Exact same picker as the single-item screen's own AnalysisResultCard (see
+                // QualityPickerSection) — multi-audio-track selection resolves through the
+                // identical logic, never a second, duplicated picker implementation.
+                val model = setup.formatSelection
+                if (model != null) {
+                    QualityPickerSection(model = model, selection = setup.selectedQuality, actions = actions)
                 }
             }
         }
@@ -1021,32 +1117,7 @@ private fun Thumbnail(
     }
 }
 
-/** A VIDEO-section row: resolution/fps as the title, container/codec/final-size/audio-availability as the subtitle — see [videoOptionTitle]/[videoOptionSubtitle]. */
-@Composable
-private fun VideoOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
-    DownloadOptionRow(
-        title = videoOptionTitle(option),
-        subtitle = videoOptionSubtitle(option),
-        isSelected = isSelected,
-        isSelectable = option.isSelectable,
-        unavailableReason = option.unavailableReason,
-        onClick = onClick,
-    )
-}
-
-/** An AUDIO-section row: container/format as the title, codec/bitrate/size/language as the subtitle — see [audioOptionTitle]/[audioOptionSubtitle]. */
-@Composable
-private fun AudioOptionRow(option: DownloadOption, isSelected: Boolean, onClick: () -> Unit) {
-    DownloadOptionRow(
-        title = audioOptionTitle(option),
-        subtitle = audioOptionSubtitle(option),
-        isSelected = isSelected,
-        isSelectable = option.isSelectable,
-        unavailableReason = option.unavailableReason,
-        onClick = onClick,
-    )
-}
-
+/** A shared, generic radio-row used by both [VariantPicker] and the single-select variant of [AudioTrackSection]. */
 @Composable
 private fun DownloadOptionRow(
     title: String,
@@ -1083,21 +1154,21 @@ private fun DownloadOptionRow(
  */
 @Composable
 private fun DownloadActionBar(
-    selectedOption: DownloadOption?,
+    selectedSelection: ResolvedSelection?,
     onDownloadClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ActionBarSurface(modifier) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = selectedOption?.let { selectedOptionSummaryLabel(it) } ?: stringResource(R.string.home_download_bar_prompt),
+                text = selectedSelection?.let { selectedQualitySummaryLabel(it) } ?: stringResource(R.string.home_download_bar_prompt),
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (selectedOption != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (selectedSelection != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Button(
             onClick = onDownloadClicked,
-            enabled = selectedOption != null,
+            enabled = selectedSelection != null,
             shape = MaterialTheme.shapes.medium,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
         ) {
@@ -1118,7 +1189,7 @@ private fun PlaylistQueueActionBar(
     onQueueClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val selectedOption = setup.downloadOptions.firstOrNull { it.id == setup.selectedFormatId }
+    val selectedSelection = setup.formatSelection?.resolve(setup.selectedQuality)
     ActionBarSurface(modifier) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -1126,9 +1197,9 @@ private fun PlaylistQueueActionBar(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            val qualityAndSize = if (selectedOption != null) {
-                val total = estimatedPlaylistTotalSizeBytes(selectedOption, setup.items.size)
-                listOfNotNull(playlistQualityLabel(selectedOption), formatFileSizeLabel(total) ?: stringResource(R.string.home_playlist_bar_total_unknown))
+            val qualityAndSize = if (selectedSelection != null) {
+                val total = estimatedPlaylistTotalSizeBytes(selectedSelection, setup.items.size)
+                listOfNotNull(selectedQualityLabel(selectedSelection), formatFileSizeLabel(total) ?: stringResource(R.string.home_playlist_bar_total_unknown))
                     .joinToString(" • ")
             } else {
                 stringResource(R.string.home_playlist_bar_prompt)
@@ -1141,7 +1212,7 @@ private fun PlaylistQueueActionBar(
         }
         Button(
             onClick = onQueueClicked,
-            enabled = setup.selectedFormatId != null,
+            enabled = selectedSelection != null,
             shape = MaterialTheme.shapes.medium,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
         ) {

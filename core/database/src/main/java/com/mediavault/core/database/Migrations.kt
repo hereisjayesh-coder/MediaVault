@@ -35,9 +35,9 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
 
 /**
  * Adds the second (audio) stream's format id and cache path a split video+audio download needs
- * to remux with FFmpeg — see `MediaProcessor`/`DownloadOption`. Purely additive; both columns
- * are null for every pre-existing task, which is exactly the "direct download" behavior those
- * rows already had.
+ * to remux with FFmpeg — see `MediaProcessor`/`FormatSelectionModel`. Purely additive; both
+ * columns are null for every pre-existing task, which is exactly the "direct download" behavior
+ * those rows already had.
  */
 val MIGRATION_3_4 = object : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -73,5 +73,21 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE download_tasks ADD COLUMN qualityRequiresProcessing INTEGER")
         db.execSQL("ALTER TABLE download_tasks ADD COLUMN qualityAudioLanguageCode TEXT")
+    }
+}
+
+/**
+ * Adds the one genuinely new field the multi-audio-track format-selection redesign needs: which
+ * language each entry in `audioFormatId` (comma-joined as of this same redesign — no schema
+ * change needed for that, an existing TEXT column already holds a single format id, which is
+ * already a valid one-element "list") was reported as, same order — needed to tag each muxed
+ * audio track's language in the merged output. Every other change this redesign makes reuses
+ * existing TEXT columns for comma-joined multi-value content rather than adding new ones — see
+ * `DownloadTaskEntity`'s own field-level KDoc for the full accounting. Purely additive; null for
+ * every pre-existing task, which downloads exactly as it always has (no separate audio tracks).
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE download_tasks ADD COLUMN audioLanguageCodes TEXT")
     }
 }

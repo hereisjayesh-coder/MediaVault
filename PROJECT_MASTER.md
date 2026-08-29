@@ -3410,4 +3410,100 @@ severity and the very recent (this same day) live confirmation that the shared
 
 ---
 
+### 2026-08-29 — Format selection redesigned around quality tiers; multi-audio-track downloads added
+
+**Decision:** Replaced the flat per-format list (up to 100+ raw rows for a modern YouTube upload)
+with a coarse `QualityTier` grouping (4K/1440p/1080p/720p/480p/lower); a tier's raw variants
+(fps/codec/container/size) are only shown when a tier genuinely has more than one, collapsing
+duplicates the same height/fps/codec/container produces. Audio moved into its own section: every
+distinct language becomes exactly one row (highest-bitrate variant per language, real
+`Locale`-derived display name, never a guessed one), with an explicit "Include multiple audio
+tracks" toggle switching from single-select to checkboxes. This supersedes the 2026-08-26 "Video/
+Audio sections" redesign above — that stage fixed *how* a flat list was displayed; this stage
+changes what's being listed at all, addressing a milestone requirement that stage didn't yet
+cover: a real 100+-format source (confirmed live: the same "Escape 100 Cops, Win $500,000"
+MrBeast upload used for this stage's own live verification, 195 raw formats, 22 audio languages,
+zero muxed formats) was still an unusable wall of rows under the old per-format-row design.
+
+**Why multi-audio only pairs with a video pick, never a bare audio-only source:** the milestone
+scoped multi-track selection to "download a video with multiple audio languages muxed in" — a
+bare audio-only source (podcast-style extraction with no video formats at all) has no merge to
+perform and keeps the pre-existing single-select behavior unchanged. This kept
+`resolveSelection()`'s `requiresProcessing` rule to one boolean (`videoFormat != null &&
+audioFormats.isNotEmpty()`) instead of a three-way branch, and matches how yt-dlp itself only ever
+reports multiple *languages* for a source that also has video (confirmed against the real test
+video and general yt-dlp format-list shape).
+
+**Why 2+ audio tracks always mux into MKV, even when every track is individually MP4-compatible:**
+MP4's multi-track-audio compatibility is inconsistent across real codec/language-count
+combinations even though the merge itself is remux-only (`-c copy`, no re-encoding); MKV natively
+supports multi-track audio with per-track language metadata, and Media3's existing Matroska
+extractor already reads it generically. A single audio track keeps the pre-existing mp4/webm/mkv
+pairing logic unchanged (no regression for the common case).
+
+**Why language display names come from `java.util.Locale.forLanguageTag(...).displayName` instead
+of parsing yt-dlp's own `format_note` text:** yt-dlp's per-format language hint is inconsistent
+free text across sources, while the language *code* (`languageCode`, already a domain field since
+the 2026-08-26 stage) is a real BCP-47/ISO tag `Locale` resolves correctly for every real code seen
+live (en/hi/de/zh-Hans and 22 total on the test video) — no new dependency, and no risk of
+inventing a language name yt-dlp never actually reported. `Locale` is lenient with syntactically
+malformed input (doesn't reliably fail closed), but every real yt-dlp-reported code is well-formed,
+so this doesn't affect production behavior — only test expectations needed adjusting for a
+deliberately-malformed input case.
+
+**Why the multi-track FFmpeg merge command is a generalized N-input form, not N calls to the
+existing single-pair path:** `-i video -i audio0 -i audio1 ... -map 0:v:0 -map 1:a:0 -map 2:a:0
+... -c copy -metadata:s:a:0 language=xxx -metadata:s:a:1 language=yyy ...` produces one real
+multi-track file in one FFmpeg invocation with correct per-track language metadata; running the
+existing pairwise merge N times would either overwrite the previous result or require a separate
+multi-pass concat step with no clean way to attach distinct language tags per track.
+
+**Why this needed only one new Room migration despite touching several persisted fields:** four
+existing TEXT columns (`audioFormatId`, `audioLocalCachePath`, `qualityResolutionLabel`,
+`qualityAudioLanguageCode`) already held a single value, which is already a valid one-element
+"list" — reinterpreted as comma-joined multi-value content via `@ColumnInfo` name remapping to
+pluralized Kotlin property names, with zero schema change. Only per-track audio language codes
+(needed to tag each muxed track, and positionally aligned with `audioFormatIds` since a blank
+entry must stay index-matched) had no prior column to reuse, so `MIGRATION_6_7` adds exactly one
+new nullable column (`audioLanguageCodes`), version 6→7. Four now-superseded quality-descriptor
+columns from earlier migrations (`qualityContainer`, `qualityHasVideo`, `qualityHasAudio`,
+`qualityRequiresProcessing`) stay declared on the entity — deprecated and unused by any new code
+— rather than being dropped, since removing a physical column requires a full table-recreation
+migration, judged too risky for a database with real user downloads already on-device for a purely
+cosmetic cleanup.
+
+**Consequence — the old flat model was deleted, not deprecated:** `DownloadOption`,
+`buildDownloadOptions()`, `compatibleAudioTracksFor()`, and the single-pair-only
+`mergeOutputContainer()` are gone; `FormatSelectionModel`/`QualityTier`/`ResolvedSelection`/
+`SelectedAudioTrack` are the only format-selection model now. One pre-existing test
+(`HomeViewModelTest`'s "a video-only format with no compatible audio cannot be selected") was
+deleted rather than migrated — its premise (an unselectable video-only format) doesn't exist in
+the new model at all, and this test was already independently confirmed broken pre-existing
+(found via `git stash` during the prior hardening-audit stage), so retiring it here is a clean
+resolution, not a new regression.
+
+**Testing:** `FormatSelectionModelTest` and `QualityDescriptorTest` (new/rewritten, covering tier
+grouping/dedup/ordering, per-language audio grouping, container/processing resolution, combined
+size math) plus updated `HomeFormattingTest`/`HomeViewModelTest`/`MediaVaultDownloadEngineTest`
+suites — `./gradlew :core:domain:test :app:testDebugUnitTest` passes clean, zero failures.
+
+**Consequence — verified live on a physical device (Pixel 7a)**, against the real MrBeast test
+video (`youtu.be/Qtl8lJwbd4g`, "Escape 100 Cops, Win $500,000", 195 raw formats/22 languages):
+720p selectable directly from a 6-chip tier row with no scrolling through raw formats; German
+auto-selected by default with real per-language names (German, Chinese Simplified/Traditional,
+Telugu, Russian, Italian, ... down to English) visible on toggling multi-audio on; selecting
+German+Hindi+English live-updated the persistent Download bar's size through 164 MB → 183 MB →
+202 MB as each track was added (and correctly reverted to 202 MB after an accidental fourth
+selection was unchecked); one Download tap produced exactly one completed task; opening the result
+in the Player showed Media3's existing (untouched) audio-track menu listing all three tracks by
+BCP-47 code (`de`/`hi`/`en`) with the currently-active one checked, and selecting `hi` moved the
+checkmark, confirming the switch was applied. A separate, non-multi-audio 1080p download (single
+German track, no toggle) completed normally afterward with no regression. Pre-existing playlist
+downloads visible in the Downloads list from earlier stages were spot-checked as still showing
+`Completed`, not re-run in full, per this stage's own "don't repeat unrelated tests" instruction.
+
+**Where this is documented:** this entry, the CHANGELOG's "Added" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**

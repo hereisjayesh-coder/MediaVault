@@ -1,7 +1,8 @@
 package com.mediavault.app.ui.screens.home
 
 import com.mediavault.app.util.NetworkStatus
-import com.mediavault.core.domain.download.DownloadOption
+import com.mediavault.core.domain.download.FormatSelectionModel
+import com.mediavault.core.domain.download.QualityTier
 import com.mediavault.core.domain.extractor.ExtractionResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 
@@ -17,16 +18,34 @@ data class HomeUiState(
     /** Real device status (storage free space, network transport) — read once when Home loads. */
     val freeStorageBytes: Long? = null,
     val networkStatus: NetworkStatus? = null,
-    /** [ExtractionResult.Single.media.formats] paired/flattened into what the screen actually shows — see `buildDownloadOptions`. */
-    val downloadOptions: List<DownloadOption> = emptyList(),
-    /** The [DownloadOption.id] the user has chosen for a [ExtractionResult.Single] result, if any. */
-    val selectedFormatId: String? = null,
+    /** [ExtractionResult.Single.media.formats] grouped into quality tiers + audio tracks — see `toFormatSelectionModel`. */
+    val formatSelection: FormatSelectionModel? = null,
+    /** What the user has picked from [formatSelection] so far, for a [ExtractionResult.Single] result. */
+    val selectedQuality: SelectedQualityState = SelectedQualityState(),
     /** True once a download has just been queued, so the screen can offer to jump to Downloads. */
     val justQueued: Boolean = false,
     /** Non-null while the user is choosing one quality to apply to a playlist download — see [HomeViewModel]. */
     val playlistDownloadSetup: PlaylistDownloadSetupState? = null,
     /** Non-null while [com.mediavault.core.domain.network.NetworkPolicyManager] has flagged a download as merely risky (not blocked) and is waiting for the user to confirm or cancel it — see [HomeViewModel]. */
     val networkWarning: NetworkWarning? = null,
+)
+
+/**
+ * The picker's current selection within a [FormatSelectionModel] — deliberately UI-local state,
+ * not persisted or handed to the download engine directly (see `HomeViewModel.currentResolvedSelection`,
+ * which turns this plus the model into a real [com.mediavault.core.domain.download.ResolvedSelection]
+ * only once both sides are available). Nothing is pre-selected on a fresh analysis — the user
+ * always makes an active choice, same as the format picker always has.
+ */
+data class SelectedQualityState(
+    /** Null until the user taps a quality tier — or permanently null for an audio-only source, which has no video tiers to pick from at all. */
+    val tier: QualityTier? = null,
+    /** Which variant within [tier] — null means "the tier's own best/default variant," so a tier with only one variant never needs this set explicitly. */
+    val videoVariantFormatId: String? = null,
+    /** Whether the audio section is in multi-select (checkbox) mode — only ever meaningful once a video tier is picked; see `FormatSelectionModel`'s own KDoc for why a bare audio-only source stays single-select. */
+    val includeMultipleAudio: Boolean = false,
+    /** At most one entry unless [includeMultipleAudio] is true. */
+    val selectedAudioFormatIds: Set<String> = emptySet(),
 )
 
 /** A [com.mediavault.core.domain.network.NetworkPolicyDecision.Warn] the user must explicitly confirm before it proceeds — never applied silently. */
@@ -54,17 +73,17 @@ data class PlaylistSelectionState(
 /**
  * The "pick one quality, then queue" step between selecting playlist items and actually
  * calling [com.mediavault.core.domain.download.DownloadEngine.enqueuePlaylist]. Quality is
- * resolved from the *first* selected item's own format list, paired into [DownloadOption]s the
- * same way the single-item screen does — including merge-required video+audio pairing — via
- * [com.mediavault.core.domain.download.buildDownloadOptions]. Every other item is matched
- * against that same chosen option's [com.mediavault.core.domain.download.QualityDescriptor]
- * independently once queued.
+ * resolved from the *first* selected item's own format list, grouped into a
+ * [FormatSelectionModel] the same way the single-item screen does — including multi-audio-track
+ * selection. Every other item is matched against that same chosen quality's
+ * [com.mediavault.core.domain.download.QualityDescriptor] independently once queued (see
+ * `QualityDescriptor.resolveForPlaylist`), never re-using this item's own specific format ids,
+ * which are meaningless on any other item.
  */
 data class PlaylistDownloadSetupState(
     val items: List<PlaylistItem>,
     val isResolvingFormats: Boolean = true,
-    val downloadOptions: List<DownloadOption> = emptyList(),
-    /** The [DownloadOption.id] the user has chosen, if any. */
-    val selectedFormatId: String? = null,
+    val formatSelection: FormatSelectionModel? = null,
+    val selectedQuality: SelectedQualityState = SelectedQualityState(),
     val errorMessage: String? = null,
 )

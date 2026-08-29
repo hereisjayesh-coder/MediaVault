@@ -5,6 +5,46 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Added — Simplified Format Selection and Multi-Audio Downloads
+
+- **Replaced the flat, 100+ row raw format picker with a coarse quality-tier selector** (4K /
+  1440p / 1080p / 720p / 480p / lower), with per-tier variants (fps/codec/container/size) only
+  shown when a tier genuinely has more than one — verified live against a real modern YouTube
+  upload (37 raw video-only formats across 8 resolutions collapsing to 5-6 tiers), and against the
+  reported MrBeast multi-audio test case (`Escape 100 Cops, Win $500,000`, 195 raw formats, 22
+  audio languages, zero muxed formats).
+- **Every available audio track is now shown separately with its real language name** (via
+  `java.util.Locale`, never a guessed or raw-code label), with an explicit "Include multiple audio
+  tracks" toggle revealing checkboxes for selecting more than one language at once. Previously the
+  picker only ever allowed a single audio track.
+- **Multi-audio downloads mux the video once plus every selected audio stream into one final
+  file**, never duplicating the video, via a generalized FFmpeg command
+  (`-map 0:v:0 -map 1:a:0 -map 2:a:0 ... -c copy` with per-track `-metadata:s:a:N language=`) that
+  now accepts any number of audio inputs instead of exactly one.
+- **Container choice: a single audio track keeps the existing mp4/webm/mkv compatibility logic; 2
+  or more audio tracks always mux into MKV** — MP4's multi-track compatibility is inconsistent
+  across real codec combinations even though the merge is remux-only, while MKV natively supports
+  multi-track audio with per-track language metadata and Media3's existing Matroska extractor
+  already reads it, so no player-side code changes were needed.
+- The persistent Download bar's estimated size now live-updates as quality/audio selections
+  change, summing the video size and every selected audio track's size (binary/1024-based MB,
+  consistent with the app's existing size formatting).
+- The same model and selection logic is reused for playlists: quality and selected audio languages
+  apply across every item, matched per item by language code; a playlist item missing a requested
+  quality tier or audio language fails that item clearly rather than silently substituting another
+  one (consistent with existing playlist-resolution behavior).
+- Verified live on a Pixel 7a against the real MrBeast test video: 720p selectable without
+  scrolling through the raw format list, German/Hindi/English selected as three separate audio
+  tracks with live size updates (145→164→183→202 MB as each track was added), single download
+  producing one file, Media3's existing audio-track picker showing all three languages (`de`/
+  `hi`/`en`) with track switching confirmed (selection moved to `hi` and persisted), and a
+  separate single-audio (non-toggled) 1080p download completing normally with no regression.
+- Two new domain types (`QualityTier`, `FormatSelectionModel`) replace the old flat
+  `DownloadOption` model entirely (deleted); one new Room migration (`MIGRATION_6_7`, version 6→7)
+  adds a single new column for per-track audio language codes, while every other multi-value field
+  reuses an existing TEXT column reinterpreted as comma-joined content — no other schema changes
+  or new dependencies.
+
 ### Fixed — v1 Core-Flow Hardening Audit
 
 - **A merge-required download (video-only + audio-only remuxed into one file) no longer shows a

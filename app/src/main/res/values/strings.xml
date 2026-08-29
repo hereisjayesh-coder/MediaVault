@@ -104,9 +104,10 @@
     <string name="home_network_warn_title">Mobile data warning</string>
     <string name="home_network_warn_proceed">Download anyway</string>
     <string name="home_network_blocked">This download is blocked by your current network policy.</string>
-    <string name="home_section_video">Video</string>
+    <string name="home_section_video">Video quality</string>
     <string name="home_section_audio">Audio</string>
-    <string name="home_section_other">Other</string>
+    <string name="home_variant_section_title">Format</string>
+    <string name="home_include_multiple_audio">Include multiple audio tracks</string>
     <string name="home_download_bar_prompt">Select a format to continue</string>
     <string name="home_playlist_bar_prompt">Choose a quality to continue</string>
     <string name="home_playlist_bar_items">%1$d item(s) selected</string>

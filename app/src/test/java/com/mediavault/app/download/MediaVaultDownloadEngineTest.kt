@@ -1,9 +1,11 @@
 package com.mediavault.app.download
 
 import com.mediavault.core.database.entity.DownloadTaskEntity
+import com.mediavault.core.database.entity.splitColumn
 import com.mediavault.core.domain.download.PlaylistDownloadItem
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
+import com.mediavault.core.domain.download.QualityTier
 import com.mediavault.core.model.DownloadStatus
 import com.mediavault.core.model.MediaType
 import org.junit.Assert.assertEquals
@@ -21,7 +23,7 @@ import org.junit.Test
  */
 class MediaVaultDownloadEngineTest {
 
-    private val descriptor = QualityDescriptor(resolutionLabel = "1080p", container = "mp4", hasVideo = true, hasAudio = true)
+    private val descriptor = QualityDescriptor(QualityTier.FULL_HD_1080P, emptyList())
 
     private fun request(
         items: List<PlaylistDownloadItem>,
@@ -61,31 +63,19 @@ class MediaVaultDownloadEngineTest {
         assertEquals("playlist-1", task.playlistId)
         assertEquals("My Playlist", task.playlistTitle)
         assertEquals("https://example.com/thumb.jpg", task.playlistThumbnailUrl)
-        assertEquals("1080p", task.qualityResolutionLabel)
-        assertEquals("mp4", task.qualityContainer)
-        assertEquals(true, task.qualityHasVideo)
-        assertEquals(true, task.qualityHasAudio)
-        assertEquals(false, task.qualityRequiresProcessing)
-        assertNull(task.qualityAudioLanguageCode)
+        assertEquals("FULL_HD_1080P", task.qualityTier)
+        assertTrue(task.qualityAudioLanguageCodes.splitColumn().isEmpty())
         assertEquals(DownloadStatus.ANALYZING, task.status)
     }
 
     @Test
-    fun `a merge-required quality persists requiresProcessing and the paired audio language per task`() {
-        val mergeDescriptor = QualityDescriptor(
-            resolutionLabel = "1080p",
-            container = "mp4",
-            hasVideo = true,
-            hasAudio = true,
-            requiresProcessing = true,
-            audioLanguageCode = "en",
-        )
+    fun `a merge-required quality persists every selected audio language per task`() {
+        val mergeDescriptor = QualityDescriptor(QualityTier.FULL_HD_1080P, listOf("en", "hi"))
         val playlistRequest = request(listOf(item("a", 1))).copy(qualityDescriptor = mergeDescriptor)
 
         val task = buildPlaylistTaskEntities(playlistRequest, emptySet(), 1_000L).single()
 
-        assertEquals(true, task.qualityRequiresProcessing)
-        assertEquals("en", task.qualityAudioLanguageCode)
+        assertEquals(setOf("en", "hi"), task.qualityAudioLanguageCodes.splitColumn().toSet())
     }
 
     @Test
@@ -121,7 +111,7 @@ class MediaVaultDownloadEngineTest {
         status: DownloadStatus,
         playlistId: String? = null,
         formatId: String? = "f1",
-        audioFormatId: String? = null,
+        audioFormatIds: String? = null,
     ) = DownloadTaskEntity(
         id = "t1",
         sourceUrl = "https://example.com/a",
@@ -130,7 +120,7 @@ class MediaVaultDownloadEngineTest {
         thumbnailUrl = null,
         mediaType = MediaType.VIDEO,
         formatId = formatId,
-        audioFormatId = audioFormatId,
+        audioFormatIds = audioFormatIds,
         container = "mp4",
         destinationTreeUri = "content://tree/x",
         destinationUri = null,
@@ -183,9 +173,9 @@ class MediaVaultDownloadEngineTest {
     @Test
     fun `a failed split video+audio task retries straight into QUEUED, same as any other direct task`() {
         // Not a playlist task, so retryNextStatusOrNull() only looks at playlistId/formatId —
-        // audioFormatId being set doesn't change which status a retry lands on. The engine's
-        // runSplitStreamDownload then re-downloads both streams and re-merges from QUEUED.
-        val task = sampleTask(DownloadStatus.FAILED, playlistId = null, formatId = "v1", audioFormatId = "a1")
+        // audioFormatIds being set doesn't change which status a retry lands on. The engine's
+        // runSplitStreamDownload then re-downloads every stream and re-merges from QUEUED.
+        val task = sampleTask(DownloadStatus.FAILED, playlistId = null, formatId = "v1", audioFormatIds = "a1")
 
         assertEquals(DownloadStatus.QUEUED, task.retryNextStatusOrNull())
     }
@@ -194,7 +184,7 @@ class MediaVaultDownloadEngineTest {
     fun `a task stuck MERGING when the process died is not retryable until it's paused`() {
         // MERGING isn't FAILED or CANCELLED — retryNextStatusOrNull() correctly refuses it;
         // recoverAfterProcessDeath() is what reassigns a stuck MERGING task to PAUSED first.
-        assertNull(sampleTask(DownloadStatus.MERGING, formatId = "v1", audioFormatId = "a1").retryNextStatusOrNull())
+        assertNull(sampleTask(DownloadStatus.MERGING, formatId = "v1", audioFormatIds = "a1").retryNextStatusOrNull())
     }
 
     // --- Process-death recovery ---------------------------------------------------------

@@ -12,13 +12,18 @@ import com.mediavault.core.database.dao.DownloadTaskDao
 import com.mediavault.core.database.dao.MediaItemDao
 import com.mediavault.core.database.entity.DownloadTaskEntity
 import com.mediavault.core.database.entity.MediaItemEntity
+import com.mediavault.core.database.entity.joinForColumn
+import com.mediavault.core.database.entity.joinPositional
+import com.mediavault.core.database.entity.splitColumn
+import com.mediavault.core.database.entity.splitPositional
 import com.mediavault.core.domain.download.DownloadEngine
 import com.mediavault.core.domain.download.DownloadProgress
 import com.mediavault.core.domain.download.DownloadRequest
 import com.mediavault.core.domain.download.PlaylistDownloadRequest
 import com.mediavault.core.domain.download.QualityDescriptor
-import com.mediavault.core.domain.download.buildDownloadOptions
-import com.mediavault.core.domain.download.findMatching
+import com.mediavault.core.domain.download.QualityTier
+import com.mediavault.core.domain.download.ResolvedSelection
+import com.mediavault.core.domain.download.resolveForPlaylist
 import com.mediavault.core.domain.extractor.ExtractionEvent
 import com.mediavault.core.domain.extractor.ExtractionRequest
 import com.mediavault.core.domain.extractor.ExtractionResult
@@ -26,6 +31,7 @@ import com.mediavault.core.domain.extractor.ExtractionStage
 import com.mediavault.core.domain.extractor.ExtractorEngine
 import com.mediavault.core.domain.network.NetworkPolicyDecision
 import com.mediavault.core.domain.network.NetworkPolicyManager
+import com.mediavault.core.domain.processing.AudioTrackInput
 import com.mediavault.core.domain.processing.MediaProcessor
 import com.mediavault.core.domain.processing.MergeRequest
 import com.mediavault.core.domain.processing.ProcessingEvent
@@ -110,7 +116,8 @@ class MediaVaultDownloadEngine @Inject constructor(
                     thumbnailUrl = request.thumbnailUrl,
                     mediaType = request.mediaType,
                     formatId = request.formatId,
-                    audioFormatId = request.audioFormatId,
+                    audioFormatIds = request.audioTracks.map { it.formatId }.joinForColumn(),
+                    audioLanguageCodes = request.audioTracks.map { it.languageCode }.joinPositional(),
                     container = request.container,
                     destinationTreeUri = null,
                     destinationUri = null,
@@ -175,28 +182,28 @@ class MediaVaultDownloadEngine @Inject constructor(
             when (val outcome = extractorEngine.analyze(current.sourceUrl, current.id)) {
                 is AppResult.Success -> {
                     val media = (outcome.data as? ExtractionResult.Single)?.media
-                    // Rebuilds this item's own video+audio pairing independently — same
-                    // `buildDownloadOptions` the single-item flow uses, so a merge-required
-                    // quality resolves through the exact same pairing/language logic, never a
-                    // second, duplicated implementation of it.
-                    val option = media?.formats?.let(::buildDownloadOptions)?.findMatching(descriptor)
+                    // Rebuilds this item's own video-quality-tier grouping and per-language audio
+                    // pairing independently — same `resolveForPlaylist` the single-item flow's
+                    // own selection logic is built from, so a merge-required, multi-audio quality
+                    // resolves through the exact same logic, never a second, duplicated one.
+                    val selection = media?.formats?.resolveForPlaylist(descriptor)
                     when {
                         media == null -> fail(current.id, AppError.Unsupported("This item is a nested playlist and can't be resolved directly."))
-                        option == null -> fail(current.id, AppError.Unsupported("The selected quality isn't available for this item."))
+                        selection == null -> fail(current.id, AppError.Unsupported("The selected quality (or one of the selected audio languages) isn't available for this item."))
                         else -> {
-                            val primaryFormat = option.videoFormat ?: option.audioFormat
                             dao.update(
                                 current.copy(
                                     status = DownloadStatus.QUEUED,
-                                    formatId = primaryFormat?.formatId,
-                                    audioFormatId = option.audioFormat?.formatId.takeIf { option.requiresProcessing },
-                                    container = option.outputContainer,
-                                    mediaType = if (option.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
-                                    totalBytes = option.combinedEstimatedSizeBytes,
+                                    formatId = selection.primaryFormatId,
+                                    audioFormatIds = selection.audioFormats.map { it.formatId }.joinForColumn().takeIf { selection.requiresProcessing },
+                                    audioLanguageCodes = selection.audioFormats.map { it.languageCode }.joinPositional().takeIf { selection.requiresProcessing },
+                                    container = selection.outputContainer,
+                                    mediaType = if (selection.videoFormat != null) MediaType.VIDEO else MediaType.AUDIO,
+                                    totalBytes = selection.combinedEstimatedSizeBytes,
                                     // A split video+audio task is never byte-offset-resumable — same rule as the single-item flow.
-                                    canResume = if (option.requiresProcessing) false else primaryFormat?.supportsResume ?: false,
+                                    canResume = if (selection.requiresProcessing) false else selection.videoFormat?.supportsResume ?: selection.audioFormats.firstOrNull()?.supportsResume ?: false,
                                     durationSeconds = media.durationSeconds ?: current.durationSeconds,
-                                    resolutionLabel = option.videoFormat?.resolutionLabel,
+                                    resolutionLabel = selection.videoFormat?.resolutionLabel,
                                     updatedAtEpochMs = System.currentTimeMillis(),
                                 ),
                             )
@@ -238,13 +245,13 @@ class MediaVaultDownloadEngine @Inject constructor(
             // task is never resumable (see enqueue()'s canResume=false for paired requests), so
             // this branch also always applies to those, clearing both cache files.
             task.localCachePath?.let { runCatching { File(it).delete() } }
-            task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+            task.audioLocalCachePaths.splitColumn().forEach { path -> runCatching { File(path).delete() } }
             dao.update(
                 task.copy(
                     status = DownloadStatus.PAUSED,
                     bytesTransferred = 0,
                     localCachePath = null,
-                    audioLocalCachePath = null,
+                    audioLocalCachePaths = null,
                     updatedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
@@ -283,11 +290,11 @@ class MediaVaultDownloadEngine @Inject constructor(
         liveThroughput.remove(task.id)
         if (task.status == DownloadStatus.COMPLETED || task.status == DownloadStatus.CANCELLED) return
         task.localCachePath?.let { runCatching { File(it).delete() } }
-        task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+        task.audioLocalCachePaths.splitColumn().forEach { path -> runCatching { File(path).delete() } }
         dao.update(
             task.copy(
                 status = DownloadStatus.CANCELLED,
-                audioLocalCachePath = null,
+                audioLocalCachePaths = null,
                 updatedAtEpochMs = System.currentTimeMillis(),
             ),
         )
@@ -328,7 +335,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             // it up same as cancel() does. Never touches mediaItemDao: a COMPLETED task's
             // Library row is a separate table, deleted only via the Library's own delete action.
             task.localCachePath?.let { runCatching { File(it).delete() } }
-            task.audioLocalCachePath?.let { runCatching { File(it).delete() } }
+            task.audioLocalCachePaths.splitColumn().forEach { path -> runCatching { File(path).delete() } }
             dao.delete(task)
         }
     }
@@ -382,7 +389,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             return
         }
 
-        if (task.audioFormatId != null) {
+        if (!task.audioFormatIds.isNullOrBlank()) {
             runSplitStreamDownload(task)
         } else {
             runSingleStreamDownload(task)
@@ -426,45 +433,55 @@ class MediaVaultDownloadEngine @Inject constructor(
     }
 
     /**
-     * Downloads the video-only stream, then the audio-only stream, then hands both to
-     * [mediaProcessor] to remux — see `DownloadOption.requiresProcessing`/`MediaProcessor`.
-     * Combined progress is reported throughout: [DownloadTaskEntity.totalBytes] is the combined
-     * estimate set at enqueue time and never overwritten mid-flight, so the bar doesn't jump
-     * around as each phase reports its own (smaller) total.
+     * Downloads the video stream, then every selected audio stream in turn, then hands all of
+     * them to [mediaProcessor] to remux into one file — see
+     * [ResolvedSelection.requiresProcessing][com.mediavault.core.domain.download.ResolvedSelection.requiresProcessing]/`MediaProcessor`.
+     * One audio track behaves exactly as this always has; more than one is a real multi-audio
+     * download — every track is downloaded once and muxed once into the same final file, never
+     * a separate file per track. Combined progress is reported throughout:
+     * [DownloadTaskEntity.totalBytes] is the combined estimate set at enqueue time and never
+     * overwritten mid-flight, so the bar doesn't jump around as each phase reports its own
+     * (smaller) total.
      */
     private suspend fun runSplitStreamDownload(task: DownloadTaskEntity) {
         val videoCachePath = task.localCachePath
             ?: File(context.cacheDir, "downloads/${task.id}.video.tmp").path
-        val audioCachePath = task.audioLocalCachePath
-            ?: File(context.cacheDir, "downloads/${task.id}.audio.tmp").path
+        val audioFormatIds = task.audioFormatIds.splitColumn()
+        val existingAudioCachePaths = task.audioLocalCachePaths.splitColumn()
+        val audioCachePaths = audioFormatIds.indices.map { index ->
+            existingAudioCachePaths.getOrNull(index)
+                ?: File(context.cacheDir, "downloads/${task.id}.audio$index.tmp").path
+        }
         updateTask(task.id) {
-            it.copy(status = DownloadStatus.DOWNLOADING, localCachePath = videoCachePath, audioLocalCachePath = audioCachePath)
+            it.copy(status = DownloadStatus.DOWNLOADING, localCachePath = videoCachePath, audioLocalCachePaths = audioCachePaths.joinForColumn())
         }
 
         val videoOutcome = collectStream(task.id, task.sourceUrl, task.formatId.orEmpty(), videoCachePath, baseBytesTransferred = 0L)
         when (videoOutcome) {
             is StreamOutcome.Failed -> {
                 fail(task.id, videoOutcome.error)
-                cleanupSplitCache(videoCachePath, audioCachePath)
+                cleanupSplitCache(videoCachePath, audioCachePaths)
                 return
             }
             StreamOutcome.Stopped -> return // pause()/cancel() already set the terminal DB state
             StreamOutcome.Completed -> Unit
         }
 
-        val videoBytes = runCatching { File(videoCachePath).length() }.getOrDefault(0L)
-        val audioOutcome = collectStream(task.id, task.sourceUrl, task.audioFormatId.orEmpty(), audioCachePath, baseBytesTransferred = videoBytes)
-        when (audioOutcome) {
-            is StreamOutcome.Failed -> {
-                fail(task.id, audioOutcome.error)
-                cleanupSplitCache(videoCachePath, audioCachePath)
-                return
+        var accumulatedBytes = runCatching { File(videoCachePath).length() }.getOrDefault(0L)
+        for (index in audioFormatIds.indices) {
+            val outcome = collectStream(task.id, task.sourceUrl, audioFormatIds[index], audioCachePaths[index], baseBytesTransferred = accumulatedBytes)
+            when (outcome) {
+                is StreamOutcome.Failed -> {
+                    fail(task.id, outcome.error)
+                    cleanupSplitCache(videoCachePath, audioCachePaths)
+                    return
+                }
+                StreamOutcome.Stopped -> return
+                StreamOutcome.Completed -> accumulatedBytes += runCatching { File(audioCachePaths[index]).length() }.getOrDefault(0L)
             }
-            StreamOutcome.Stopped -> return
-            StreamOutcome.Completed -> Unit
         }
 
-        mergeAndFinish(task.id, videoCachePath, audioCachePath)
+        mergeAndFinish(task.id, videoCachePath, audioCachePaths, task.audioLanguageCodes.splitPositional())
     }
 
     private sealed class StreamOutcome {
@@ -509,13 +526,13 @@ class MediaVaultDownloadEngine @Inject constructor(
         return outcome
     }
 
-    private fun cleanupSplitCache(videoCachePath: String, audioCachePath: String) {
+    private fun cleanupSplitCache(videoCachePath: String, audioCachePaths: List<String>) {
         runCatching { File(videoCachePath).delete() }
-        runCatching { File(audioCachePath).delete() }
+        audioCachePaths.forEach { path -> runCatching { File(path).delete() } }
     }
 
-    /** Remuxes the two downloaded streams, then hands the merged file to the same [finish] every direct download already uses to reach the Library. */
-    private suspend fun mergeAndFinish(taskId: String, videoCachePath: String, audioCachePath: String) {
+    /** Remuxes the video and every downloaded audio track into one file, then hands it to the same [finish] every direct download already uses to reach the Library. */
+    private suspend fun mergeAndFinish(taskId: String, videoCachePath: String, audioCachePaths: List<String>, audioLanguageCodes: List<String?>) {
         val task = dao.getById(taskId) ?: return
         // The download phase's speed/ETA mean nothing once transfer has actually finished and
         // remuxing has started — without this, the Downloads row would keep showing a stale,
@@ -530,7 +547,7 @@ class MediaVaultDownloadEngine @Inject constructor(
         val mergeRequest = MergeRequest(
             taskId = taskId,
             videoPath = videoCachePath,
-            audioPath = audioCachePath,
+            audioTracks = audioCachePaths.mapIndexed { index, path -> AudioTrackInput(path, audioLanguageCodes.getOrNull(index)) },
             outputPath = mergedPath,
             outputContainer = outputContainer,
             estimatedDurationSeconds = task.durationSeconds,
@@ -555,16 +572,16 @@ class MediaVaultDownloadEngine @Inject constructor(
         when (val outcome = result) {
             null -> {
                 fail(taskId, AppError.Unknown("Merging was interrupted before it could finish."))
-                cleanupSplitCache(videoCachePath, audioCachePath)
+                cleanupSplitCache(videoCachePath, audioCachePaths)
                 runCatching { File(mergedPath).delete() }
             }
             is AppResult.Failure -> {
                 fail(taskId, outcome.error)
-                cleanupSplitCache(videoCachePath, audioCachePath)
+                cleanupSplitCache(videoCachePath, audioCachePaths)
                 runCatching { File(mergedPath).delete() }
             }
             is AppResult.Success -> {
-                cleanupSplitCache(videoCachePath, audioCachePath)
+                cleanupSplitCache(videoCachePath, audioCachePaths)
                 finish(taskId, outcome.data)
             }
         }
@@ -587,7 +604,7 @@ class MediaVaultDownloadEngine @Inject constructor(
             status = DownloadStatus.COMPLETED,
             destinationUri = finalUri,
             localCachePath = null,
-            audioLocalCachePath = null,
+            audioLocalCachePaths = null,
             errorMessage = null,
             updatedAtEpochMs = now,
         )
@@ -678,12 +695,8 @@ internal fun buildPlaylistTaskEntities(
         playlistItemIndex = item.itemIndex,
         playlistTitle = request.playlistTitle,
         playlistThumbnailUrl = request.playlistThumbnailUrl,
-        qualityResolutionLabel = request.qualityDescriptor.resolutionLabel,
-        qualityContainer = request.qualityDescriptor.container,
-        qualityHasVideo = request.qualityDescriptor.hasVideo,
-        qualityHasAudio = request.qualityDescriptor.hasAudio,
-        qualityRequiresProcessing = request.qualityDescriptor.requiresProcessing,
-        qualityAudioLanguageCode = request.qualityDescriptor.audioLanguageCode,
+        qualityTier = request.qualityDescriptor.tier?.name,
+        qualityAudioLanguageCodes = request.qualityDescriptor.audioLanguageCodes.joinForColumn(),
         durationSeconds = item.durationSeconds,
         resolutionLabel = null, // unknown until this item's own format resolves
         // Offset by item order, not wall-clock arrival, so playlist order survives even
@@ -730,20 +743,18 @@ internal fun DownloadTaskEntity.preferredEngineIdOrNull(): String? =
 internal fun List<DownloadTaskEntity>.playlistIdsNeedingResolution(): List<String> =
     filter { it.status == DownloadStatus.ANALYZING }.mapNotNull { it.playlistId }.distinct()
 
-/** Null unless every quality field was persisted — always true together for a playlist task, never set for a single-item one. */
-private fun DownloadTaskEntity.toQualityDescriptor(): QualityDescriptor? {
-    val container = qualityContainer ?: return null
-    val hasVideo = qualityHasVideo ?: return null
-    val hasAudio = qualityHasAudio ?: return null
-    return QualityDescriptor(
-        resolutionLabel = qualityResolutionLabel,
-        container = container,
-        hasVideo = hasVideo,
-        hasAudio = hasAudio,
-        requiresProcessing = qualityRequiresProcessing ?: false,
-        audioLanguageCode = qualityAudioLanguageCode,
-    )
-}
+/**
+ * Rebuilds the [QualityDescriptor] every task in a playlist group was queued with, from its own
+ * persisted [DownloadTaskEntity.qualityTier]/[DownloadTaskEntity.qualityAudioLanguageCodes] — a
+ * null tier correctly means "this playlist quality has no video" (a direct audio-only pick), not
+ * "no descriptor was ever persisted", so this never needs to signal absence with null itself; a
+ * genuinely new playlist task always has both fields written by [buildPlaylistTaskEntities] at
+ * enqueue time.
+ */
+private fun DownloadTaskEntity.toQualityDescriptor(): QualityDescriptor = QualityDescriptor(
+    tier = qualityTier?.let { name -> runCatching { QualityTier.valueOf(name) }.getOrNull() },
+    audioLanguageCodes = qualityAudioLanguageCodes.splitColumn(),
+)
 
 /** Speed/ETA are yt-dlp hook values for the current instant — meaningless to persist past a
  * process restart, so unlike every other [DownloadProgress] field they never touch Room; see
