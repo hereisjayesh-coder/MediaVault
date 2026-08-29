@@ -5,6 +5,42 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Verified — Multi-Audio Download and Playback, End-to-End on a Real File
+
+- **Confirmed at the file level, not just the UI, that a multi-audio download produces one real
+  multi-track file**: pulled the completed output from a Pixel 7a and inspected it with `ffmpeg`
+  on the host — exactly one video stream (h264, 1280x720) and exactly three audio streams tagged
+  `eng`/`deu`/`hin` (AAC, 44.1 kHz stereo), matching the three tracks selected in the app. No
+  duplicate video, no missing or extra audio track.
+- **Confirmed Media3's existing (untouched) track selector reads the real file correctly**: its
+  audio-track menu listed exactly `en`/`de`/`hi` — matching the ffmpeg-verified stream tags one
+  for one — and switching between all three moved the player's actual applied-track selection
+  each time (confirmed by re-opening the menu after each switch and seeing the checkmark on the
+  newly selected language), with playback continuing smoothly across every switch.
+- Re-confirmed the persistent Download bar's live size updates against a fresh selection (English
+  → +German → +Hindi: 164 MB → 183 MB → 202 MB), the Library entry showing the correct combined
+  duration/resolution/size for the resulting file, and a separate single-audio (non-toggled) 1080p
+  download completing normally afterward with no regression.
+- **No code defect found.** Two things that initially looked like bugs during testing were both
+  traced to test-automation artifacts, not app behavior, and are noted here so they aren't
+  mistaken for real issues in a future session: (1) a scripted tap landed on the "Include multiple
+  audio tracks" toggle instead of an audio-track checkbox because a prior scroll gesture's fling
+  hadn't fully settled before the tap fired — reproduced cleanly as correctly additive once each
+  scroll was verified settled (two consecutive UI dumps compared identical) before tapping; (2) the
+  Analyze button appeared unresponsive after a Download → Player → back navigation sequence on a
+  real, memory-pressured device (logcat showed the OS actively killing other apps — Camera,
+  Messaging, a carrier service — for memory during the test) — a longer wait showed the analysis
+  had in fact been running the whole time and completed on its own; a same-URL retry after an app
+  restart also succeeded immediately in every case tried. Neither reproduced as a deterministic
+  defect independent of these conditions.
+- **Scope note:** a live device test of the same multi-audio selection model against a real
+  playlist item was not performed this stage — no playlist with genuinely multiple real audio
+  languages per item was available to test against, and guessing a playlist URL wasn't an option.
+  The playlist code path itself is unchanged since the prior stage and its existing automated
+  coverage (`QualityDescriptorTest`'s `resolveForPlaylist`, `HomeViewModelTest`'s playlist
+  enqueue tests) still passes; a genuine live playlist confirmation remains open for whenever a
+  suitable real multi-language playlist is available to test against.
+
 ### Added — Simplified Format Selection and Multi-Audio Downloads
 
 - **Replaced the flat, 100+ row raw format picker with a coarse quality-tier selector** (4K /

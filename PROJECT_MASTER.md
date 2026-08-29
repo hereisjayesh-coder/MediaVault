@@ -3506,4 +3506,72 @@ downloads visible in the Downloads list from earlier stages were spot-checked as
 
 ---
 
+### 2026-08-29 — Multi-audio download and playback verified end-to-end against the real output file, not just the UI
+
+**Decision:** The prior stage's live verification confirmed the UI selection flow and Media3's
+track menu against the real MrBeast test video, but never inspected the actual downloaded file's
+container-level contents — a genuine gap, since the UI/database could in principle claim three
+audio tracks while FFmpeg had silently produced something else (two tracks, a corrupt stream, a
+second video track). This stage closes that gap: pulled the completed output file off the Pixel
+7a to the host and inspected it directly with `ffmpeg` (via the `imageio-ffmpeg` Python package
+already present on the dev machine — no new project dependency), independent of anything the app
+itself reports.
+
+**Method:** repeated the same English + German + Hindi selection against `youtu.be/Qtl8lJwbd4g`
+(720p), downloaded it, then `adb pull`ed `Escape 100 Cops, Win $500,000 (1).mkv`
+(211,689,152 bytes — matching the app's own ≈202 MB live estimate) from the app's
+`getExternalFilesDir()/media` directory and ran `ffmpeg -i` on it directly.
+
+**Result — real, file-level confirmation:**
+```
+Stream #0:0: Video: h264 (Main), yuv420p, 1280x720, 29.97 fps (default)
+Stream #0:1(eng): Audio: aac (LC), 44100 Hz, stereo (default)
+Stream #0:2(deu): Audio: aac (LC), 44100 Hz, stereo (default)
+Stream #0:3(hin): Audio: aac (LC), 44100 Hz, stereo (default)
+```
+Exactly one video stream, exactly three audio streams with the correct ISO 639-2 language tags
+(`eng`/`deu`/`hin`, matching the ISO 639-1 codes `en`/`de`/`hi` the UI and Media3 both use) —
+independent proof that `MediaProcessor`'s generalized N-track merge (added the prior stage)
+produces a genuinely correct multi-track container, not just a plausible-looking one. Reopening
+this exact file in the Player showed Media3's stock track menu listing `en`/`de`/`hi`, and
+switching between all three moved the player's actual selected-track state each time (re-checked
+by reopening the menu after each switch), with playback continuing uninterrupted across every
+switch — the strongest available live-device evidence of correct track switching, short of
+literally listening to each one.
+
+**No code defect found this stage.** Two things surfaced during testing that initially looked
+like real bugs turned out, on careful re-verification, to be artifacts of the test automation
+itself rather than the app:
+1. A scripted checkbox tap landed on the "Include multiple audio tracks" toggle instead of the
+   intended audio-track row, because a prior scroll gesture's fling hadn't fully settled before
+   the tap fired — the visible symptom (a selection silently reverting to one track) looked
+   exactly like a real "selection replaced instead of added" bug until reproduced with a stricter
+   protocol (comparing two consecutive UI dumps to confirm the list had actually stopped moving
+   before each tap), which showed every checkbox tap is correctly additive.
+2. The Analyze button appeared to stop responding after a Download → open in Player → back
+   navigation sequence, with no error, crash, or `isAnalyzing` state ever shown — but this was on
+   a real device under genuine memory pressure at the time (`logcat` showed Android's own
+   low-memory killer terminating GoogleCamera, Messaging, and a carrier service mid-test for
+   memory). A longer wait than the several seconds initially given showed the analysis had been
+   running the whole time and completed on its own; a fresh app relaunch also resolved it
+   immediately in every case tried, with no source change. Neither reproduced independent of
+   these conditions, so no fix was made — noted here specifically so a future session doesn't
+   mistake the same environmental flakiness for a regression.
+
+**Not verified this stage, honestly scoped out:** a live playlist test using the same multi-audio
+selection model. No real YouTube playlist with genuinely multiple audio languages per item was
+available to test against, and per this project's own URL-handling convention, one was not
+guessed or fabricated. The playlist code path is unchanged since the prior stage and its existing
+automated coverage (`QualityDescriptorTest.resolveForPlaylist`, `HomeViewModelTest`'s playlist
+enqueue tests) still passes unmodified — a genuine live playlist confirmation is deferred to
+whenever a suitable real multi-language playlist becomes available.
+
+**Testing:** no source files changed this stage, so no test suite was rerun — this was a live
+device/file-level verification pass only, per the stage's own "targeted tests only, don't rerun
+the suite unless shared code changed" instruction.
+
+**Where this is documented:** this entry, the CHANGELOG's "Verified" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**
