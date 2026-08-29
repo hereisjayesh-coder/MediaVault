@@ -3574,4 +3574,110 @@ the suite unless shared code changed" instruction.
 
 ---
 
+### 2026-08-29 — Final v1 test/integration/security audit: the last known test gap closed, everything else confirmed sound
+
+**Decision:** Before considering v1 done, ran one more focused pass specifically to close the
+long-deferred "pre-existing `HomeViewModelTest` failure" that three earlier stages (2026-08-29
+platform-hardening, the same day's core-flow audit, and the format-selection redesign) had each
+independently confirmed was pre-existing and out of their own scope, without ever actually
+root-causing or closing it. This stage does that: locates it, determines exactly which of *real
+defect / obsolete expectation / test-only drift* it is, and closes it properly rather than
+carrying it forward again.
+
+**Root cause, confirmed by reading the actual deleted test and the current domain code side by
+side:** the failing test (`a video-only format with no compatible audio cannot be selected`)
+asserted the *old* `DownloadOption` architecture's behavior — a video-only format with zero
+separate audio available anywhere was marked `isSelectable = false`, and selecting it was
+required to be a no-op. The format-selection redesign (two stages ago) deleted this test rather
+than porting it forward, on the reasoning that the new model has no such "unselectable" concept at
+all. Re-examined that reasoning from scratch this stage instead of trusting it at face value: the
+current `FormatSelectionModel`/`resolveSelection` code treats a genuinely audio-less video-only
+quality as **already the complete file** — there's nothing to pair it with, so it's a normal,
+selectable, direct (no-processing) download, not blocked. This is judged the *more correct*
+behavior, not a regression: the old design's silent refusal would have prevented a user from ever
+downloading a legitimately audio-less clip (a silent screen recording, a muted GIF-style video) —
+an artificial restriction the source data gives no actual reason for. **Verdict: (b) obsolete
+expectation**, correctly resolved by the redesign — not a real production defect, not test-only
+drift.
+
+**A real gap found while re-verifying that verdict, and closed:** the playlist path already had a
+positive test proving the new behavior end-to-end (`a video-only quality with no audio anywhere
+resolves as a direct pick, same as the single-item picker`), and the pure domain layer had one too
+(`FormatSelectionModelTest`), but the single-item `HomeViewModel` path — the one the original
+deleted test actually covered — had never gotten its own equivalent positive test after the old
+negative one was removed. Added `a video-only quality with no audio anywhere is still selectable
+and enqueues as a direct download` to `HomeViewModelTest`, asserting the full path: analyze →
+select the tier → download → the enqueued request carries the video's own formatId, an empty
+`audioTracks` list, and its own original container, with `justQueued` set. This is the "close the
+root cause properly, don't just delete the red test" outcome the stage's own instruction called
+for.
+
+**V1 integration audit (Home → Analyze → Format → Download → Downloads → Library →
+Player/Image Viewer), confirmed sound by code review — reusing the extensive live-device evidence
+already on record across this file's own decision log rather than repeating verification that
+already exists:**
+- `MediaVaultDownloadEngine`'s `pauseTask`/`cancelTask`/`remove` all correctly loop over every
+  entry in `audioLocalCachePaths.splitColumn()` when cleaning up a split-stream (multi-audio)
+  download's cache files, not just a single hardcoded path — verified by direct code reading
+  rather than a live multi-track pause/cancel device test, per this stage's own "don't chase
+  sub-second UI states already covered by deterministic code" instruction; the happy-path
+  multi-track download-to-completion flow was already live-verified file-for-file the prior stage.
+- Collection/carousel UI (`CollectionHeader`, `CollectionItemRow`, `CollectionSelectionToolbar`)
+  is untouched by the format-selection rewrite and its own `HomeViewModelTest` coverage
+  (single-image, full-carousel, partial-selection, skip-duplicate cases) all still pass.
+- Room's migration chain has no gaps (`MIGRATION_1_2` through `MIGRATION_6_7`, database version 7,
+  all six registered in `DatabaseModule`) and every version 1–7 schema is exported.
+- Subtitles, watch history, mobile-data policy, private storage, export/share, Settings/App Lock,
+  the source catalog, and the GitHub/support/feedback/legal pages were not touched by either of
+  the two most recent stages (`git diff` confirms zero files changed outside format-selection and
+  documentation) and already have their own dated, device-verified decision-log entries — not
+  re-tested, per this stage's "no broad platform retesting unless shared code changed" instruction.
+
+**Security/privacy audit — no gaps found, nothing changed:**
+- No hardcoded secrets/API keys/tokens anywhere; no logging of source URLs or any token.
+- Permissions are minimal and each independently justified: `INTERNET`/`ACCESS_NETWORK_STATE`
+  (downloading + mobile-data policy), `POST_NOTIFICATIONS`/`FOREGROUND_SERVICE*` (the download
+  progress notification), `USE_BIOMETRIC` (App Lock). No storage permission at all — downloads use
+  app-private `getExternalFilesDir()` storage exclusively, per the existing 2026-08-25 decision.
+- No analytics, crash-reporting, or telemetry dependency anywhere in the dependency graph.
+- `sanitizeFileName` strips every path separator (`/`, `\`) and other filesystem-unsafe character
+  from an untrusted source-provided title before it's ever used to name a file, and a real
+  extension is always appended after sanitization — a path-traversal attempt via a crafted title
+  (e.g. `../../etc/passwd`) cannot escape the intended media directory.
+- PIN handling (`PinHasher`/`EncryptedPinCredentialStore`, from the 2026-08-27 App Lock stage) uses
+  PBKDF2WithHmacSHA256 at 120,000 iterations with a random 16-byte salt, constant-time comparison
+  (`MessageDigest.isEqual`), Keystore-backed `EncryptedSharedPreferences` storage, and zeroes every
+  `CharArray` PIN after use on every code path — re-read in full this stage and found nothing to
+  change.
+- The download notification already has a `hideTitleForPrivacy` path (from the same App Lock
+  stage) that withholds the actual video title when App Lock is enabled — notification leakage was
+  already considered and handled, not a new finding.
+- `liveThroughput` and `activeJobs` (the two pieces of engine-owned mutable state touched from
+  multiple coroutines) are both already `ConcurrentHashMap`, not plain `HashMap` — no unsafe
+  concurrency found.
+
+**Platform limitations reconfirmed accurate and unchanged** (extractor code has zero diff since
+they were last verified — `git diff` across both of the two most recent stages touches no file
+under `core/extractor-ytdlp`): TikTok video extraction still broken upstream in this pinned
+yt-dlp version, Vimeo video still requires login on yt-dlp's default API client, Facebook image
+posts still unsupported, Reddit multi-image galleries still unsupported. Nothing fabricated or
+claimed beyond what's already documented.
+
+**Code quality:** no `TODO`/`FIXME` markers anywhere in `app`/`core:*` source (unchanged from the
+prior audit); no dependency added or removed since the last `THIRD-PARTY-NOTICES.md` update
+(`git diff` across both recent stages touches no `build.gradle.kts`); no dead code or oversized
+class found beyond what's already the established, deliberate Compose-screen pattern (many small
+composables in one file, not one large class).
+
+**Testing:** ran the affected test first (`HomeViewModelTest`, green), then the complete suite
+once — 362 tests across all modules, zero failures, confirmed both via Gradle's own
+`BUILD SUCCESSFUL` and by summing every module's raw JUnit XML report directly (not relying on
+Gradle's UP-TO-DATE caching alone, since the whole point of this stage was to trust nothing about
+this specific test's status at face value). Debug APK build reconfirmed with a genuine exit-0
+`BUILD SUCCESSFUL`.
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**

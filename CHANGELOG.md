@@ -5,6 +5,43 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Closed the Last Known Test Gap; Full v1 Integration/Security Audit
+
+- **Root-caused the long-deferred pre-existing `HomeViewModelTest` failure**: it was already
+  fixed as a side effect of the format-selection redesign two stages ago (the test's own premise —
+  a video-only format with no compatible audio being un-selectable — was an old-architecture
+  behavior the redesign deliberately and correctly replaced, so the test was deleted rather than
+  ported forward). Re-audited that deletion from scratch this stage rather than trusting it at
+  face value, and confirmed it really was an **obsolete expectation**, not a real defect or
+  test-only drift: the new domain model treats a genuinely audio-less video-only quality as
+  already the complete file (nothing exists to pair it with), which is more correct than the old
+  behavior of refusing to let a user download a legitimately silent clip at all.
+- **Found and closed a real test-coverage gap while re-auditing it**, though not a production
+  defect: the playlist path already had a positive test for this exact scenario
+  (`a video-only quality with no audio anywhere resolves as a direct pick...`), but the
+  single-item `HomeViewModel` path never got its own equivalent — only the pure-domain-level
+  `FormatSelectionModelTest` covered it there. Added
+  `a video-only quality with no audio anywhere is still selectable and enqueues as a direct
+  download` to close that gap.
+- **Full v1 integration audit** (Home → Analyze → Format → Download → Downloads → Library →
+  Player/Image Viewer) confirmed sound by code review, reusing the extensive live-device evidence
+  already on record rather than repeating verification that already exists: multi-track
+  pause/cancel/remove in `MediaVaultDownloadEngine` correctly loop over every audio cache path (not
+  just one), collection/carousel UI is intact and untouched by the format-selection rewrite, and
+  Room's migration chain (versions 1→7) has no gaps and is fully registered.
+- **Security/privacy audit**: no hardcoded secrets, no URL/token logging, minimal and fully
+  justified permissions (no storage permission at all — app-private storage only), no
+  analytics/tracking dependency anywhere, `sanitizeFileName` safely blocks path-traversal via
+  stripped `/`/`\` before an extension is always appended, PIN handling already uses
+  PBKDF2WithHmacSHA256 (120k iterations, random salt, constant-time comparison) backed by
+  Keystore-encrypted storage, and the download notification already has a `hideTitleForPrivacy`
+  path for when App Lock is enabled. No gaps found; nothing changed.
+- **Platform limitations reconfirmed accurate and unchanged** (extractor code untouched since they
+  were last verified): TikTok video extraction still broken upstream, Vimeo still requires login,
+  Facebook image posts still unsupported, Reddit multi-image galleries still unsupported.
+- Full test suite re-run clean after the fix: 362 tests, zero failures, across all modules. Debug
+  APK build reconfirmed with a genuine (non-cached) `BUILD SUCCESSFUL` exit status.
+
 ### Verified — Multi-Audio Download and Playback, End-to-End on a Real File
 
 - **Confirmed at the file level, not just the UI, that a multi-audio download produces one real

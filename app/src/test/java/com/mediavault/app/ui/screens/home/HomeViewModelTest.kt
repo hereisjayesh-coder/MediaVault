@@ -457,6 +457,33 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `a video-only quality with no audio anywhere is still selectable and enqueues as a direct download`() = runTest {
+        // No separate audio-only format exists for this source at all (a genuinely silent
+        // clip) — unlike the pre-redesign model, which refused to let this be selected, the
+        // current model treats the video variant itself as already the complete file: there is
+        // nothing to pair it with, so it downloads exactly as-is, no merge, no audio track.
+        val silentVideo = sampleFormat("v1", hasVideo = true, hasAudio = false, container = "mp4")
+        fakeEngine.nextResult = AppResult.Success(
+            ExtractionResult.Single(sampleMedia(formats = listOf(silentVideo), webpageUrl = "https://example.com/video")),
+        )
+        viewModel.onUrlChanged("https://example.com/video")
+        viewModel.analyze()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.formatSelection!!.audioTracks.isEmpty())
+        val tier = viewModel.uiState.value.formatSelection!!.videoQualityGroups.single().tier
+        viewModel.onQualityTierSelected(tier)
+        viewModel.onDownloadClicked()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val request = fakeDownloadEngine.enqueued.single()
+        assertEquals("v1", request.formatId)
+        assertTrue(request.audioTracks.isEmpty())
+        assertEquals("mp4", request.container)
+        assertTrue(viewModel.uiState.value.justQueued)
+    }
+
+    @Test
     fun `selecting multiple audio tracks enqueues every one of them for muxing into a single file`() = runTest {
         val video = sampleFormat("v1080", hasVideo = true, hasAudio = false, container = "mp4")
         val english = sampleFormat("a-en", hasVideo = false, hasAudio = true, languageCode = "en")
