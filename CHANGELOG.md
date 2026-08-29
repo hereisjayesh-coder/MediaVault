@@ -5,6 +5,50 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Settings Scroll Hitch on Fast Reverse Fling
+
+- **Reproduced and fixed a real, measured scroll hitch** reported on Settings when reaching the
+  bottom and flinging back up fast. Root cause: the "Support the Project" section's QR code
+  (`SupportSection`/`QrCodeGenerator`) was generated with `Bitmap.setPixel()` called individually
+  for every one of a 512×512 image's 262,144 pixels — each call crosses into native code
+  separately. The result was `remember`-cached, but Compose discards a `LazyColumn` item's
+  `remember` cache once it scrolls out of the list's retention window, so the QR bitmap was
+  regenerated **synchronously on the main thread, during composition**, every single time that
+  section scrolled back into view — exactly the "reach the bottom, fling back up" gesture
+  reported. Confirmed live on a Pixel 7a with `dumpsys gfxinfo`: the exact reported gesture
+  produced a 150ms outlier frame (plus 31ms/22ms others, "Slow UI thread" flagged), landing
+  precisely on the QR section.
+- **Fix**: rewrote `generateQrCodeBitmap` to fill a plain `IntArray` and construct the `Bitmap` in
+  one bulk `Bitmap.createBitmap(pixels, width, height, config)` call instead of one `setPixel()`
+  call per pixel, and reduced the generated size from 512px to 256px (still well above the 96dp
+  display size it's actually shown at, so no visible softness — just proportionate to what's
+  rendered instead of 4x oversized). No API/behavior change: `SupportSection`'s signature and
+  visual output are unchanged, verified identical on-device.
+- **Measured result** (Pixel 7a, `dumpsys gfxinfo`, same gesture, repeated 4 times for
+  reproducibility): the deterministic 100–150ms spike is gone in every run. "Slow UI thread" reads
+  0 in 3 of 4 runs (1 in the fourth); 99th-percentile frame time dropped from 450ms/150ms
+  (pre-fix, two separate runs) to 12–34ms (post-fix, four runs) — normal device-level variance,
+  not a repeatable defect. The user independently confirmed on their own device: "now it's
+  smooth."
+- **Also checked, no fix needed**: `SourcesScreen`'s alphabetical `.sorted()` call and
+  `DownloadsScreen`'s `groupBySection()` both run once per data change (inside the `LazyColumn`
+  scope-builder or a composable that isn't scroll-position-reactive), not per scroll frame — not a
+  bug. `AndroidMediaMetadataProbe`'s bitmap decoding already runs on `Dispatchers.IO` and only
+  during media import, never during list scrolling. The 1,027-entry Sources catalog (each row
+  loading a real network favicon via Coil's `SubcomposeAsyncImage`) showed mild, non-deterministic
+  jank under the same aggressive synthetic fling (32–53ms across three runs, no repeatable large
+  spike) — judged an inherent characteristic of a very large network-image list under an
+  artificially fast synthetic swipe, not the reported defect and not a confirmed reproducible
+  issue; changing it would require either dropping the initials-avatar fallback design or a
+  non-trivial manual async-image-state rewrite, not attempted without stronger evidence it's a
+  real problem.
+- **Orientation**: no manifest-level orientation lock exists (confirmed already true, unchanged).
+  Settings, Sources, Downloads, and Library all verified live in portrait on the Pixel 7a
+  (Downloads/Library currently empty on this device, confirmed empty-state renders correctly in
+  portrait too); Settings' scroll position survived a live rotation from landscape to portrait
+  with no crash and no jump, confirming the existing `configChanges` handling works correctly.
+  Player's own dedicated orientation/fullscreen behavior is unchanged (not touched this stage).
+
 ### Fixed — Android Device Compatibility Hardening
 
 - **Fixed a real crash-on-first-use risk on 32-bit-only devices**: the app's native libraries

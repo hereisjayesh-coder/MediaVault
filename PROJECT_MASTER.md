@@ -3807,4 +3807,96 @@ this stage.
 
 ---
 
+### 2026-08-29 — Settings scroll hitch: reproduced, measured, root-caused, and fixed (not a blind optimization pass)
+
+**Decision:** A real user reported a brief (~20–30ms) hitch on Settings specifically when reaching
+the bottom and flinging back up fast, and asked whether the same class of issue existed elsewhere.
+Rather than guessing at a fix, this stage's whole approach was: reproduce the exact gesture on the
+real device, measure it with Android's own frame-timing tooling, find the actual mechanism, fix
+only that, and re-measure to confirm — the same discipline as every other hardening stage in this
+log, applied to a performance report instead of a correctness one.
+
+**Reproduction:** `adb shell dumpsys gfxinfo com.mediavault.app` (reset immediately before the
+gesture, read immediately after) around the exact reported motion — scroll to the true bottom of
+Settings, then one fast upward fling covering the whole visible list — reproduced it cleanly and
+repeatably: a 150ms outlier frame, plus smaller ones at 31ms/22ms, with `Number Slow UI thread`
+flagged (Android's own signal that the *main* thread, not the GPU, took too long) — landing,
+confirmed by screenshot, exactly on the "Support the Project" section's QR code.
+
+**Root cause:** `SupportSection`'s QR bitmap (`generateQrCodeBitmap` in `QrCodeGenerator.kt`) was
+built by calling `Bitmap.setPixel()` once per pixel — up to 262,144 individual calls for the
+512×512 image it generated, each one crossing into native Android graphics code separately, a
+well-known slow pattern. The result *was* `remember(upiUri) { ... }`-cached, which would normally
+make this a one-time cost — but `SupportSection` is one `item { }` inside Settings' `LazyColumn`,
+and Compose discards a lazy list item's entire composition state, `remember` cache included, once
+that item scrolls far enough to leave the list's retention window. Scrolling to the bottom and
+back up is exactly the gesture that takes the Support section out of view and immediately back
+in — so the "one-time" QR generation actually ran again, synchronously, mid-fling, every time.
+
+**Fix:** rewrote `generateQrCodeBitmap` to fill a plain `IntArray` with the QR pattern (a tight
+Kotlin loop, no per-pixel native call) and construct the `Bitmap` in one bulk
+`Bitmap.createBitmap(pixels, width, height, config)` call — the standard, fast way to build a
+procedurally-generated Android bitmap. Also reduced the generated resolution from 512px to 256px,
+still comfortably above the 96dp size it's actually displayed at (`SupportSection`'s `Image` is
+`Modifier.size(96.dp)`) on any real device density, so there's no visible quality loss — just
+removing 4x oversampling nothing was using. Deliberately did **not** restructure `SupportSection`
+itself or hoist its state above the `LazyColumn`: it has exactly one call site, its "pass a config,
+get a self-contained widget" API is a deliberate reusability design (its own KDoc says so), and the
+actual root cause — an objectively inefficient bitmap-fill algorithm — was fully fixable without
+touching that API at all. This is the smaller, lower-risk fix the milestone's own "do not create a
+complicated optimization framework" instruction called for.
+
+**Measured result (Pixel 7a, `dumpsys gfxinfo`, identical gesture each time):**
+
+| | Total frames | Janky | 99th pct | Slow UI thread |
+|---|---|---|---|---|
+| Before | 33 | 2 (6.1%) | 150ms | 2 |
+| After, run 1 | 40 | 1 (2.5%) | 40ms | 0 |
+| After, run 2 | 42 | 1 (2.4%) | 28ms | 1 |
+| After, run 3 | 42 | 1 (2.4%) | 25ms | 0 |
+| After, run 4 | 42 | 0 (0%) | 12ms | 0 |
+
+The deterministic 100–150ms spike is gone in every post-fix run; what remains (12–40ms, mostly
+0 slow-UI-thread frames) is ordinary device-level variance, not a repeatable pattern — confirmed
+by the run-to-run spread itself having no consistent large outlier. The reporting user
+independently confirmed on their own device, unprompted, mid-fix: *"now it's smooth."*
+
+**Also investigated, no defect confirmed, no change made:** the milestone asked whether the same
+class of issue existed on other long lists. `SourcesScreen`'s `uiState.groups.keys.sorted()` and
+`DownloadsScreen`'s `uiState.tasks.groupBySection()` both execute inside a composable/scope-builder
+that only re-runs when the underlying data changes, not on every scroll frame — confirmed by
+reading how each is invoked relative to `LazyColumn`'s content lambda and `derivedStateOf`
+boundaries, not just assumed. `AndroidMediaMetadataProbe` (the app's other manual `Bitmap` user)
+already runs its decode on `Dispatchers.IO` and only during media import, never during list
+rendering. The Sources catalog (1,027 real entries, each row loading a live network favicon via
+Coil's `SubcomposeAsyncImage`) showed mild, non-deterministic jank (32–53ms across three repeated
+runs of the same aggressive synthetic fling, no repeatable large spike the way the QR bug had) —
+judged an inherent characteristic of flinging fast through a very large, genuinely network-image-
+backed list, not the reported defect and not confirmed as a fixable regression; a real fix would
+mean either dropping the existing initials-avatar fallback design or hand-rolling Coil's async
+image state instead of using its own subcomposition helper, and this stage found no evidence that
+trade-off is currently warranted.
+
+**Orientation, verified live on the Pixel 7a (no manifest-level lock exists — unchanged, already
+true before this stage):** Sources, Settings, and Downloads/Library (currently empty on this
+device; empty-state renders correctly too) all confirmed correct in portrait. Settings' scroll
+position was also verified to survive a live rotation from landscape to portrait with no crash and
+no jump — confirming the existing `android:configChanges` handling (added when edge-to-edge/theme
+support was built) still works correctly under real use. The Player screen's own dedicated
+orientation/fullscreen lock behavior was not touched and not re-tested this stage — no code in its
+path changed.
+
+**Testing:** no test files were touched (the fix is a pure algorithmic rewrite of one function with
+an unchanged input/output contract — same QR content encoded, same visual result, confirmed
+unchanged by side-by-side screenshot); the full existing suite (362 tests, all modules) was run
+once and stayed green, per this stage's own "run only affected tests, build once" instruction. No
+new test was added for `generateQrCodeBitmap` itself — it produces an `android.graphics.Bitmap`,
+which isn't meaningfully unit-testable without Robolectric (not already a project dependency), and
+the correctness evidence that matters here — that the fast path produces the same visual QR code —
+was verified live on-device instead, which is what actually needed proving.
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**
