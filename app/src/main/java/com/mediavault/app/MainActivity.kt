@@ -1,13 +1,18 @@
 package com.mediavault.app
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,8 +51,25 @@ class MainActivity : FragmentActivity() {
 
     private val isInPictureInPicture = mutableStateOf(false)
 
+    // POST_NOTIFICATIONS is a runtime permission on API 33+ (Android 13/Tiramisu) — a manifest
+    // declaration alone leaves it ungranted, and the download-progress notification simply never
+    // shows (silently, no crash: the foreground service and downloads still run correctly, only
+    // the user-visible progress notification is suppressed by the OS) unless this is requested.
+    // Below API 33 the permission is granted at install time and this launcher is just never
+    // triggered. A denial is not re-prompted here — Android itself only allows one system prompt
+    // per install unless the user later grants it manually from system settings, and downloads
+    // remaining fully functional without it makes forcing the issue unnecessary.
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op either way */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Resolves the persisted theme synchronously (a single small local-disk read, same
         // pattern as other DataStore-backed stores in this app) so the very first frame — the

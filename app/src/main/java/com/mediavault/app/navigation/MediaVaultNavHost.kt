@@ -4,7 +4,12 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -14,8 +19,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -112,117 +119,142 @@ fun MediaVaultNavHost() {
             }
         },
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = MediaVaultDestination.HOME.route,
-            modifier = if (isOnDedicatedPlayer) Modifier else Modifier.padding(innerPadding),
-            // One coordinated crossfade for every route change (bottom tabs and the dedicated
-            // Player screen alike) — replaces the previous instant cut, which is what made the
-            // Library<->Player transition specifically feel broken: the destination's background
-            // appeared before its content (the video surface) was ready. A short, snappy fade
-            // (not a slide/scale) keeps every other tab transition feeling the same as before,
-            // just smoothed. Navigation-Compose keeps the outgoing entry composed (so
-            // PlayerScreen's own onDispose-driven pause/release) until this exit animation
-            // actually finishes — audio/video keep running through the fade instead of cutting
-            // off mid-frame.
-            enterTransition = { fadeIn(animationSpec = tween(220)) },
-            exitTransition = { fadeOut(animationSpec = tween(220)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(220)) },
-            // Deliberately NOT a plain fadeOut() for every route — see the Player-pop decision
-            // log entry. PlayerView is a SurfaceView (kept, not TextureView — see that same
-            // entry for why not): it composites on its own SurfaceFlinger layer outside
-            // Compose's draw/alpha pipeline, so animating *its* alpha via fadeOut() does nothing
-            // to the actual video pixels — the destination fades in on schedule while the
-            // still-fully-opaque video sits there unchanged, then vanishes in one frame the
-            // instant the exit transition elapses and Compose actually disposes it.
-            // ExitTransition.None leaves Player's content fully visible and unanimated for the
-            // whole pop (Navigation-Compose still keeps it composed for exactly as long as
-            // popEnterTransition's 220ms, same as before) so the incoming screen's fade-in is
-            // what visually covers it — by the time it's actually removed, it's already hidden
-            // under fully-opaque destination content, with nothing left to visibly pop.
-            //
-            // Every OTHER route is ordinary Compose content, not a SurfaceView — applying that
-            // same ExitTransition.None there (as an earlier version of this file did) is a
-            // different bug, not the same fix: an ordinary screen's alpha *is* part of Compose's
-            // normal draw pipeline, so leaving it un-faded while the destination fades in on top
-            // alpha-blends both screens together for the full 220ms — visible as lingering
-            // text/icons/buttons from the exiting screen ghosting through the incoming one
-            // (found on Source Details -> Back). Those routes need the symmetric fadeOut() they
-            // had before, so only the Player pop keeps the special-cased transition.
-            popExitTransition = {
-                val isLeavingPlayer = initialState.destination.hierarchy.any { it.route == PLAYER_ITEM_ROUTE }
-                if (isLeavingPlayer) ExitTransition.None else fadeOut(animationSpec = tween(220))
-            },
+        // On a tablet, an unfolded foldable, or a phone in landscape, every other route here
+        // (Home, Downloads, Library, Settings — all single-column, form/list-oriented content)
+        // would otherwise stretch edge-to-edge: very long text lines, oversized cards, awkward
+        // whitespace. Centering with a max width at Material's own "compact" breakpoint (600dp —
+        // the same threshold `WindowSizeClass` uses to mean "phone-sized, don't bother
+        // constraining") fixes this everywhere at once, with zero visual change on any phone in
+        // portrait (which is already narrower than 600dp), preserving the approved design exactly
+        // where it was designed for. The dedicated Player screen is deliberately excluded — video
+        // content should use the full available width on any device, same as before.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (isOnDedicatedPlayer) Modifier else Modifier.padding(innerPadding)),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            composable(MediaVaultDestination.HOME.route) {
-                HomeScreen(
-                    onNavigateToDestination = { navigateToDestination(navController, it) },
-                    onNavigateToSources = { navController.navigate(SOURCES_ROUTE) },
-                )
-            }
-            composable(MediaVaultDestination.DOWNLOADS.route) {
-                DownloadsScreen(
-                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
-                    onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
-                )
-            }
-            composable(MediaVaultDestination.LIBRARY.route) {
-                LibraryScreen(
-                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
-                    onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
-                )
-            }
-            composable(MediaVaultDestination.PLAYER.route) {
-                PlayerHubScreen(
-                    onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
-                    onOpenLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
-                )
-            }
-            composable(MediaVaultDestination.SETTINGS.route) {
-                SettingsScreen(
-                    onNavigateToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
-                    onNavigateToPrivacy = { navController.navigate(SETTINGS_PRIVACY_ROUTE) },
-                    onNavigateToTerms = { navController.navigate(SETTINGS_TERMS_ROUTE) },
-                    onNavigateToLicenses = { navController.navigate(SETTINGS_LICENSES_ROUTE) },
-                )
-            }
-            composable(SETTINGS_PRIVACY_ROUTE) {
-                LegalDocumentScreen(title = stringResource(R.string.settings_legal_privacy), assetFileName = "privacy.md")
-            }
-            composable(SETTINGS_TERMS_ROUTE) {
-                LegalDocumentScreen(title = stringResource(R.string.settings_legal_terms), assetFileName = "terms.md")
-            }
-            composable(SETTINGS_LICENSES_ROUTE) {
-                LegalDocumentScreen(title = stringResource(R.string.settings_legal_licenses), assetFileName = "third_party_notices.md")
-            }
-
-            // The dedicated, immersive playback screen — always reached with a specific item
-            // id (from Library or the Player tab's "Resume" card), never as a bare tab page.
-            composable(
-                route = PLAYER_ITEM_ROUTE,
-                arguments = listOf(navArgument(PlayerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
+            NavHost(
+                navController = navController,
+                startDestination = MediaVaultDestination.HOME.route,
+                // fillMaxHeight() first, then cap+fill *width* separately — chaining fillMaxSize()
+                // before widthIn() instead reports the pre-cap full width back to the centering Box
+                // above (fillMaxSize's exact constraints "win" over a narrower widthIn max applied
+                // after it), which visually caps the content but leaves it flush against the start
+                // edge instead of centered. This order actually centers it.
+                modifier = if (isOnDedicatedPlayer) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier.fillMaxHeight().widthIn(max = 600.dp).fillMaxWidth()
+                },
+                // One coordinated crossfade for every route change (bottom tabs and the dedicated
+                // Player screen alike) — replaces the previous instant cut, which is what made the
+                // Library<->Player transition specifically feel broken: the destination's background
+                // appeared before its content (the video surface) was ready. A short, snappy fade
+                // (not a slide/scale) keeps every other tab transition feeling the same as before,
+                // just smoothed. Navigation-Compose keeps the outgoing entry composed (so
+                // PlayerScreen's own onDispose-driven pause/release) until this exit animation
+                // actually finishes — audio/video keep running through the fade instead of cutting
+                // off mid-frame.
+                enterTransition = { fadeIn(animationSpec = tween(220)) },
+                exitTransition = { fadeOut(animationSpec = tween(220)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+                // Deliberately NOT a plain fadeOut() for every route — see the Player-pop decision
+                // log entry. PlayerView is a SurfaceView (kept, not TextureView — see that same
+                // entry for why not): it composites on its own SurfaceFlinger layer outside
+                // Compose's draw/alpha pipeline, so animating *its* alpha via fadeOut() does nothing
+                // to the actual video pixels — the destination fades in on schedule while the
+                // still-fully-opaque video sits there unchanged, then vanishes in one frame the
+                // instant the exit transition elapses and Compose actually disposes it.
+                // ExitTransition.None leaves Player's content fully visible and unanimated for the
+                // whole pop (Navigation-Compose still keeps it composed for exactly as long as
+                // popEnterTransition's 220ms, same as before) so the incoming screen's fade-in is
+                // what visually covers it — by the time it's actually removed, it's already hidden
+                // under fully-opaque destination content, with nothing left to visibly pop.
+                //
+                // Every OTHER route is ordinary Compose content, not a SurfaceView — applying that
+                // same ExitTransition.None there (as an earlier version of this file did) is a
+                // different bug, not the same fix: an ordinary screen's alpha *is* part of Compose's
+                // normal draw pipeline, so leaving it un-faded while the destination fades in on top
+                // alpha-blends both screens together for the full 220ms — visible as lingering
+                // text/icons/buttons from the exiting screen ghosting through the incoming one
+                // (found on Source Details -> Back). Those routes need the symmetric fadeOut() they
+                // had before, so only the Player pop keeps the special-cased transition.
+                popExitTransition = {
+                    val isLeavingPlayer = initialState.destination.hierarchy.any { it.route == PLAYER_ITEM_ROUTE }
+                    if (isLeavingPlayer) ExitTransition.None else fadeOut(animationSpec = tween(220))
+                },
             ) {
-                PlayerScreen(onBackToLibrary = { navController.popBackStack() })
-            }
-
-            // A downloaded image's dedicated preview — never the video/audio Player route above.
-            composable(
-                route = IMAGE_VIEWER_ROUTE,
-                arguments = listOf(navArgument(ImageViewerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
-            ) {
-                ImageViewerScreen(onBack = { navController.popBackStack() })
-            }
-
-            composable(SOURCES_ROUTE) {
-                SourcesScreen(onSourceClick = { sourceId -> navController.navigate("sources/$sourceId") })
-            }
-            composable(
-                route = SOURCE_DETAIL_ROUTE,
-                arguments = listOf(navArgument(SourceDetailViewModel.SOURCE_ID_ARG) { type = NavType.StringType }),
-            ) {
-                SourceDetailScreen(
-                    onGoToAnalyzer = { navigateToDestination(navController, MediaVaultDestination.HOME) },
-                )
+                composable(MediaVaultDestination.HOME.route) {
+                    HomeScreen(
+                        onNavigateToDestination = { navigateToDestination(navController, it) },
+                        onNavigateToSources = { navController.navigate(SOURCES_ROUTE) },
+                    )
+                }
+                composable(MediaVaultDestination.DOWNLOADS.route) {
+                    DownloadsScreen(
+                        onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                        onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
+                    )
+                }
+                composable(MediaVaultDestination.LIBRARY.route) {
+                    LibraryScreen(
+                        onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                        onOpenImageViewer = { mediaItemId -> navController.navigate("image/$mediaItemId") },
+                    )
+                }
+                composable(MediaVaultDestination.PLAYER.route) {
+                    PlayerHubScreen(
+                        onOpenPlayer = { mediaItemId -> navController.navigate("player/$mediaItemId") },
+                        onOpenLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
+                    )
+                }
+                composable(MediaVaultDestination.SETTINGS.route) {
+                    SettingsScreen(
+                        onNavigateToLibrary = { navigateToDestination(navController, MediaVaultDestination.LIBRARY) },
+                        onNavigateToPrivacy = { navController.navigate(SETTINGS_PRIVACY_ROUTE) },
+                        onNavigateToTerms = { navController.navigate(SETTINGS_TERMS_ROUTE) },
+                        onNavigateToLicenses = { navController.navigate(SETTINGS_LICENSES_ROUTE) },
+                    )
+                }
+                composable(SETTINGS_PRIVACY_ROUTE) {
+                    LegalDocumentScreen(title = stringResource(R.string.settings_legal_privacy), assetFileName = "privacy.md")
+                }
+                composable(SETTINGS_TERMS_ROUTE) {
+                    LegalDocumentScreen(title = stringResource(R.string.settings_legal_terms), assetFileName = "terms.md")
+                }
+                composable(SETTINGS_LICENSES_ROUTE) {
+                    LegalDocumentScreen(title = stringResource(R.string.settings_legal_licenses), assetFileName = "third_party_notices.md")
+                }
+    
+                // The dedicated, immersive playback screen — always reached with a specific item
+                // id (from Library or the Player tab's "Resume" card), never as a bare tab page.
+                composable(
+                    route = PLAYER_ITEM_ROUTE,
+                    arguments = listOf(navArgument(PlayerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
+                ) {
+                    PlayerScreen(onBackToLibrary = { navController.popBackStack() })
+                }
+    
+                // A downloaded image's dedicated preview — never the video/audio Player route above.
+                composable(
+                    route = IMAGE_VIEWER_ROUTE,
+                    arguments = listOf(navArgument(ImageViewerViewModel.MEDIA_ITEM_ID_ARG) { type = NavType.StringType }),
+                ) {
+                    ImageViewerScreen(onBack = { navController.popBackStack() })
+                }
+    
+                composable(SOURCES_ROUTE) {
+                    SourcesScreen(onSourceClick = { sourceId -> navController.navigate("sources/$sourceId") })
+                }
+                composable(
+                    route = SOURCE_DETAIL_ROUTE,
+                    arguments = listOf(navArgument(SourceDetailViewModel.SOURCE_ID_ARG) { type = NavType.StringType }),
+                ) {
+                    SourceDetailScreen(
+                        onGoToAnalyzer = { navigateToDestination(navController, MediaVaultDestination.HOME) },
+                    )
+                }
             }
         }
     }

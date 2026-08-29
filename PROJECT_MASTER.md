@@ -72,6 +72,10 @@ First inspect the actual environment and project before making assumptions.
 * Hilt only where useful
 * Clean Architecture / MVVM
 
+**Supported Android range: API 26 (Android 8.0 Oreo) through the current `compileSdk`/`targetSdk`
+(37), on `arm64-v8a`/`x86_64` devices only** — see §37's 2026-08-29 device-hardening entry for the
+full compatibility strategy, why the ABI floor is what it is, and what was and wasn't verified.
+
 ### Media Extraction
 
 Use a modular `ExtractorEngine` abstraction.
@@ -3677,6 +3681,129 @@ this specific test's status at face value). Debug APK build reconfirmed with a g
 `BUILD SUCCESSFUL`.
 
 **Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
+### 2026-08-29 — Android device compatibility hardening: real ABI/notification/tablet gaps found and fixed, Pixel 7a kept as one reference device, not the target
+
+**Decision:** MediaVault had only ever been built and verified against one physical device (a
+Pixel 7a). This stage treats that device as one reference point rather than the product target,
+auditing the actual project configuration and code for assumptions that would break on a different
+screen size, Android version, or CPU architecture — without raising or lowering `minSdk`/
+`targetSdk`/`compileSdk` (26/37/37, unchanged) merely to change what the numbers look like.
+
+**Supported range, and why it's what it is (not changed this stage):** `minSdk` 26 (Android 8.0
+Oreo, 2017+) through `compileSdk`/`targetSdk` 37, on `arm64-v8a`/`x86_64` devices only. The ABI
+floor is a hard, structural requirement, not a preference: Chaquopy's embedded Python 3.14 runtime
+(`:core:extractor-ytdlp`, the engine every download's yt-dlp/Instaloader extraction depends on)
+only ships native libraries for those two 64-bit architectures — there is no 32-bit build of it to
+fall back to. The API floor of 26 predates this stage and its original rationale was never written
+down; re-verified this stage that every API-level-gated code path already in the app (notification
+channels, scoped-storage `MediaStore` behavior, two Android 12+ features) is internally consistent
+with it, and 26 remains a reasonable, current floor (Android 8.0+ covers the overwhelming majority
+of active devices) — not touched, since the task was to harden compatibility *within* the existing
+range, not to relitigate the range itself.
+
+**Real defect found and fixed — a 32-bit-only device could install the app and crash on first
+use:** `:app` itself had no `ndk.abiFilters` of its own, even though `:core:extractor-ytdlp`
+already correctly restricted itself to `arm64-v8a`/`x86_64`. FFmpegKit (used only for the final
+remux/merge step, not extraction) *does* ship `armeabi-v7a`/`x86` builds, so the merged APK still
+packaged all four ABIs — meaning a 32-bit-only device could install the app successfully (nothing
+blocked it at the Play Store/package-manager level) and would only discover the incompatibility
+the moment Python was actually invoked, i.e. the very first "Analyze Link" tap, as an
+`UnsatisfiedLinkError` crash. Added the matching `abiFilters` to `:app`'s own `defaultConfig`.
+Confirmed by direct inspection of the built APK's `lib/` folder (not just trusting the Gradle
+config): four ABI folders before the fix, exactly `arm64-v8a`/`x86_64` after — with the
+`armeabi-v7a`/`x86` folders alone accounting for roughly 107 MB of now-removed native libraries
+that could never have run on any of this app's actually-supported devices anyway.
+
+**Real defect found and fixed — the download-progress notification silently never appeared on
+Android 13+:** `POST_NOTIFICATIONS` was declared in the manifest (required for it to be requested
+at all) but never actually requested at runtime anywhere in the app. On API 33 (Tiramisu) and
+above this is a runtime permission, not an install-time one — a manifest declaration alone leaves
+it ungranted, so the persistent foreground-service download notification was silently suppressed
+by the OS on every Android 13+ device. Downloads themselves were never affected (the foreground
+service runs regardless of notification permission), only the user-visible progress notification.
+Added a standard `ActivityResultContracts.RequestPermission()` request in `MainActivity.onCreate`,
+guarded to `SDK_INT >= TIRAMISU` (below that, the permission is already install-time-granted, so
+the launcher is simply never triggered) — matching this codebase's own existing, consistent
+pattern of `Build.VERSION.SDK_INT` guards elsewhere (notification channels at O, `MediaStore`
+behavior at Q, two features already gated at S). Verified live on the Pixel 7a: the system
+permission prompt now appears on first launch after a clean install, where it previously never did
+at all — confirmed by also reading `dumpsys package`'s permission grant state directly, not just
+trusting the visual absence of a dialog.
+
+**Real defect found and fixed — every list/form screen stretched edge-to-edge on anything wider
+than a phone in portrait:** Home, Downloads, Library, and Settings had no upper width bound
+anywhere. On a tablet, an unfolded foldable, or simply a phone rotated to landscape, this meant the
+URL bar, cards, and the new format picker would span the full display width — very long text
+lines, oversized cards, awkward whitespace, none of it a crash but all of it a real usability
+regression on anything that isn't a narrow phone. Added one width cap — 600dp, the same "compact"
+breakpoint `WindowSizeClass` itself uses to mean "phone-sized, don't bother constraining" — at the
+single `NavHost` level in `MediaVaultNavHost`, centered via an enclosing `Box`, applied to every
+route except the dedicated Player screen (video content correctly keeps using the full available
+width, unchanged). One layout bug found and fixed while verifying this live on-device: the first
+implementation chained `.fillMaxSize().widthIn(max = 600.dp)`, which visually capped the width
+correctly but left the capped content flush against the leading edge instead of centered —
+`fillMaxSize()` reports its full pre-cap size back to the centering `Box` before `widthIn` narrows
+it further down the modifier chain, so the *Box* had nothing left to center against. Reordered to
+`.fillMaxHeight().widthIn(max = 600.dp).fillMaxWidth()`, which caps the width before the final size
+is reported upward; re-verified on the Pixel 7a physically rotated to landscape (≈915dp-wide at
+that density, well past the 600dp threshold) — content now visibly centers with balanced margins.
+Re-verified portrait is completely unaffected (a phone's own portrait width is already under
+600dp, so the cap never engages there) — screenshot-confirmed pixel-identical to before the change.
+
+**Reviewed this stage and confirmed already sound — no change needed:** biometric UI was already
+fully gated on real device capability, at both layers (the Settings toggle is hidden entirely
+unless `BiometricManager.canAuthenticate(BIOMETRIC_STRONG) == BIOMETRIC_SUCCESS`, and the
+lock-screen auto-prompt separately checks the same flag before firing); edge-to-edge/system-bar
+insets were already correct (`enableEdgeToEdge` with explicit light/dark status/nav bar styles,
+applied both at cold start and reactively on theme change); `liveThroughput`/`activeJobs` (the
+download engine's own cross-coroutine mutable state) are already `ConcurrentHashMap`; filename
+sanitization already strips every path separator (`/`, `\`) before a real extension is appended,
+so a crafted source-provided title cannot escape the app's private media directory via a
+traversal sequence.
+
+**Reviewed and deliberately not changed, with reasoning:** each playlist card's own item rows
+(`PlaylistItemStatusRow` in `DownloadsScreen`) are composed eagerly inside a plain `Column`, not a
+nested lazy list — a genuine virtualization gap for a playlist with hundreds of items, but each row
+is a lightweight text-and-button composable with no image loading, so even a very large playlist's
+worth of eager composition is a minor, bounded cost, not a real memory risk; restructuring it into
+a fully flat lazy list would change the visual card-grouping this project's own design calls for,
+for a benefit judged not to justify that risk. `HomeViewModel` doesn't use `SavedStateHandle` to
+preserve an in-progress-but-not-yet-downloaded analysis across process death (an already-persisted,
+already-downloading task is unaffected — this only concerns a typed URL or a shown-but-unqueued
+format picker) — a real but low-severity gap (no data loss, just having to re-analyze the same URL
+again), and the fix would require a non-trivial custom `Saver` for a non-trivial nested state shape
+for a benefit judged low relative to that implementation risk this stage. Both are recorded here
+rather than silently left unmentioned.
+
+**Testing/device evidence:** this machine has no Android Virtual Devices and no
+`cmdline-tools`/`sdkmanager` installed — provisioning even one emulator profile from scratch would
+mean downloading new multi-GB SDK components mid-task, which this stage's own "do not install
+another JDK/SDK" instruction was read to also cover. No emulator profiles were created or
+fabricated; every live-device claim above is real Pixel 7a evidence (including the
+orientation-dependent ones — physically rotating the one real device to landscape — that an
+emulator's rotate-and-screenshot would otherwise have covered just as well), backed by
+code-level review of density-independent (`dp`) and already-responsive (`fillMaxWidth()`,
+`LazyColumn`) layout usage across every screen. A genuine small-phone/tablet/older-API emulator
+pass remains open for whenever emulator tooling exists on the dev machine. The full unit test
+suite (362 tests, all modules) was rerun clean after the `build.gradle.kts`/`MainActivity.kt`/
+`MediaVaultNavHost.kt` changes, and a debug APK was rebuilt and reinstalled on the Pixel 7a twice
+during this stage — the first install caught that a UI screenshot was taken against a stale APK
+build (missing the `MainActivity`/`NavHost` changes, only the earlier ABI fix), which is why both
+real-device findings above were re-verified against a confirmed-fresh install rather than trusted
+from the first screenshot.
+
+**Not verified/changed this stage:** release-build-type packaging with the new `abiFilters` (only
+`assembleDebug` was rebuilt and installed — this project's established practice throughout its
+development has been debug-build device verification only, unchanged here); tablet/foldable
+multi-pane or dual-screen-aware layouts (out of scope — the fix here is "don't stretch," not "add
+a second column," which the milestone's own "preserve the approved MediaVault design" instruction
+argues against attempting without a real design pass).
+
+**Where this is documented:** this entry, §4's Android section, the CHANGELOG's "Fixed" entry for
+this stage.
 
 ---
 

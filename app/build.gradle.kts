@@ -17,6 +17,20 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Every download's extraction (yt-dlp/Instaloader) runs through Chaquopy's embedded
+        // Python runtime in :core:extractor-ytdlp, which only ships native libs for arm64-v8a
+        // and x86_64 (see that module's own ndk.abiFilters and its comment for why). Without
+        // this matching restriction here, the merged APK still carries FFmpegKit's armeabi-v7a/
+        // x86 libs (FFmpegKit alone doesn't need 64-bit), so the app would install and *appear*
+        // fine on a 32-bit-only device — then hard-crash the instant Python is invoked, i.e. the
+        // very first "Analyze Link" tap. Filtering here too makes an unsupported-ABI device
+        // ineligible to install at all (a clean, honest failure at the Play Store/package-manager
+        // level) instead of a silent one at first use, and drops ~107 MB of native libraries that
+        // could never actually run on this app's own supported devices.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {

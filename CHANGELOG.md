@@ -5,6 +5,68 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Android Device Compatibility Hardening
+
+- **Fixed a real crash-on-first-use risk on 32-bit-only devices**: the app's native libraries
+  (`:app`) previously had no ABI restriction of their own, so the merged APK still packaged
+  FFmpegKit's `armeabi-v7a`/`x86` builds even though Chaquopy's embedded Python runtime — which
+  every download's extraction (yt-dlp/Instaloader) depends on — has only ever shipped
+  `arm64-v8a`/`x86_64` libraries (an existing, deliberate restriction already correctly applied in
+  `:core:extractor-ytdlp`, just never mirrored at the app level). A 32-bit-only device could
+  therefore install the app successfully and then hard-crash the instant Python was invoked — the
+  very first "Analyze Link" tap. Added the matching `ndk.abiFilters` to `:app`'s own
+  `defaultConfig`; confirmed via direct APK inspection that the merged debug build now packages
+  only `arm64-v8a`/`x86_64` (down from four ABIs), and that this also drops roughly 107 MB of
+  native libraries that could never have run on any of this app's actually-supported devices.
+- **Fixed the download-progress notification never appearing on Android 13+ (API 33/Tiramisu and
+  newer)**: `POST_NOTIFICATIONS` was declared in the manifest but never actually requested at
+  runtime — a manifest declaration alone leaves a runtime permission ungranted on API 33+, so the
+  persistent foreground-service notification was silently suppressed by the OS on every Android
+  13+ device (downloads still ran correctly; only the visible progress notification never showed).
+  `MainActivity` now requests it once at startup via the standard
+  `ActivityResultContracts.RequestPermission()` flow, guarded to API 33+ only (below that, the
+  permission is still install-time-granted as before). Verified live on the Pixel 7a (API 34+):
+  the system permission prompt now appears on first launch after a clean install, where it
+  previously never did.
+- **Fixed non-phone screens (tablets, unfolded foldables, phones in landscape) stretching every
+  list/form screen's content edge-to-edge**: Home, Downloads, Library, and Settings had no upper
+  width bound, so on anything wider than a phone in portrait the URL bar, cards, and format picker
+  would span the full display width — very long text lines, oversized cards, awkward whitespace.
+  The dedicated Player screen was already, correctly, exempt (video content should always use the
+  full available width). Added a single width cap (600dp — the same "compact" breakpoint
+  `WindowSizeClass` itself uses to mean "phone-sized, don't bother constraining") at the `NavHost`
+  level in `MediaVaultNavHost`, centered, applied to every route except the Player. Zero visual
+  change on any phone in portrait (already narrower than 600dp — confirmed unchanged on the Pixel
+  7a); verified live on the Pixel 7a **rotated to landscape** (~915dp-wide at that density, so the
+  cap actually engages): content now correctly centers with balanced margins instead of stretching
+  to the screen edges. One real bug found and fixed while verifying this live: the first
+  implementation (`fillMaxSize().widthIn(max = 600.dp)`) visually capped the width correctly but
+  left the capped content flush against the leading edge instead of centered — `fillMaxSize()`
+  reports its pre-cap full size back to the centering `Box` before `widthIn` narrows it further
+  down the chain. Reordered to `fillMaxHeight().widthIn(max = 600.dp).fillMaxWidth()`, which caps
+  before reporting size upward, and re-verified centered correctly on-device.
+- **Reviewed and confirmed already sound, no change needed**: biometric UI is already fully gated
+  on real device capability at both the Settings toggle (hidden entirely when
+  `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)` doesn't return `BIOMETRIC_SUCCESS`) and the
+  lock-screen auto-prompt; edge-to-edge/system-bar insets were already handled correctly via
+  `enableEdgeToEdge` with explicit light/dark status/nav bar styles; every existing API-level guard
+  (`Build.VERSION.SDK_INT` checks for notification channels, scoped-storage `MediaStore` behavior,
+  and two Android 12+ Settings/Player features) is internally consistent with the project's minSdk;
+  the two pieces of engine-owned mutable state shared across coroutines (`liveThroughput`,
+  `activeJobs`) are already `ConcurrentHashMap`, not a plain `HashMap`; filename sanitization
+  already strips every path separator before an extension is appended, so a crafted source title
+  cannot escape the app's private media directory.
+- **No emulator profiles were created or tested this stage** — this machine has no Android Virtual
+  Devices and no `cmdline-tools`/`sdkmanager` installed to create one, and provisioning that from
+  scratch would mean downloading multiple new multi-GB system images mid-task, which was judged out
+  of scope for "do not install another JDK/SDK." Compatibility conclusions instead rest on: the
+  real Pixel 7a (used for every live check above, including the landscape/orientation-dependent
+  ones an emulator profile would otherwise have covered), full code-level review of
+  density-independent (`dp`) and responsive (`fillMaxWidth()`, `LazyColumn`) layout usage across
+  every screen, and the existing API-level guard audit above. A genuine small-phone/tablet/older-
+  API emulator pass remains open for whenever emulator tooling is available on the dev machine —
+  documented here rather than fabricated.
+
 ### Fixed — Closed the Last Known Test Gap; Full v1 Integration/Security Audit
 
 - **Root-caused the long-deferred pre-existing `HomeViewModelTest` failure**: it was already
