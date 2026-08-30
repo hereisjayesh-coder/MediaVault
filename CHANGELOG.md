@@ -5,6 +5,50 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Verified — Release Candidate Readiness Pass (No Code Changes)
+
+- **Clean install and navigation**: current build (`796a4e4`) installs and launches cleanly on the
+  Pixel 7a; Home → analyze → format selection → download → Downloads/Library → playback all
+  confirmed working on a fresh install.
+- **Real upgrade/data-safety test, not simulated**: built the project's earliest commit with a real
+  Room schema (`44d6fec`, database version 1, pre-dating both FFmpeg merge support and app-private
+  storage — downloads went through a SAF folder picker at this point in the project's history),
+  installed it fresh on the Pixel 7a, used it to create a real completed download (an
+  SAF-delivered audio file) via its own actual UI, then installed the current build **over** it
+  (`adb install -r`, no uninstall, no data wipe) and confirmed: the app launched with no crash and
+  no migration error in logcat; the Room schema migrated 1→7 through all six registered
+  migrations; the pre-existing download survived in both Downloads and Library with correct
+  metadata; the file — originally written to a SAF-selected external folder by code that no longer
+  exists in the current app — still played back correctly through the current player, confirming
+  the storage-architecture change (SAF → app-private, 2026-08-25) didn't strand pre-existing files;
+  and App Lock (a feature that didn't exist yet in that old schema) correctly initialized to its
+  disabled default with no crash. No destructive migration fallback is configured anywhere.
+- **Release build configuration verified, with one real, expected blocker**: `assembleRelease`
+  builds cleanly (proguard rules, resource shrinking config, and the `arm64-v8a`/`x86_64` ABI
+  restriction all carry through correctly to the release variant) but produces an **unsigned**
+  APK — no signing config or keystore exists anywhere in this repository, and none was created
+  this stage, per this stage's own explicit "do not invent or commit keystores/passwords"
+  instruction. A real signing key, generated and held by the project owner (never by an
+  automated session), is a genuine prerequisite for producing an installable/distributable
+  release artifact — this is the one concrete remaining blocker before a GitHub Releases
+  distribution is possible.
+- **Security check on release artifacts**: no `usesCleartextTraffic` override exists in the
+  manifest (so the platform default — cleartext HTTP blocked — applies to both build types); the
+  merged release manifest correctly has no `android:debuggable` attribute (resolves to `false`,
+  vs. the debug variant's explicit `true`); no stray test fixtures, secrets, keystores, or `.env`
+  files are tracked in git or bundled in the built APK beyond `kotlinx-coroutines`' own standard,
+  inert `DebugProbesKt.bin` resource (present in every app using that library; a no-op unless a
+  developer explicitly calls `DebugProbes.install()`, which this app never does); zero `Log.d`/
+  `Log.v` calls exist anywhere in the app's source.
+- **Legal/open-source docs confirmed present and accurate**: `LICENSE`, `PRIVACY.md`, `TERMS.md`,
+  `CHANGELOG.md`, `THIRD-PARTY-NOTICES.md`, `CONTRIBUTING.md`, and `README.md` all exist;
+  `THIRD-PARTY-NOTICES.md`'s pinned versions (Chaquopy 17.0.0, FFmpegKit 6.1.1, ZXing 3.5.3) were
+  cross-checked against `gradle/libs.versions.toml` and match exactly.
+- **No source or app-behavior changes were made this stage** — this was a verification-only pass.
+  `versionCode`/`versionName` (`1` / `0.1.0`) were left unchanged; bumping them for an actual
+  tagged release is a decision for whenever the project owner is ready to cut one, not something
+  to do speculatively during a readiness check.
+
 ### Fixed — Settings Scroll Hitch on Fast Reverse Fling
 
 - **Reproduced and fixed a real, measured scroll hitch** reported on Settings when reaching the

@@ -3899,4 +3899,86 @@ was verified live on-device instead, which is what actually needed proving.
 
 ---
 
+### 2026-08-30 — Release-candidate readiness pass: a real upgrade test from the v1 schema, release build inspected, one genuine blocker found (signing), no code changes
+
+**Decision:** Before any actual GitHub Release, verify the project can genuinely survive an
+upgrade with real user data across its full migration history, that the release build type itself
+is correctly configured, and that nothing sensitive would ship — without inventing a signing key
+or fabricating test results to make the release look more ready than it is.
+
+**Real upgrade/data-safety test, not a Room `MigrationTestHelper` unit test:** the milestone asked
+for a device-level install-over-install test from "the earliest realistically supported schema
+state," so a temporary `git worktree` was used to build `44d6fec` (`feat: implement download
+engine`) — the earliest commit with an actual Room schema (database version 1) and the earliest
+point a real download could be created through the app's own UI. Same pinned Gradle/AGP/Kotlin
+toolchain as current `HEAD` (confirmed identical before building, so no toolchain-drift risk), same
+`applicationId`, same debug-keystore signing (both built on this machine), so an `adb install -r`
+upgrade over it would be accepted rather than rejected as a signature mismatch.
+
+That old build predates both FFmpeg merge support and app-private storage — its format picker is
+the original flat list, mostly showing "Requires merging — not available yet" for split-stream
+DASH formats, and its one directly-downloadable option (an audio-only track) went through a real
+SAF folder-picker permission dialog, not app-private storage. Used it exactly as a real early user
+would have: analyzed a video, picked the one downloadable format, granted the SAF folder
+permission, and got one real completed download.
+
+Installed the current build over it with `adb install -r` — no uninstall, no data wipe. Result,
+each checked directly rather than assumed:
+- App launched with **no crash**, confirmed via `logcat` (no `FATAL EXCEPTION`, no
+  `IllegalStateException`/Room schema-verification error).
+- Room's migration chain executed all six registered migrations, version 1 → 7, silently and
+  correctly — no destructive fallback is configured anywhere, so a failure here would have crashed
+  the app outright rather than silently losing data.
+- The pre-existing download survived in **both** `Downloads` (status `Completed`) and `Library`
+  (correct title and size) — confirming both tables' migrations preserved existing rows.
+- The file itself — originally written by SAF-era code to a user-selected external folder, code
+  that no longer exists anywhere in the current app — **still played back correctly** through the
+  current dedicated audio player. This was the one genuinely non-obvious risk worth checking
+  explicitly: the 2026-08-25 storage-architecture change (SAF → app-private by default) could in
+  principle have stranded pre-existing SAF-delivered files if URI resolution weren't backward
+  compatible. It is.
+- App Lock — a feature that didn't exist at all in the old schema — correctly initialized to its
+  disabled default in Settings, with no crash and no corrupted state, confirming `MIGRATION_5_6`'s
+  null-safe defaults hold up against a real multi-version jump, not just the single-version jump
+  each migration was originally written and tested against.
+
+**Release build inspected — builds cleanly, but is genuinely unsigned, and that's not a defect to
+paper over:** `./gradlew :app:assembleRelease` succeeds (proguard rules, resource config, and the
+`arm64-v8a`/`x86_64` ABI restriction from the 2026-08-29 device-hardening stage all carry through
+correctly — confirmed by inspecting the release APK's own `lib/` folder), but no `signingConfig`
+is declared anywhere in this project, and no keystore file exists in the repository or on this
+machine. The output is `app-release-unsigned.apk` — confirmed genuinely unsigned by the absence of
+any `.RSA`/`.SF` signature file in its `META-INF/`. Per this stage's own explicit instruction not
+to invent or commit a keystore/password, none was generated. **This is the one real, concrete
+blocker before a distributable release artifact can exist** — a signing key is a project-owner
+decision and asset (losing or mismanaging one can permanently break the update path for anyone who
+already installed a release build signed with it), not something an automated session should
+create unilaterally. Every device-level test in this stage (including the upgrade test above) used
+the debug variant, matching this project's own established practice throughout its development.
+
+**Security check on release artifacts:** no `usesCleartextTraffic` override anywhere (the platform
+default — blocked — applies to both build types, confirmed by its absence from both the debug and
+release merged manifests); the release merged manifest correctly carries no `android:debuggable`
+attribute at all (resolves to `false` by AGP default) versus the debug variant's explicit `true`;
+no secrets, keystores, `.env` files, or stray test fixtures are tracked in git or bundled in the
+built APK, beyond `kotlinx-coroutines`' own standard `DebugProbesKt.bin` (present in every app
+using that library, inert unless a developer explicitly calls `DebugProbes.install()`, which this
+app never does); zero `Log.d`/`Log.v` calls exist anywhere in the app's own source.
+
+**Legal/open-source documentation confirmed present and accurate:** `LICENSE`, `PRIVACY.md`,
+`TERMS.md`, `CHANGELOG.md`, `THIRD-PARTY-NOTICES.md`, `CONTRIBUTING.md`, `README.md` all exist.
+`THIRD-PARTY-NOTICES.md`'s pinned dependency versions (Chaquopy `17.0.0`, FFmpegKit `6.1.1`, ZXing
+`3.5.3`) were cross-checked against `gradle/libs.versions.toml` directly rather than trusted from
+memory, and match exactly.
+
+**Not changed this stage, deliberately:** `versionCode`/`versionName` (`1` / `0.1.0`) — bumping
+them is a decision for whenever the project owner actually cuts a tagged release, not something to
+do speculatively during a readiness check. No source code changed at all; this was a verification
+pass, not a development stage — the CHANGELOG entry for it is filed under "Verified," not "Fixed"
+or "Added."
+
+**Where this is documented:** this entry, the CHANGELOG's "Verified" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**
