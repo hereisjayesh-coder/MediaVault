@@ -32,7 +32,11 @@
     <string name="home_playlist_setup_queue">Queue %1$d item(s)</string>
 
     <string name="home_collection_item_count">%1$d images</string>
+    <string name="home_collection_item_count_videos">%1$d videos</string>
+    <string name="home_collection_item_count_mixed">%1$d items</string>
     <string name="home_collection_item_index">Image %1$d</string>
+    <string name="home_collection_item_index_video">Video %1$d</string>
+    <string name="home_collection_item_unavailable">Not available</string>
     <string name="home_download_all_images">Download all</string>
     <string name="home_download_selected_images">Download selected (%1$d)</string>
 

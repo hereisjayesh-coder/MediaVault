@@ -4,6 +4,7 @@ import com.mediavault.core.domain.download.ResolvedSelection
 import com.mediavault.core.domain.extractor.MediaCollectionItem
 import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.model.MediaFormat
+import com.mediavault.core.model.MediaType
 import java.util.Locale
 
 /** "596" -> "9:56", "3725" -> "1:02:05". Returns null when there's nothing to show. */
@@ -137,9 +138,10 @@ fun estimatedPlaylistTotalSizeBytes(selection: ResolvedSelection?, itemCount: In
 }
 
 /**
- * Title to store for one enqueued image download: the post's own caption when it has one
- * (numbered against [totalCount] so sibling images in the same carousel are distinguishable in
- * the Library/Downloads list), falling back to a generic "Image"/"Image N" — never blank, never
+ * Title to store for one enqueued collection-item download: the post's own caption when it has
+ * one (numbered against [totalCount] so sibling items in the same carousel are distinguishable in
+ * the Library/Downloads list), falling back to a generic "Image"/"Video" (or numbered
+ * "Image N"/"Video N") matching [item]'s own [MediaCollectionItem.mediaType] — never blank, never
  * inventing wording the source didn't provide. [captionTitleLine] caps it to one short line —
  * a Downloads/Library row title is UI real estate, not a caption-display field, and a real
  * Instagram caption can run to several paragraphs (confirmed live: a NASA post's caption plus
@@ -149,11 +151,12 @@ fun estimatedPlaylistTotalSizeBytes(selection: ResolvedSelection?, itemCount: In
  */
 fun collectionItemTitle(collection: MediaCollectionResult, item: MediaCollectionItem, totalCount: Int): String {
     val caption = captionTitleLine(collection.title)
+    val genericLabel = if (item.mediaType == MediaType.VIDEO) "Video" else "Image"
     return when {
         totalCount <= 1 && caption.isNotEmpty() -> caption
-        totalCount <= 1 -> "Image"
+        totalCount <= 1 -> genericLabel
         caption.isNotEmpty() -> "$caption (${item.index}/$totalCount)"
-        else -> "Image ${item.index}"
+        else -> "$genericLabel ${item.index}"
     }
 }
 
@@ -170,10 +173,24 @@ private fun captionTitleLine(caption: String): String {
 }
 
 private val KNOWN_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "heic")
+private val KNOWN_VIDEO_EXTENSIONS = setOf("mp4", "mov", "webm", "mkv")
 
 /** The saved file's extension for a downloaded image: sniffed from the direct URL's own path when it looks like a real image extension, otherwise "jpg" — the container every image source tested so far actually serves, never a guess dressed up as certainty. */
 fun imageContainerFor(imageUrl: String): String {
     val path = imageUrl.substringBefore('?').substringBefore('#')
     val extension = path.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return extension.takeIf { it in KNOWN_IMAGE_EXTENSIONS } ?: "jpg"
+}
+
+/** Same sniffing rule as [imageContainerFor], for a downloaded collection video's own direct URL — sniffed extension when it's a real video container, otherwise "mp4" (what every Instagram video item seen so far actually serves). */
+fun videoContainerFor(videoUrl: String): String {
+    val path = videoUrl.substringBefore('?').substringBefore('#')
+    val extension = path.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+    return extension.takeIf { it in KNOWN_VIDEO_EXTENSIONS } ?: "mp4"
+}
+
+/** Dispatches to [imageContainerFor] or [videoContainerFor] by [item]'s own [MediaCollectionItem.mediaType] — the one place a caller needs to know a collection item's container, without repeating the image/video branch itself. */
+fun collectionItemContainer(item: MediaCollectionItem): String {
+    val url = item.mediaUrl ?: return if (item.mediaType == MediaType.VIDEO) "mp4" else "jpg"
+    return if (item.mediaType == MediaType.VIDEO) videoContainerFor(url) else imageContainerFor(url)
 }

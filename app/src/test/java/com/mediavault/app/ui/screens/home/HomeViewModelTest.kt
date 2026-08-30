@@ -651,10 +651,17 @@ class HomeViewModelTest {
 
     // --- Image collection (single image / carousel) download --------------------------
 
-    private fun collectionItem(index: Int, id: String = "shortcode_$index") = MediaCollectionItem(
+    private fun collectionItem(
+        index: Int,
+        id: String = "shortcode_$index",
+        mediaType: MediaType = MediaType.IMAGE,
+        isAvailable: Boolean = true,
+    ) = MediaCollectionItem(
         id = id,
         index = index,
-        imageUrl = "https://cdn.example.com/img$index.jpg",
+        mediaType = mediaType,
+        mediaUrl = if (isAvailable) "https://cdn.example.com/img$index.jpg" else null,
+        isAvailable = isAvailable,
         thumbnailUrl = "https://cdn.example.com/thumb$index.jpg",
     )
 
@@ -704,6 +711,46 @@ class HomeViewModelTest {
         // Every item shares the same group id, and only one group id was generated.
         val groupIds = requests.mapNotNull { it.playlistContext?.playlistId }.toSet()
         assertEquals(1, groupIds.size)
+    }
+
+    /**
+     * Regression test for the real reported defect: every item of a mixed carousel — not just
+     * the image ones — must enqueue, each routed by its own real media type, in original order.
+     */
+    @Test
+    fun `downloading a mixed carousel enqueues every item, each routed by its own real media type`() = runTest {
+        loadCollection(
+            listOf(
+                collectionItem(1, mediaType = MediaType.IMAGE),
+                collectionItem(2, mediaType = MediaType.VIDEO),
+                collectionItem(3, mediaType = MediaType.VIDEO),
+                collectionItem(4, mediaType = MediaType.IMAGE),
+            ),
+        )
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val requests = fakeDownloadEngine.enqueued
+        assertEquals(4, requests.size)
+        assertEquals(listOf("1", "2", "3", "4"), requests.map { it.formatId })
+        assertEquals(
+            listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.VIDEO, MediaType.IMAGE),
+            requests.map { it.mediaType },
+        )
+    }
+
+    @Test
+    fun `an unavailable carousel item is excluded from Download all and cannot be selected`() = runTest {
+        loadCollection(listOf(collectionItem(1), collectionItem(2, isAvailable = false), collectionItem(3)))
+
+        viewModel.onCollectionItemTapped(collectionItem(2, isAvailable = false))
+        assertTrue(viewModel.uiState.value.playlistSelection.selectedItemIds.isEmpty())
+
+        viewModel.downloadEntireCollection()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("1", "3"), fakeDownloadEngine.enqueued.map { it.formatId })
     }
 
     @Test

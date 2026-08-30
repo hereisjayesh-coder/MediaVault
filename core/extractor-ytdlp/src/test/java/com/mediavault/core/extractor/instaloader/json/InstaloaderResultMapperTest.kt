@@ -1,15 +1,21 @@
 package com.mediavault.core.extractor.instaloader.json
 
 import com.mediavault.core.domain.extractor.ExtractionResult
+import com.mediavault.core.model.MediaType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InstaloaderResultMapperTest {
 
-    private fun item(index: Int, isVideo: Boolean = false, thumbnailUrl: String? = "https://cdn.example.com/t$index.jpg") =
-        InstaloaderItemJson(index = index, isVideo = isVideo, imageUrl = "https://cdn.example.com/i$index.jpg", thumbnailUrl = thumbnailUrl)
+    private fun item(
+        index: Int,
+        isVideo: Boolean = false,
+        thumbnailUrl: String? = "https://cdn.example.com/t$index.jpg",
+        imageUrl: String? = "https://cdn.example.com/i$index.jpg",
+    ) = InstaloaderItemJson(index = index, isVideo = isVideo, imageUrl = imageUrl, thumbnailUrl = thumbnailUrl)
 
     private fun post(items: List<InstaloaderItemJson>, id: String = "abc123", title: String = "A caption") = InstaloaderPostJson(
         id = id,
@@ -32,7 +38,9 @@ class InstaloaderResultMapperTest {
         val single = result.items.single()
         assertEquals("abc123_1", single.id)
         assertEquals(1, single.index)
-        assertEquals("https://cdn.example.com/i1.jpg", single.imageUrl)
+        assertEquals(MediaType.IMAGE, single.mediaType)
+        assertEquals("https://cdn.example.com/i1.jpg", single.mediaUrl)
+        assertTrue(single.isAvailable)
     }
 
     @Test
@@ -42,31 +50,65 @@ class InstaloaderResultMapperTest {
         assertEquals(listOf(1, 2, 3), result.items.map { it.index })
         assertEquals(
             listOf("https://cdn.example.com/i1.jpg", "https://cdn.example.com/i2.jpg", "https://cdn.example.com/i3.jpg"),
-            result.items.map { it.imageUrl },
+            result.items.map { it.mediaUrl },
         )
         assertEquals(listOf("abc123_1", "abc123_2", "abc123_3"), result.items.map { it.id })
     }
 
+    /**
+     * Regression test for the real reported defect: a mixed carousel (some image items, some
+     * video items, interleaved) previously lost every video item in this exact mapper — a
+     * 9-item post with 2 real images and 7 videos in between showed as "2 images". Every item
+     * must survive, at its real position, with its real type.
+     */
     @Test
-    fun `a video item mixed into a carousel is dropped, but surviving items keep their original index`() {
-        // A 4-item post where item 2 is a video clip — only images 1, 3, 4 belong in a
-        // Collection; the survivors must still report their real position in the *post*
-        // (matters for `download()`'s format_id, which indexes into the post's own node list,
-        // not a renumbered image-only list).
-        val result = post(listOf(item(1), item(2, isVideo = true), item(3), item(4))).toMediaCollectionResult()
+    fun `a mixed carousel keeps every item — image and video alike — at its original position and type`() {
+        val result = post(
+            listOf(
+                item(1),
+                item(2, isVideo = true),
+                item(3, isVideo = true),
+                item(4),
+                item(5, isVideo = true),
+                item(6, isVideo = true),
+                item(7, isVideo = true),
+                item(8, isVideo = true),
+                item(9),
+            ),
+        ).toMediaCollectionResult()
 
-        assertEquals(listOf(1, 3, 4), result.items.map { it.index })
+        assertEquals(9, result.items.size)
+        assertEquals((1..9).toList(), result.items.map { it.index })
+        assertEquals(
+            listOf(
+                MediaType.IMAGE, MediaType.VIDEO, MediaType.VIDEO, MediaType.IMAGE, MediaType.VIDEO,
+                MediaType.VIDEO, MediaType.VIDEO, MediaType.VIDEO, MediaType.IMAGE,
+            ),
+            result.items.map { it.mediaType },
+        )
+        assertTrue(result.items.all { it.isAvailable })
     }
 
     @Test
-    fun `a post whose every item is video maps to an empty collection, never a fabricated image row`() {
+    fun `a post whose every item is video maps to a full video collection, not an empty one`() {
         val result = post(listOf(item(1, isVideo = true), item(2, isVideo = true))).toMediaCollectionResult()
 
-        assertTrue(result.items.isEmpty())
+        assertEquals(2, result.items.size)
+        assertTrue(result.items.all { it.mediaType == MediaType.VIDEO })
     }
 
     @Test
-    fun `an item thumbnail falls back to its own image URL when the source gave no smaller preview`() {
+    fun `an item Instaloader couldn't resolve a URL for is kept as unavailable, not dropped`() {
+        val result = post(listOf(item(1), item(2, imageUrl = null), item(3))).toMediaCollectionResult()
+
+        assertEquals(3, result.items.size)
+        assertEquals(listOf(true, false, true), result.items.map { it.isAvailable })
+        assertNull(result.items[1].mediaUrl)
+        assertFalse(result.items[1].isAvailable)
+    }
+
+    @Test
+    fun `an item thumbnail falls back to its own media URL when the source gave no smaller preview`() {
         val result = post(listOf(item(1, thumbnailUrl = null))).toMediaCollectionResult()
 
         assertEquals("https://cdn.example.com/i1.jpg", result.items.single().thumbnailUrl)

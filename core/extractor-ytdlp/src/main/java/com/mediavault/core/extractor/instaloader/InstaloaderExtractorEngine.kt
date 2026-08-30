@@ -84,9 +84,10 @@ class InstaloaderExtractorEngine @Inject constructor(
             val post = instaloaderJson.decodeFromString(InstaloaderPostJson.serializer(), rawJson)
             val result = post.toExtractionResult() as ExtractionResult.Collection
             if (result.collection.items.isEmpty()) {
-                // Every node in the post was video (a mixed carousel, or a video post this
-                // engine was reached for unexpectedly) — nothing this engine can offer.
-                AppResult.Failure(AppError.Unsupported("This post doesn't contain a downloadable image."))
+                // A genuinely empty post (no nodes at all) — the mapper now keeps every item
+                // regardless of type (image or video), so this no longer happens just because a
+                // carousel happened to be all-video; that case now correctly succeeds instead.
+                AppResult.Failure(AppError.Unsupported("This post doesn't contain any downloadable media."))
             } else {
                 AppResult.Success(result)
             }

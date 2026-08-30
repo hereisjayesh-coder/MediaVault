@@ -5,6 +5,68 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — Mixed Instagram Carousels Dropping Video Items, and Player Controls Overflowing Off-Screen in Landscape
+
+- **Instagram carousel root cause**: `InstaloaderResultMapper.toMediaCollectionResult()` filtered
+  every carousel item with `items.filter { !it.isVideo }` before mapping — Instaloader's own Python
+  bridge already returned every item (image and video alike) with its own `isVideo` flag correctly
+  set, but the Kotlin mapper silently discarded every video item and kept only images, while the
+  surviving items kept their true original carousel position. A real mixed carousel (image/video
+  interleaved) therefore showed a shrunken item count with gaps in the numbering — exactly the
+  reported symptom of a carousel collapsing to far fewer items than it actually contains, with the
+  survivors' positions jumping. Routing/download layers needed **no changes at all**:
+  `CompositeExtractorEngine`'s engine memoization and `InstaloaderExtractorEngine.download()`'s
+  Python bridge call were already generic enough to download a video-typed collection item
+  correctly once the mapper stopped removing it.
+- **Fix**: `MediaCollectionItem` gained `mediaType: MediaType` (reusing the existing `MediaType`
+  enum — no new parallel type) and `isAvailable: Boolean`/nullable `mediaUrl: String?`, mirroring
+  the existing `PlaylistItem.isAvailable`/`url: String?` precedent exactly (same dimmed-row,
+  disabled-tap UI treatment). The mapper now maps **every** item instead of filtering any out,
+  setting `mediaType` from Instaloader's own `isVideo` flag per item. `HomeViewModel` filters to
+  `isAvailable` items only for selection/download-all, so an item Instaloader genuinely couldn't
+  resolve a URL for is marked "Not available" and skipped, rather than silently vanishing along
+  with everything else. The Instaloader Python bridge also now catches per-item URL-resolution
+  failures individually (defaulting to `null`) instead of letting one bad node fail analysis of the
+  entire post.
+- **Player root cause**: `PlayerScreen.kt`'s `ColumnScope.VideoArea`, in its embedded
+  (non-fullscreen) branch for landscape-or-wider content (`ratio >= 1f`), sized the video with
+  `Modifier.fillMaxWidth().aspectRatio(ratio)` — unbounded in height. When this embedded player is
+  actually laid out in a landscape-oriented screen (device rotated with no fullscreen/orientation
+  lock engaged — the only app-level orientation lock exists for fullscreen playback, so embedded
+  playback rotates freely with the device), a wide video's `aspectRatio`-computed height can
+  legitimately exceed the real available screen height, silently pushing every sibling below it in
+  the `Column` — the transport row, speed/subtitle/fullscreen icon row — off the bottom of the
+  screen. Only the scrubber (laid out before the overflow) stayed visible, matching the reported
+  screenshot exactly.
+- **Fix**: added `.weight(1f, fill = false)` to that branch's `Box` modifier. Inside a `Column`,
+  this caps the video's incoming height constraint at the space actually left over after its
+  non-weighted siblings are measured, without forcing it to fill that space — so `aspectRatio()`
+  correctly shrinks the video to fit instead of overflowing. A one-line, targeted fix; the
+  already-correct `BoxWithConstraints`/`fitWithinBounds` sizing path used for fullscreen/PiP/
+  portrait-ratio content was untouched.
+- **Verified live on a physical device (Pixel 7a)**: re-downloaded the same 16:9 reference video
+  (`youtu.be/Qtl8lJwbd4g`, "Escape 100 Cops, Win $500,000") used in earlier player verification and
+  confirmed all controls (scrubber, timestamps, ±10s, play/pause, speed, aspect ratio, loop, sleep
+  timer, PiP, media details, fullscreen) render fully on-screen in both portrait and landscape
+  embedded playback, with playback (pause) confirmed functional; fullscreen and its own control set
+  spot-checked and unaffected. For the carousel fix, a live, real, currently-public mixed-type
+  Instagram carousel (`instagram.com/p/DclmvstiH2C/`, a 3-item natgeo post) confirmed the new "3
+  items" count and per-item type labels are now correct against real Instaloader data — this
+  specific post turned out to be all-video, which is itself a meaningful live confirmation, since
+  under the old filter it would have shown as **empty** (0 images survive an all-video carousel),
+  not merely short a few items. The exact reported scenario (images and videos interleaved,
+  original positions preserved) is covered by a dedicated new unit test
+  (`InstaloaderResultMapperTest`) using a synthetic 9-item interleaved carousel; a live, real,
+  still-public carousel matching that exact composition could not be located during this session's
+  live-testing window.
+- **Tests**: `InstaloaderResultMapperTest` rewritten — new coverage for a 9-item interleaved
+  image/video carousel (all items survive at their original position and type), an all-video post
+  (maps to a full video collection, not an empty one), and an item with an unresolvable URL (kept
+  as unavailable, not dropped). `YtDlpResultMapperTest`, `HomeFormattingTest`, and
+  `HomeViewModelTest` updated for the new `MediaCollectionItem` shape, including a mixed-carousel
+  download-routing test and an unavailable-item selection/download-exclusion test. Full suite:
+  `BUILD SUCCESSFUL`, zero failures.
+
 ### Verified — Release Candidate Readiness Pass (No Code Changes)
 
 - **Clean install and navigation**: current build (`796a4e4`) installs and launches cleanly on the

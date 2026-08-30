@@ -84,11 +84,23 @@ def analyze(url):
     items = []
     for index, node in enumerate(nodes, start=1):
         is_video = bool(node.is_video)
-        display_url = getattr(node, "display_url", None) or getattr(node, "url", None)
+        # Every node normally resolves cleanly — this is a defensive fallback, not the expected
+        # path: a node whose own URL Instaloader can't resolve (a rare malformed/edge-case entry)
+        # still gets a row here, with imageUrl=None, rather than an exception that would fail the
+        # *entire* post's analysis over one bad item. Kotlin surfaces this as a clearly-marked
+        # unavailable item at its real carousel position, never as a dropped/missing item.
+        try:
+            media_url = _node_url(node, is_video)
+        except Exception:
+            media_url = None
+        try:
+            display_url = getattr(node, "display_url", None) or getattr(node, "url", None)
+        except Exception:
+            display_url = None
         items.append({
             "index": index,
             "isVideo": is_video,
-            "imageUrl": _node_url(node, is_video),
+            "imageUrl": media_url,
             "thumbnailUrl": display_url,
         })
 

@@ -5,6 +5,7 @@ import com.mediavault.core.domain.extractor.MediaAnalysisResult
 import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistCollectionType
+import com.mediavault.core.model.MediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -213,7 +214,9 @@ class YtDlpResultMapperTest {
         val item = collection.items.single()
         assertEquals("1w0mfi4_1", item.id)
         assertEquals(1, item.index)
-        assertEquals("https://i.redd.it/u6q1zo1jb3mh1.jpeg", item.imageUrl)
+        assertEquals("https://i.redd.it/u6q1zo1jb3mh1.jpeg", item.mediaUrl)
+        assertEquals(MediaType.IMAGE, item.mediaType)
+        assertTrue(item.isAvailable)
     }
 
     @Test

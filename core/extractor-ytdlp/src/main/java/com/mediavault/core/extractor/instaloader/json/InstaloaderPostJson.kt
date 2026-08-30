@@ -22,9 +22,10 @@ data class InstaloaderPostJson(
 
 @Serializable
 data class InstaloaderItemJson(
-    /** 1-based position within the post's own node list — stable across image/video mixed carousels, so it stays the correct index for `download()`'s `format_id` even after Kotlin-side filtering. */
+    /** 1-based position within the post's own node list — stable across a mixed image/video carousel, so it stays the correct index for `download()`'s `format_id` regardless of any item's type or availability. */
     val index: Int,
     val isVideo: Boolean,
-    val imageUrl: String,
+    /** Null exactly when Python couldn't resolve this one node's own URL — see `analyze()`'s per-item try/except. Maps to [com.mediavault.core.domain.extractor.MediaCollectionItem.isAvailable] being false, never a dropped item. */
+    val imageUrl: String? = null,
     val thumbnailUrl: String? = null,
 )

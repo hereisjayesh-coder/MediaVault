@@ -767,8 +767,24 @@ private fun ColumnScope.VideoArea(
         // Landscape/square, embedded: shrink to a compact, width-driven box — no space
         // reserved beyond what the video itself actually occupies. Black is scoped to this
         // exact box, never bleeding past the video's own bounds into the rest of the screen.
+        //
+        // weight(1f, fill = false) is load-bearing, not decorative: without it, aspectRatio()
+        // receives an *unbounded* max-height constraint from the plain Column above (Column
+        // only bounds a non-weighted child's height when something else forces it to), so a
+        // wide landscape video's width-driven height (fillMaxWidth().aspectRatio(ratio)) can
+        // legitimately exceed the real screen height once the device is actually landscape —
+        // confirmed live on a Pixel 7a: a 16:9 embedded video in landscape orientation computed
+        // a taller box than the screen itself, silently pushing PlayerTopBar above it and
+        // PlayerControlsPanel below it both off-screen, leaving only a sliver of the scrubber
+        // visible — exactly the reported "controls disappear on rotation" defect. weight(1f,
+        // fill = false) caps the incoming max height at whatever the Column actually has left
+        // after its other (non-weighted) children — the top bar and controls panel — take their
+        // own real space first; aspectRatio() then correctly shrinks to fit within that real
+        // bound instead of overflowing it, exactly like the useAvailableHeight branch above
+        // already does via BoxWithConstraints/fitWithinBounds, just without needing the same
+        // full-bleed treatment for a case that's supposed to stay a compact, non-fullscreen box.
         Box(
-            modifier = Modifier.fillMaxWidth().aspectRatio(ratio).background(Color.Black).then(gestureModifier),
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false).aspectRatio(ratio).background(Color.Black).then(gestureModifier),
             contentAlignment = Alignment.Center,
         ) {
             VideoSurface(resizeMode, subtitleStyle, isInPip, onAttachSurface, Modifier.fillMaxSize())

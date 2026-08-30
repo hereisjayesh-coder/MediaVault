@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -86,6 +87,7 @@ import com.mediavault.core.domain.extractor.MediaCollectionResult
 import com.mediavault.core.domain.extractor.PlaylistAnalysisResult
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.model.MediaFormat
+import com.mediavault.core.model.MediaType
 import java.time.LocalTime
 
 @Composable
@@ -1010,14 +1012,25 @@ private fun PlaylistItemRow(item: PlaylistItem, isSelected: Boolean, onClick: ()
 }
 
 /**
- * Preview card for an image post or carousel. A single image (the common "just one photo"
- * post) gets its own inline Download button here — no selection toolbar/item list makes
- * sense for a batch of one. A genuine multi-image carousel shows only the count here;
- * [CollectionSelectionToolbar]/`CollectionItemRow` below it handle picking which images.
+ * Preview card for a single-item post or a (possibly mixed image/video) carousel. A single item
+ * (the common "just one photo/reel" post) gets its own inline Download button here — no
+ * selection toolbar/item list makes sense for a batch of one. A genuine multi-item carousel shows
+ * only the real count here; [CollectionSelectionToolbar]/`CollectionItemRow` below it handle
+ * picking which items. The count wording itself ("N images"/"N videos"/"N items") reflects
+ * [collection]'s *actual* mix of [MediaCollectionItem.mediaType]s — never a flat "images" label
+ * for a carousel that also contains video, which is what silently undercounted a mixed carousel
+ * before every item carried its own real type.
  */
 @Composable
 private fun CollectionHeader(collection: MediaCollectionResult, onDownloadSingleImage: () -> Unit) {
-    val isSingleImage = collection.items.size <= 1
+    val isSingleItem = collection.items.size <= 1
+    val hasImages = collection.items.any { it.mediaType == MediaType.IMAGE }
+    val hasVideos = collection.items.any { it.mediaType == MediaType.VIDEO }
+    val itemCountRes = when {
+        hasImages && hasVideos -> R.string.home_collection_item_count_mixed
+        hasVideos -> R.string.home_collection_item_count_videos
+        else -> R.string.home_collection_item_count
+    }
     MediaVaultCard {
         Icon(
             imageVector = Icons.Default.Photo,
@@ -1033,16 +1046,16 @@ private fun CollectionHeader(collection: MediaCollectionResult, onDownloadSingle
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = collection.sourceName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            if (!isSingleImage) {
+            if (!isSingleItem) {
                 Text(
-                    text = stringResource(R.string.home_collection_item_count, collection.items.size),
+                    text = stringResource(itemCountRes, collection.items.size),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        if (isSingleImage) {
+        if (isSingleItem) {
             Button(
                 onClick = onDownloadSingleImage,
                 modifier = Modifier.fillMaxWidth(),
@@ -1060,7 +1073,10 @@ private fun CollectionHeader(collection: MediaCollectionResult, onDownloadSingle
 @Composable
 private fun CollectionItemRow(item: MediaCollectionItem, isSelected: Boolean, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = item.isAvailable, onClick = onClick)
+            .alpha(if (item.isAvailable) 1f else 0.5f),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -1071,20 +1087,51 @@ private fun CollectionItemRow(item: MediaCollectionItem, isSelected: Boolean, on
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Checkbox(checked = isSelected, onCheckedChange = { onClick() })
+            Checkbox(checked = isSelected, onCheckedChange = { onClick() }, enabled = item.isAvailable)
 
-            Thumbnail(
-                thumbnailUrl = item.thumbnailUrl,
-                modifier = Modifier
-                    .width(96.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp)),
-            )
+            Box {
+                Thumbnail(
+                    thumbnailUrl = item.thumbnailUrl,
+                    modifier = Modifier
+                        .width(96.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(6.dp)),
+                )
+                // A play-icon badge is the only per-item signal that this is a video, not an
+                // image — CollectionItemRow's thumbnail alone can't otherwise distinguish them,
+                // and a mixed carousel needs that distinction visible at a glance, not just in
+                // the row's own text label.
+                if (item.mediaType == MediaType.VIDEO) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(20.dp)
+                            .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                    )
+                }
+            }
 
-            Text(
-                text = stringResource(R.string.home_collection_item_index, item.index),
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Column {
+                val indexRes = if (item.mediaType == MediaType.VIDEO) {
+                    R.string.home_collection_item_index_video
+                } else {
+                    R.string.home_collection_item_index
+                }
+                Text(
+                    text = stringResource(indexRes, item.index),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (!item.isAvailable) {
+                    Text(
+                        text = stringResource(R.string.home_collection_item_unavailable),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }

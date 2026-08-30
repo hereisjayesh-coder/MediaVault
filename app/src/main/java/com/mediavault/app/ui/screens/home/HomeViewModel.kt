@@ -255,9 +255,10 @@ class HomeViewModel @Inject constructor(
         handleItemTapped(item.id, currentPlaylistItems().filter { it.isAvailable }.map { it.id })
     }
 
-    /** Same toggle/range-select behavior as [onPlaylistItemTapped], for an image collection's items — every collection item is always available (an unresolvable one simply never appears in [MediaCollectionResult.items]), unlike a playlist entry. */
+    /** Same toggle/range-select behavior as [onPlaylistItemTapped] — an unresolvable collection item still appears in [MediaCollectionResult.items] (see [MediaCollectionItem.isAvailable]) so the carousel's real count/order stays honest, but is excluded from selection exactly like an unavailable playlist entry. */
     fun onCollectionItemTapped(item: MediaCollectionItem) {
-        handleItemTapped(item.id, currentCollectionItems().map { it.id })
+        if (!item.isAvailable) return
+        handleItemTapped(item.id, currentCollectionItems().filter { it.isAvailable }.map { it.id })
     }
 
     /**
@@ -493,21 +494,25 @@ class HomeViewModel @Inject constructor(
     private fun currentPlaylistItems(): List<PlaylistItem> =
         (_uiState.value.result as? ExtractionResult.Playlist)?.playlist?.items.orEmpty()
 
-    // --- Image collection (single image or carousel) download -------------------------
+    // --- Media collection (single item or a mixed image/video carousel) download ------
     // Unlike a video playlist, every item's direct URL is already known from the one
     // analyze() call that produced the ExtractionResult.Collection — there is no per-item
     // "resolve its own format list later" step, so this reuses DownloadEngine.enqueue()
-    // (the plain single-item entry point) once per selected image, grouped via
+    // (the plain single-item entry point) once per selected item, grouped via
     // DownloadRequest.playlistContext, rather than DownloadEngine.enqueuePlaylist (built
-    // for video items that each need independent resolution). See PROJECT_MASTER.md's
-    // Instagram image support decision log entry for the full reasoning.
+    // for video items that each need independent resolution). Each item's own
+    // MediaCollectionItem.mediaType decides its DownloadRequest.mediaType, so a video item
+    // in the same carousel ends up in Library/Player exactly like any other video, and an
+    // image item in the existing Image Viewer — same DownloadEngine, no second one. See
+    // PROJECT_MASTER.md's Instagram image/mixed-carousel decision log entries for the full
+    // reasoning.
 
     private fun currentCollectionItems(): List<MediaCollectionItem> =
         (_uiState.value.result as? ExtractionResult.Collection)?.collection?.items.orEmpty()
 
-    /** A single-image post is just a one-item collection — the same entry point handles both, no separate "Download" action needed. */
+    /** A single-item post is just a one-item collection — the same entry point handles both, no separate "Download" action needed. Only ever queues [MediaCollectionItem.isAvailable] items — an unresolvable item stays visible (for an honest count/position) but was never something "Download all" could actually fetch. */
     fun downloadEntireCollection() {
-        beginCollectionDownload(currentCollectionItems())
+        beginCollectionDownload(currentCollectionItems().filter { it.isAvailable })
     }
 
     fun downloadSelectedCollectionItems() {
@@ -592,8 +597,8 @@ class HomeViewModel @Inject constructor(
                     title = collectionItemTitle(collection, item, collection.items.size),
                     sourceName = collection.sourceName,
                     thumbnailUrl = item.thumbnailUrl,
-                    container = imageContainerFor(item.imageUrl),
-                    mediaType = MediaType.IMAGE,
+                    container = collectionItemContainer(item),
+                    mediaType = item.mediaType,
                     expectedSizeBytes = item.estimatedSizeBytes,
                     canResume = false,
                     sourceMediaId = item.id,

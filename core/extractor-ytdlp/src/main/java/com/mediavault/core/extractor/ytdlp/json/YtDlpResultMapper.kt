@@ -9,6 +9,7 @@ import com.mediavault.core.domain.extractor.PlaylistCollectionType
 import com.mediavault.core.domain.extractor.PlaylistItem
 import com.mediavault.core.model.MediaFormat
 import com.mediavault.core.model.MediaTrackInfo
+import com.mediavault.core.model.MediaType
 import com.mediavault.core.model.SubtitleTrackInfo
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -43,7 +44,9 @@ private fun YtDlpInfoJson.toMediaCollectionResult(): MediaCollectionResult {
             MediaCollectionItem(
                 id = "${postId}_1",
                 index = 1,
-                imageUrl = requireNotNull(imageUrl),
+                mediaType = MediaType.IMAGE,
+                mediaUrl = requireNotNull(imageUrl),
+                isAvailable = true,
                 thumbnailUrl = bestThumbnail ?: imageUrl,
             ),
         ),

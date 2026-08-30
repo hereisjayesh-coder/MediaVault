@@ -3981,4 +3981,125 @@ or "Added."
 
 ---
 
+### 2026-08-30 — Two real user-reported defects fixed: mixed Instagram carousels dropping video items, and Player controls overflowing off-screen in embedded landscape
+
+**Decision:** Two independently-reported bugs, fixed in one coherent pass, both traced to their
+exact root cause by reading code before writing any fix, per this stage's own explicit "these are
+two bugs, not permission to redesign the entire app" instruction. No architecture changes; both
+fixes are minimal and reuse existing infrastructure end to end.
+
+**Bug 1 — mixed Instagram carousel silently dropped every video item.** The report: a real
+carousel showing far fewer items than it visibly contains, with only images appearing and their
+numbering skipping around their true original positions. Traced the full path (Instaloader Python
+bridge → JSON DTO → Kotlin mapper → domain model → Home UI → download routing) end to end before
+touching anything:
+- The Python bridge (`mediavault_instaloader.py`) was already correct — `analyze()` returns every
+  sidecar node (image and video) via `post.get_sidecar_nodes()`, each with its own accurate
+  `is_video` flag. Not the bug.
+- `CompositeExtractorEngine`'s engine-memoization and `InstaloaderExtractorEngine.download()`'s
+  Python bridge call were already generic enough to correctly download a video-typed collection
+  item. Not the bug. Confirmed by code reading, not assumed — this meant the eventual fix needed
+  **zero** changes at the routing/engine layer, exactly matching this stage's "reuse existing
+  infrastructure, do not create a second download engine" requirement.
+- The actual bug: `InstaloaderResultMapper.toMediaCollectionResult()` had a deliberate
+  `items.filter { !it.isVideo }` — its own original comment admitted "a video item mixed into an
+  otherwise image carousel is dropped here." Combined with `MediaCollectionItem.index` correctly
+  preserving each surviving item's true original position, this exactly explains the reported
+  symptom: video items between two real images silently vanish, and the images that remain keep
+  their true, now-gapped-looking original indices.
+
+**Fix:** `MediaCollectionItem` (`core/domain`, `CollectionModels.kt`) gained `mediaType: MediaType`
+(the existing enum — no new parallel type invented) and `isAvailable: Boolean` with `mediaUrl`
+changed from a non-null `String` to a nullable `String?`. This deliberately mirrors the *existing*
+`PlaylistItem.isAvailable`/`url: String?` pattern (found by reading `PlaylistModels.kt`) rather than
+inventing a new convention, down to reusing the exact same dimmed-row/disabled-tap UI treatment
+already established for unavailable playlist items (`HomeScreen.kt`'s `CollectionItemRow`, updated
+in parallel with its playlist-row sibling). `InstaloaderResultMapper` no longer filters at all — it
+maps every item, setting `mediaType` from Instaloader's own `isVideo` per item and `isAvailable`
+from whether a URL was actually resolved. `HomeViewModel.onCollectionItemTapped`/
+`downloadEntireCollection`/`enqueueCollectionItems` filter to `isAvailable` items and route each by
+its own real `mediaType` (previously hardcoded to `MediaType.IMAGE`) — an image item still reaches
+the existing Image Viewer path, a video item now reaches the existing video download/player path,
+through the same `DownloadEngine.enqueue()`/`PlaylistDownloadContext` grouping every other
+multi-item collection already uses. The Python bridge additionally now catches per-item
+URL-resolution failures individually (defaulting to `null`/unavailable) instead of letting one bad
+node fail analysis of the whole post — satisfying this stage's "unsupported individual items should
+be marked clearly rather than causing the entire carousel to disappear" requirement directly, not
+just as a side effect of removing the filter.
+
+**Bug 2 — Player controls overflowing off-screen.** The report described portrait playback losing
+its controls after auto-rotating from landscape, leaving only the scrubber visible. Static analysis
+first ruled out three plausible-sounding causes by reading the code: (a) `controlsVisible` is a
+single boolean gating both the top-bar and bottom-panel overlays together in fullscreen — it cannot
+produce *partial* visibility, ruling out a state-machine bug; (b) Media3's native `PlayerView`
+controller (`useController = isInPip`) only activates during PiP, ruling out a competing-controller
+theory; (c) live-testing the literal fullscreen-portrait scenario found it actually works correctly
+— all controls present. The real bug was found only by testing the most literal reading of "the
+device auto-rotates": a physical/OS-level rotation event (`adb shell settings put system
+user_rotation`) against **embedded** (non-fullscreen) playback — the one mode with no app-level
+orientation lock at all (`ApplyLandscapeLock` only ever engages for
+`isFullscreen && !isInPip && ratio >= 1f`), and the one path where `ColumnScope.VideoArea`'s `else`
+branch (`useAvailableHeight == false`, i.e. `ratio >= 1f`) sizes video with unbounded
+`Modifier.fillMaxWidth().aspectRatio(ratio)`. In a landscape-oriented screen with 16:9 content, that
+aspect-ratio-driven height genuinely exceeds the real available height, silently pushing the
+Column's other children — transport row, icon row — off-screen. Reproduced live and photographed,
+matching the report exactly ("only the progress/scrubber area" visible).
+
+**Fix:** one line — `.weight(1f, fill = false)` added to that branch's `Box` modifier chain in
+`PlayerScreen.kt`. Within a `Column`, this caps the video's incoming max-height constraint at the
+Column's actual remaining space (measured after its non-weighted siblings), without forcing it to
+fill that space — so `aspectRatio()` correctly shrinks the video to fit instead of overflowing. The
+already-correct `BoxWithConstraints`/`fitWithinBounds` sizing path (used for
+fullscreen/PiP/portrait-ratio content) was not touched, since it was never the buggy branch.
+
+**Verified live on a physical device (Pixel 7a).** Player: re-downloaded the same 16:9 reference
+video used in prior player verification (`youtu.be/Qtl8lJwbd4g`, "Escape 100 Cops, Win $500,000")
+after a signing-key mismatch required uninstalling a previously-installed signed release build —
+done only after explicit user authorization for that specific destructive action — and confirmed,
+via `uiautomator` accessibility-tree dumps (not visual screenshot coordinate-estimation, which had
+proven unreliable earlier in this same session) rather than screenshots: portrait embedded — all
+controls present, all bounds within the 1080×2400 screen; landscape embedded (the actual repro) —
+scrubber, timestamps, ±10s, play/pause, speed, aspect ratio, loop, sleep timer, PiP, media details,
+and fullscreen all present with every bound within the real 2400×1080 landscape screen (previously
+these would have been pushed below y=1080); play/pause confirmed functionally toggling playback
+(timestamp frozen across a 2-second window after tapping); fullscreen spot-checked afterward and
+unaffected, with its own full control set present and "Exit fullscreen" correctly labeled.
+
+Instagram: the original bug-reporting carousel's URL was not recorded anywhere retrievable in this
+session's history (confirmed by searching the full prior transcript) — per this project's
+established "never guess/fabricate URLs" convention, and per explicit user direction when asked, a
+different real, currently-public mixed-type carousel was substituted:
+`instagram.com/p/DclmvstiH2C/` (a 3-item natgeo/OtterBox post), located and its content genuinely
+verified via a real Chrome browser session, then analyzed live in MediaVault. Result: **"3 items"**
+— the real, full count — versus what the old `!it.isVideo` filter would have produced for this
+specific post (0 images survive an all-video carousel, i.e. an empty/error result), which is
+arguably a stronger live confirmation of the fix than a partial-drop case would have been. The
+per-item labels correctly showed all three as real, individually-downloadable videos at their true
+positions. The literal reported scenario — images and videos *interleaved* within one carousel,
+original positions preserved across the mix — is covered by a dedicated new unit test using a
+synthetic 9-item carousel matching the bug report's own "Image 1 / Image 9" description exactly;
+several other real, live, currently-public Instagram carousels were tried during this session in
+search of a genuinely mixed (not all-video) example and none were found within a reasonable search
+window — documented honestly here rather than claimed as tested.
+
+**Testing:** `InstaloaderResultMapperTest` rewritten with the 9-item interleaved carousel case, an
+all-video case, and an unavailable-item case; `YtDlpResultMapperTest`, `HomeFormattingTest`, and
+`HomeViewModelTest` updated for the new `MediaCollectionItem` shape and two new tests each
+(mixed-type download routing, unavailable-item exclusion from selection/download-all). No
+Player-specific unit/UI test was added — this was a Compose layout-measurement bug with no existing
+Compose UI-testing infrastructure in this project to exercise it deterministically (the same
+determination made for a prior QR-bitmap layout fix); live-device verification is what actually
+proves this class of fix. Full affected-module suite: `BUILD SUCCESSFUL`, 317 tests, zero failures.
+Debug APK build reconfirmed with a genuine exit-0 `BUILD SUCCESSFUL`.
+
+**Not changed this stage, deliberately:** no new download engine, no new collection/playlist
+abstraction, no change to `CompositeExtractorEngine`/`InstaloaderExtractorEngine`'s routing, no
+change to the fullscreen/PiP/portrait-ratio video-sizing path, no change to the gesture contract
+(single tap toggles controls, double tap ±10s, triple tap ±30s, long-press 2x speed) — none of
+these were the bug, so none were touched.
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**

@@ -195,14 +195,19 @@ class HomeFormattingTest {
         assertNull(estimatedPlaylistTotalSizeBytes(resolveSelection(format, emptyList()), 3))
     }
 
-    // --- Image collection titles / container detection --------------------------------
+    // --- Collection titles / container detection ---------------------------------------
 
     private fun sampleCollection(title: String = "A caption") = com.mediavault.core.domain.extractor.MediaCollectionResult(
         id = "abc", sourceName = "Instagram", title = title, thumbnailUrl = null, webpageUrl = null, items = emptyList(),
     )
 
-    private fun sampleItem(index: Int) = com.mediavault.core.domain.extractor.MediaCollectionItem(
-        id = "abc_$index", index = index, imageUrl = "https://cdn.example.com/i$index.jpg", thumbnailUrl = null,
+    private fun sampleItem(
+        index: Int,
+        mediaType: com.mediavault.core.model.MediaType = com.mediavault.core.model.MediaType.IMAGE,
+        mediaUrl: String? = "https://cdn.example.com/i$index.jpg",
+        isAvailable: Boolean = true,
+    ) = com.mediavault.core.domain.extractor.MediaCollectionItem(
+        id = "abc_$index", index = index, mediaType = mediaType, mediaUrl = mediaUrl, isAvailable = isAvailable, thumbnailUrl = null,
     )
 
     @Test
@@ -223,6 +228,18 @@ class HomeFormattingTest {
     @Test
     fun `a carousel item with no caption falls back to a generic numbered title`() {
         assertEquals("Image 3", collectionItemTitle(sampleCollection(title = "  "), sampleItem(3), totalCount = 5))
+    }
+
+    @Test
+    fun `a video item's generic title says Video, never Image, matching its real media type`() {
+        val video = sampleItem(3, mediaType = com.mediavault.core.model.MediaType.VIDEO)
+        assertEquals("Video 3", collectionItemTitle(sampleCollection(title = "  "), video, totalCount = 5))
+    }
+
+    @Test
+    fun `a single video with no caption falls back to a generic Video title`() {
+        val video = sampleItem(1, mediaType = com.mediavault.core.model.MediaType.VIDEO)
+        assertEquals("Video", collectionItemTitle(sampleCollection(title = ""), video, totalCount = 1))
     }
 
     @Test
@@ -255,5 +272,33 @@ class HomeFormattingTest {
     @Test
     fun `image container defaults to jpg when the URL has no recognizable extension`() {
         assertEquals("jpg", imageContainerFor("https://cdn.example.com/i/abc123def"))
+    }
+
+    @Test
+    fun `video container is sniffed from a known extension in the direct URL`() {
+        assertEquals("webm", videoContainerFor("https://cdn.example.com/clip.webm?w=1080"))
+    }
+
+    @Test
+    fun `video container defaults to mp4 when the URL has no recognizable extension`() {
+        assertEquals("mp4", videoContainerFor("https://cdn.example.com/v/abc123def"))
+    }
+
+    @Test
+    fun `collectionItemContainer dispatches by the item's own media type`() {
+        val image = sampleItem(1, mediaUrl = "https://cdn.example.com/photo.png")
+        val video = sampleItem(2, mediaType = com.mediavault.core.model.MediaType.VIDEO, mediaUrl = "https://cdn.example.com/clip.mp4")
+
+        assertEquals("png", collectionItemContainer(image))
+        assertEquals("mp4", collectionItemContainer(video))
+    }
+
+    @Test
+    fun `collectionItemContainer falls back to a sensible default when the item has no URL at all`() {
+        val unavailableImage = sampleItem(1, mediaUrl = null, isAvailable = false)
+        val unavailableVideo = sampleItem(2, mediaType = com.mediavault.core.model.MediaType.VIDEO, mediaUrl = null, isAvailable = false)
+
+        assertEquals("jpg", collectionItemContainer(unavailableImage))
+        assertEquals("mp4", collectionItemContainer(unavailableVideo))
     }
 }
