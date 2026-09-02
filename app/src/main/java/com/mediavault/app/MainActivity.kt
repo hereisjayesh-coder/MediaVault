@@ -28,6 +28,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mediavault.app.navigation.MediaVaultNavHost
+import com.mediavault.app.security.AppLockLifecycleObserver
 import com.mediavault.app.security.AppLockManager
 import com.mediavault.app.security.AppLockSettingsStore
 import com.mediavault.app.settings.ThemeStore
@@ -48,6 +49,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var themeStore: ThemeStore
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var appLockSettingsStore: AppLockSettingsStore
+    @Inject lateinit var appLockLifecycleObserver: AppLockLifecycleObserver
 
     private val isInPictureInPicture = mutableStateOf(false)
 
@@ -85,6 +87,9 @@ class MainActivity : FragmentActivity() {
         // Same "decide before first frame" pattern as the theme read above — whether App Lock is
         // enabled decides whether the very first Compose frame already renders locked.
         appLockManager.initializeBlocking()
+        // See AppLockLifecycleObserver's KDoc for why this Activity's own Lifecycle (not
+        // ProcessLifecycleOwner) is the correct, debounce-free source for lock/unlock signals.
+        lifecycle.addObserver(appLockLifecycleObserver)
 
         setContent {
             val themeViewModel: ThemeViewModel = hiltViewModel()

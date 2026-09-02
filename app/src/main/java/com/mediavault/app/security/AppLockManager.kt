@@ -42,7 +42,7 @@ class AppLockManager @Inject constructor(
         if (settings.appLockEnabled) _isLocked.value = true
     }
 
-    /** Call from a foreground lifecycle signal (e.g. `ProcessLifecycleOwner` `ON_START`). */
+    /** Call from a foreground lifecycle signal (e.g. `MainActivity`'s `Lifecycle` `ON_START`). */
     suspend fun onAppForegrounded() {
         val backgroundedAt = backgroundedAtMs
         backgroundedAtMs = null
@@ -57,7 +57,7 @@ class AppLockManager @Inject constructor(
         }
     }
 
-    /** Call from a background lifecycle signal (e.g. `ProcessLifecycleOwner` `ON_STOP`). */
+    /** Call from a background lifecycle signal (e.g. `MainActivity`'s `Lifecycle` `ON_STOP`). */
     suspend fun onAppBackgrounded() {
         if (!settingsStore.currentSettings().appLockEnabled) return
         backgroundedAtMs = System.currentTimeMillis()

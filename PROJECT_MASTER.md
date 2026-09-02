@@ -4102,4 +4102,87 @@ these were the bug, so none were touched.
 
 ---
 
+### 2026-09-02 — Final release-hardening smoke pass: App Lock bypass found via a fast background/foreground round trip, root-caused and fixed live on device
+
+Resumed final release-hardening from a docs-only commit (README/CONTRIBUTING/PRIVACY updated to
+describe the pre-release status; no app code touched) with playback, back navigation, Settings
+rendering, release APK/signing, upgrade/migration, and the security/privacy audit already verified
+in prior stages. Remaining scope for this pass: App Lock/PIN/biometric, theme persistence, app
+restart, and one critical Home → Analyze → Download → Library → Player flow, using the Pixel 7a
+strictly as a representative real device, not the product target.
+
+Theme persistence, app restart, and the critical flow all passed clean on first verification: Dark
+theme survived a `force-stop`+relaunch; the app relaunched without incident after being killed;
+and a real `youtu.be/Qtl8lJwbd4g` analysis → 480p/101 MB download → Library ingestion → Player open
+→ confirmed-advancing playback (`0:01` → `0:30`) all worked end-to-end on the currently-installed
+debug build (already current with `HEAD`, containing the prior stage's carousel/player fix — no
+rebuild was needed until the App Lock fix below made one necessary).
+
+**App Lock did not pass clean.** Setting a PIN and enabling "Unlock with biometrics" worked, and
+backgrounding-then-reopening correctly showed the biometric prompt with a working "Use PIN"
+fallback to the app's own PIN screen, in isolated tests. But scripting repeated fast
+background/foreground round trips (`adb shell input keyevent KEYCODE_HOME` immediately followed by
+re-launching the Activity) surfaced an intermittent bypass: sometimes the app came back to an
+unlocked Home screen with no lock prompt at all, even with **Lock after: Immediately** selected —
+reproduced multiple times, not a one-off.
+
+**Root cause**, found by reading `AppLockLifecycleObserver`/`AppLockManager`/`MainActivity`, not
+guessed: `AppLockLifecycleObserver` — the app's only foreground/background signal — was registered
+on `ProcessLifecycleOwner` in `MediaVaultApplication.onCreate()`. `ProcessLifecycleOwner` debounces
+`ON_STOP`/`ON_START`: a background/foreground round trip fast enough (its own internal grace
+window, several hundred ms) never dispatches that pair to observers at all, on the theory that the
+process was never really backgrounded — a deliberate Android platform behavior meant to absorb
+config-change-driven Activity recreation. `MainActivity` already declares `configChanges` for
+rotation/multi-window/screen-size, so it's never recreated by those in the first place, meaning
+`ProcessLifecycleOwner` bought this app nothing except the one genuine benefit that mattered — not
+firing `ON_STOP` during Picture-in-Picture — at the cost of also silently absorbing real fast
+round trips, during which `AppLockManager.onAppBackgrounded()`/`onAppForegrounded()` were simply
+never called, leaving whatever lock state the app already had (unlocked, if it was unlocked)
+untouched through the round trip. `AppLockManager`'s own state-machine logic
+(`onAppBackgrounded`/`onAppForegrounded`, and the `backgroundedAtMs`/timeout comparison) was correct
+throughout and needed no change — confirmed by its existing `AppLockManagerTest` suite, which tests
+that logic directly and was unaffected — this was purely a wiring bug in which `Lifecycle` fed it
+events, invisible to a unit test that never dispatches real Android lifecycle events.
+
+**Fix:** `AppLockLifecycleObserver` is now registered on `MainActivity`'s own `Lifecycle` (from its
+`onCreate()`, alongside the existing `appLockManager.initializeBlocking()` call) instead of
+`ProcessLifecycleOwner.get().lifecycle` in `MediaVaultApplication`. A plain `Activity`'s own
+`ON_START`/`ON_STOP` fire immediately on every real transition with no debounce, and — same as
+`ProcessLifecycleOwner` — still do not fire `ON_STOP` while Picture-in-Picture keeps the window
+visible (PiP only pauses the Activity; it doesn't stop it), so the "don't lock during PiP" behavior
+already verified in an earlier stage is unaffected.
+
+**Verified live on a physical device (Pixel 7a), and the severity was actually bounded rather than
+assumed:** first confirmed the fix wasn't simply masked by test timing by polling `dumpsys activity`
+`mStopped` after backgrounding — it flips `true` within ~300ms under normal conditions, meaning any
+round trip faster than that is one the OS itself hasn't finished tearing down yet, not something any
+app-level `Lifecycle` observer (old or new) could ever see in time. Bypass counts across repeated
+trials at controlled gaps between backgrounding and re-foregrounding, pre-fix vs. post-fix: at a
+~0ms gap (back-to-back `adb` commands, faster than a human can physically leave and return to an
+app) both builds still miss the lock sometimes — a genuine, unfixable OS scheduling floor, not a bug
+in either build. At ~200ms, the pre-fix build already bypassed part of the time. Critically, at
+~500ms and ~800ms — comfortably within real human recents-switcher speed, and well under
+`ProcessLifecycleOwner`'s debounce window that the pre-fix build needed to clear — the fixed build
+locked correctly on every trial (0 bypasses across repeated runs at each gap), which is exactly the
+range a real user could trigger and exactly the range the pre-fix build was vulnerable in.
+
+**Testing:** no new unit test added — `AppLockManagerTest` already correctly covers the manager's
+own backgrounding/foreground logic in isolation, and the bug was entirely in real
+`Lifecycle`/`ProcessLifecycleOwner` dispatch timing, which cannot be exercised by a JVM test calling
+the manager's methods directly (there is no real Android lifecycle to race against); live-device
+verification is what actually proves this class of fix, the same determination made for the prior
+stage's Player layout bug. `:app:testDebugUnitTest --tests "com.mediavault.app.security.*"`:
+`BUILD SUCCESSFUL`, no regressions. Debug APK rebuilt (`:app:assembleDebug`, `BUILD SUCCESSFUL`) and
+reinstalled over the existing install (`adb install -r`, app data — including the PIN set during
+this session's testing — preserved) for live verification.
+
+**Not changed this stage, deliberately:** no change to `AppLockManager`'s state machine, the PIN
+entry/lockout UI, the biometric prompt configuration, or FLAG_SECURE's screenshot/recents-thumbnail
+handling (already independent of lock state whenever App Lock is enabled) — none of these were the
+bug, so none were touched.
+
+**Where this is documented:** this entry, the CHANGELOG's "Fixed" entry for this stage.
+
+---
+
 **END OF MASTER SPECIFICATION**

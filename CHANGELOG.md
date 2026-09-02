@@ -5,6 +5,51 @@ a tagged release; entries below track development stages instead of version numb
 
 ## [Unreleased]
 
+### Fixed — App Lock Could Be Bypassed by a Fast Background/Foreground Round Trip
+
+- **Root cause**: `AppLockLifecycleObserver` (the app's only foreground/background signal for App
+  Lock) was registered on `ProcessLifecycleOwner`, which debounces `ON_STOP`/`ON_START` — it
+  suppresses dispatching that pair entirely when an app leaves and returns the foreground fast
+  enough (its own internal grace window, on the order of several hundred ms), on the theory that
+  such a transition (e.g. a config-change-driven Activity recreate) never really left the process
+  backgrounded. For a single-Activity app whose one `Activity` already declares `configChanges` for
+  rotation/multi-window/screen-size (so it's never recreated by those), this bought nothing but the
+  downside: a real, fast background/foreground round trip — a quick recents-switcher flick, or
+  switching to another app and immediately back — silently skipped `AppLockManager.onAppBackgrounded()`/
+  `onAppForegrounded()` entirely, leaving the app exactly as it was (unlocked, if it was unlocked)
+  through that round trip, even with **Settings → Security → App Lock → Lock after: Immediately**
+  selected. `AppLockManager`'s own foreground/background state-machine logic was correct throughout —
+  this was purely a wiring bug in which `Lifecycle` fed it events.
+- **Fix**: `AppLockLifecycleObserver` is now registered on `MainActivity`'s own `Lifecycle` (from its
+  `onCreate()`) instead of `ProcessLifecycleOwner`. `MainActivity`'s own `ON_START`/`ON_STOP` fire
+  immediately on every real transition, with no debounce, and — like `ProcessLifecycleOwner` —
+  still do **not** fire `ON_STOP` while Picture-in-Picture keeps the window visible, so PiP playback
+  continues to be exempt from the background-timeout path exactly as before.
+- **Verified live on a physical device (Pixel 7a)**: reproduced the bypass pre-fix by scripting a
+  background/foreground round trip via `adb` (`KEYCODE_HOME` immediately followed by re-launching
+  the activity) with a real elapsed gap between the two of roughly 500ms–800ms — comfortably within
+  human recents-switcher speed, and well under `ProcessLifecycleOwner`'s debounce window, but with
+  enough real time for the OS to have already dispatched the genuine `onStop()` (independently
+  confirmed by polling `dumpsys activity`, which showed the Activity's `mStopped` flag flipping to
+  `true` within ~300ms of backgrounding) — this range bypassed the lock screen on the pre-fix build
+  and correctly re-locked (biometric prompt, with working "Use PIN" fallback to the app's own PIN
+  screen) on the fixed build across repeated trials with zero bypasses. Round trips faster than the
+  OS's own `onStop()` dispatch (well under 300ms — faster than a human can physically leave and
+  return to an app) still don't lock, on either build: this is a genuine Android scheduling floor,
+  not a debounce this app introduced, and no `Lifecycle` source can observe a transition the OS
+  itself hasn't dispatched yet.
+- **Not changed**: `AppLockManager`'s internal state machine (already covered by
+  `AppLockManagerTest`, unaffected since the bug was purely in which `Lifecycle` calls it), the PIN
+  entry/lockout/biometric UI, and FLAG_SECURE's screenshot/recents-thumbnail protection (already
+  independent of lock state whenever App Lock is enabled).
+- **Testing**: no new unit test was added — `AppLockManager`'s own `onAppBackgrounded()`/
+  `onAppForegrounded()` pairing logic was already correctly covered, and the bug was entirely in
+  real Android `Lifecycle`/`ProcessLifecycleOwner` dispatch timing, which a JVM unit test calling
+  the manager's methods directly cannot exercise — live-device verification is what actually proves
+  this class of fix, consistent with this project's established practice for lifecycle/timing bugs.
+  `:app:testDebugUnitTest` (full `com.mediavault.app.security` package): `BUILD SUCCESSFUL`, no
+  regressions. Debug APK rebuilt and reinstalled for live verification.
+
 ### Fixed — Mixed Instagram Carousels Dropping Video Items, and Player Controls Overflowing Off-Screen in Landscape
 
 - **Instagram carousel root cause**: `InstaloaderResultMapper.toMediaCollectionResult()` filtered
