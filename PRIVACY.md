@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-08-30_
 
 MediaVault is a local-first application. This document describes, honestly and
 specifically, what the app does and does not do with your data as of the current
@@ -25,12 +25,15 @@ updated accordingly.
   request. Those third parties see the requests you initiate, subject to their own
   privacy practices — MediaVault does not control them.
 - **Local storage.** Download history, library metadata, and playback state are stored
-  in a local Room database on your device. Downloaded and imported media files are
-  written to the storage location you choose via the Android Storage Access Framework.
-  None of this leaves your device unless you export or share it yourself.
-- **GitHub update checks.** The app may query the public GitHub Releases API to tell
-  you whether a newer version exists. This is a standard HTTPS request to GitHub and is
-  subject to GitHub's own privacy policy.
+  in a local Room database on your device. Downloaded media files are written to
+  MediaVault's own app-private storage by default — not a public/shared location — and
+  are only copied to a location you choose (via the Android Storage Access Framework)
+  when you explicitly use Export or Share. None of this leaves your device unless you
+  export or share it yourself.
+- **Checking for updates.** Settings → Updates → "Check for updates" opens MediaVault's
+  GitHub Releases page in your device's browser so you can see whether a newer version
+  exists. This is a normal link, handled by your browser, not an automated request made
+  by the app itself.
 - **Optional App Lock.** If you turn on Settings → Security → App Lock, MediaVault stores
   only a salted, hashed verifier of your PIN (never the PIN itself) in Android's
   Keystore-backed `EncryptedSharedPreferences` — not in the app's Room database and not in
