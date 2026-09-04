@@ -1,7 +1,10 @@
 package com.mediavault.app.di
 
 import com.mediavault.app.extractor.CompositeExtractorEngine
+import com.mediavault.app.extractor.HttpRedirectResolver
+import com.mediavault.app.extractor.UrlResolvingExtractorEngine
 import com.mediavault.core.domain.extractor.ExtractorEngine
+import com.mediavault.core.domain.urlresolution.RedirectResolver
 import com.mediavault.core.extractor.instaloader.InstaloaderExtractorEngine
 import com.mediavault.core.extractor.ytdlp.YtDlpExtractorEngine
 import dagger.Binds
@@ -13,7 +16,9 @@ import javax.inject.Singleton
 
 /**
  * The only file that wires concrete [ExtractorEngine] backends together — the rest of the app
- * depends on [ExtractorEngine] (bound here to [CompositeExtractorEngine]) and never sees
+ * depends on [ExtractorEngine] (bound here to [UrlResolvingExtractorEngine], which normalizes
+ * and — for share/short links — redirect-resolves a pasted URL before handing it to
+ * [CompositeExtractorEngine] for backend routing) and never sees
  * [YtDlpExtractorEngine]/[InstaloaderExtractorEngine] directly. Adding a third backend means
  * implementing [ExtractorEngine] in its own module and adding one more `@IntoSet` binding here.
  */
@@ -31,5 +36,9 @@ abstract class ExtractorModule {
 
     @Binds
     @Singleton
-    abstract fun bindExtractorEngine(impl: CompositeExtractorEngine): ExtractorEngine
+    abstract fun bindExtractorEngine(impl: UrlResolvingExtractorEngine): ExtractorEngine
+
+    @Binds
+    @Singleton
+    abstract fun bindRedirectResolver(impl: HttpRedirectResolver): RedirectResolver
 }
