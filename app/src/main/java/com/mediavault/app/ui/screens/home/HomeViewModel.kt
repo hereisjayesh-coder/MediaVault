@@ -2,6 +2,7 @@ package com.mediavault.app.ui.screens.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mediavault.app.library.LibraryRepository
 import com.mediavault.app.util.DeviceStatusProvider
 import com.mediavault.core.common.AppResult
 import com.mediavault.core.domain.download.DownloadEngine
@@ -34,6 +35,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -43,6 +45,7 @@ class HomeViewModel @Inject constructor(
     private val deviceStatusProvider: DeviceStatusProvider,
     private val downloadEngine: DownloadEngine,
     private val networkPolicyManager: NetworkPolicyManager,
+    private val libraryRepository: LibraryRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -57,6 +60,22 @@ class HomeViewModel @Inject constructor(
             val freeBytes = deviceStatusProvider.freeStorageBytes()
             val networkStatus = deviceStatusProvider.networkStatus()
             _uiState.update { it.copy(freeStorageBytes = freeBytes, networkStatus = networkStatus) }
+        }
+
+        // Recent Activity: the exact same Room-backed flow Library renders (never a second,
+        // duplicate history table — see HomeUiState.recentActivity). Collected for this
+        // ViewModel's whole lifetime (not a one-shot read), so a download that completes while
+        // Home is showing — or was queued from Home and finishes after navigating to Downloads —
+        // updates this list the moment Room's own invalidation tracker fires, no app restart or
+        // manual refresh needed. Deliberately no flowOn(Dispatchers.IO) here, unlike
+        // LibraryViewModel's analogous collector: `take(N)` is pure in-memory slicing, not I/O —
+        // Room's own executor already does the real background work inside observeAll() itself —
+        // so adding one would only detach this collection from viewModelScope's own dispatcher
+        // for no benefit.
+        viewModelScope.launch {
+            libraryRepository.observeAll()
+                .map { it.take(RECENT_ACTIVITY_LIMIT) }
+                .collect { recent -> _uiState.update { it.copy(recentActivity = recent) } }
         }
     }
 
@@ -623,19 +642,30 @@ class HomeViewModel @Inject constructor(
      * `MediaVaultNavHost`'s popUpTo always excludes it. Without an explicit reset, a stale
      * analysis result would still be showing the next time the user tapped the Home tab.
      * Cancels any in-flight analysis/format-resolution first so a late result can't land after
-     * the reset. `freeStorageBytes`/`networkStatus` are deliberately kept, not re-fetched — that
-     * device status hasn't gone stale just because the user switched tabs.
+     * the reset. `freeStorageBytes`/`networkStatus`/`recentActivity` are deliberately kept, not
+     * cleared — none of them are part of "the current link analysis": device status hasn't gone
+     * stale just because the user switched tabs, and `recentActivity` is a live collection from
+     * [libraryRepository] that only gets a fresh value when Room itself emits again, so resetting
+     * it to empty here would flash a false "no recent activity" on every Home re-entry until the
+     * next unrelated download completes.
      */
     fun resetToCleanState() {
         cancelInFlightAnalysis()
         formatResolutionJob?.cancel()
         formatResolutionJob = null
-        _uiState.update { HomeUiState(freeStorageBytes = it.freeStorageBytes, networkStatus = it.networkStatus) }
+        _uiState.update {
+            HomeUiState(freeStorageBytes = it.freeStorageBytes, networkStatus = it.networkStatus, recentActivity = it.recentActivity)
+        }
     }
 
     override fun onCleared() {
         cancelInFlightAnalysis()
         formatResolutionJob?.cancel()
         super.onCleared()
+    }
+
+    private companion object {
+        /** Home's Recent Activity is a short preview, not the full history — Library is where the complete, searchable list lives. */
+        const val RECENT_ACTIVITY_LIMIT = 5
     }
 }

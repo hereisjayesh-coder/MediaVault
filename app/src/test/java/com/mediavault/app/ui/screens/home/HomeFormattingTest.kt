@@ -301,4 +301,53 @@ class HomeFormattingTest {
         assertEquals("jpg", collectionItemContainer(unavailableImage))
         assertEquals("mp4", collectionItemContainer(unavailableVideo))
     }
+
+    // --- formatRelativeTimeLabel / recentActivitySubtitle (Recent Activity rows) ------------
+
+    @Test
+    fun `just under a minute ago reads as Just now`() {
+        assertEquals("Just now", formatRelativeTimeLabel(epochMs = 999_500L, nowEpochMs = 1_000_000L))
+    }
+
+    @Test
+    fun `minutes ago reads in whole minutes`() {
+        assertEquals("5m ago", formatRelativeTimeLabel(epochMs = 0L, nowEpochMs = 5 * 60_000L))
+    }
+
+    @Test
+    fun `hours ago reads in whole hours`() {
+        assertEquals("3h ago", formatRelativeTimeLabel(epochMs = 0L, nowEpochMs = 3 * 3_600_000L))
+    }
+
+    @Test
+    fun `days ago reads in whole days`() {
+        assertEquals("2d ago", formatRelativeTimeLabel(epochMs = 0L, nowEpochMs = 2 * 86_400_000L))
+    }
+
+    @Test
+    fun `a timestamp in the future never shows a negative duration`() {
+        assertEquals("Just now", formatRelativeTimeLabel(epochMs = 10_000L, nowEpochMs = 0L))
+    }
+
+    @Test
+    fun `recentActivitySubtitle names the media kind alongside the relative time`() {
+        val video = com.mediavault.core.database.entity.MediaItemEntity(
+            id = "v1",
+            title = "A video",
+            mediaUri = "file:///storage/v1.mp4",
+            mediaType = com.mediavault.core.model.MediaType.VIDEO,
+            durationMs = 1000L,
+            sizeBytes = 1000L,
+            container = "mp4",
+            isImported = false,
+            sourceDownloadTaskId = null,
+            lastPlaybackPositionMs = 0L,
+            isFavorite = false,
+            addedAtEpochMs = 0L,
+        )
+
+        assertEquals("Video • 5m ago", recentActivitySubtitle(video, nowEpochMs = 5 * 60_000L))
+        assertEquals("Audio • 5m ago", recentActivitySubtitle(video.copy(mediaType = com.mediavault.core.model.MediaType.AUDIO), nowEpochMs = 5 * 60_000L))
+        assertEquals("Image • 5m ago", recentActivitySubtitle(video.copy(mediaType = com.mediavault.core.model.MediaType.IMAGE), nowEpochMs = 5 * 60_000L))
+    }
 }

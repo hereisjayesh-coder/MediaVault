@@ -1,6 +1,7 @@
 package com.mediavault.app.ui.screens.home
 
 import com.mediavault.app.util.NetworkStatus
+import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.download.FormatSelectionModel
 import com.mediavault.core.domain.download.QualityTier
 import com.mediavault.core.domain.extractor.ExtractionResult
@@ -28,6 +29,11 @@ data class HomeUiState(
     val playlistDownloadSetup: PlaylistDownloadSetupState? = null,
     /** Non-null while [com.mediavault.core.domain.network.NetworkPolicyManager] has flagged a download as merely risky (not blocked) and is waiting for the user to confirm or cancel it — see [HomeViewModel]. */
     val networkWarning: NetworkWarning? = null,
+    /** The most recent completed downloads/media additions, newest first, capped to a short
+     * preview list — sourced from the exact same [com.mediavault.app.library.LibraryRepository]
+     * Room-backed flow Library itself renders (see [HomeViewModel]'s init block), never a
+     * separate history table. Empty until at least one download has actually completed. */
+    val recentActivity: List<MediaItemEntity> = emptyList(),
 )
 
 /**

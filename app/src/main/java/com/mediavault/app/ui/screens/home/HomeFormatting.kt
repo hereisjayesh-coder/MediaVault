@@ -1,5 +1,6 @@
 package com.mediavault.app.ui.screens.home
 
+import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.download.ResolvedSelection
 import com.mediavault.core.domain.extractor.MediaCollectionItem
 import com.mediavault.core.domain.extractor.MediaCollectionResult
@@ -193,4 +194,34 @@ fun videoContainerFor(videoUrl: String): String {
 fun collectionItemContainer(item: MediaCollectionItem): String {
     val url = item.mediaUrl ?: return if (item.mediaType == MediaType.VIDEO) "mp4" else "jpg"
     return if (item.mediaType == MediaType.VIDEO) videoContainerFor(url) else imageContainerFor(url)
+}
+
+/**
+ * Coarse "how long ago" label for a Recent Activity row, e.g. "Just now"/"5m ago"/"3h ago"/
+ * "2d ago" — never more precise than that, since this is a short preview list, not a detail
+ * view. [nowEpochMs] is an explicit parameter (defaulting to the real clock) purely so this stays
+ * a deterministic, unit-testable pure function. A future [epochMs] (clock skew, or a row read the
+ * instant it's inserted) clamps to "Just now" rather than ever showing a negative duration.
+ */
+fun formatRelativeTimeLabel(epochMs: Long, nowEpochMs: Long = System.currentTimeMillis()): String {
+    val diffMs = (nowEpochMs - epochMs).coerceAtLeast(0)
+    val minutes = diffMs / 60_000
+    val hours = diffMs / 3_600_000
+    val days = diffMs / 86_400_000
+    return when {
+        minutes < 1 -> "Just now"
+        minutes < 60 -> "${minutes}m ago"
+        hours < 24 -> "${hours}h ago"
+        else -> "${days}d ago"
+    }
+}
+
+/** A Recent Activity row's subtitle: media kind plus [formatRelativeTimeLabel], e.g. "Video • 5m ago". */
+fun recentActivitySubtitle(item: MediaItemEntity, nowEpochMs: Long = System.currentTimeMillis()): String {
+    val kind = when (item.mediaType) {
+        MediaType.VIDEO -> "Video"
+        MediaType.AUDIO -> "Audio"
+        MediaType.IMAGE -> "Image"
+    }
+    return "$kind • ${formatRelativeTimeLabel(item.addedAtEpochMs, nowEpochMs)}"
 }

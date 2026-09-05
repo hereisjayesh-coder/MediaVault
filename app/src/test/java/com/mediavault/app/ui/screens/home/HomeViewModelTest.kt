@@ -1,9 +1,11 @@
 package com.mediavault.app.ui.screens.home
 
 import com.mediavault.app.download.FakeNetworkPolicyManager
+import com.mediavault.app.player.FakeLibraryRepository
 import com.mediavault.app.util.NetworkStatus
 import com.mediavault.core.common.AppError
 import com.mediavault.core.common.AppResult
+import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.download.QualityTier
 import com.mediavault.core.domain.download.SelectedAudioTrack
 import com.mediavault.core.domain.extractor.ExtractionResult
@@ -36,6 +38,7 @@ class HomeViewModelTest {
     private lateinit var fakeEngine: FakeExtractorEngine
     private lateinit var fakeDownloadEngine: FakeDownloadEngine
     private lateinit var fakeNetworkPolicyManager: FakeNetworkPolicyManager
+    private lateinit var fakeLibraryRepository: FakeLibraryRepository
     private lateinit var viewModel: HomeViewModel
 
     @Before
@@ -44,7 +47,8 @@ class HomeViewModelTest {
         fakeEngine = FakeExtractorEngine()
         fakeDownloadEngine = FakeDownloadEngine()
         fakeNetworkPolicyManager = FakeNetworkPolicyManager()
-        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine, fakeNetworkPolicyManager)
+        fakeLibraryRepository = FakeLibraryRepository()
+        viewModel = HomeViewModel(fakeEngine, FakeDeviceStatusProvider(), fakeDownloadEngine, fakeNetworkPolicyManager, fakeLibraryRepository)
     }
 
     @After
@@ -59,6 +63,96 @@ class HomeViewModelTest {
         val state = viewModel.uiState.value
         assertEquals(10_000_000_000L, state.freeStorageBytes)
         assertEquals(NetworkStatus.WIFI, state.networkStatus)
+    }
+
+    // --- Recent Activity: sourced from the same Room-backed LibraryRepository flow Library uses ---
+    // Regression coverage for the reported defect: Recent Activity always showed "No recent
+    // activity" even after successful downloads, because it was never wired to any data source —
+    // a hard-coded empty state (see HomeScreen's old RecentActivitySection). These tests exercise
+    // the real fix (HomeViewModel collecting LibraryRepository.observeAll()) rather than a
+    // hand-maintained stand-in.
+
+    private fun mediaItem(id: String, title: String = "Item $id", addedAtEpochMs: Long = 0L, mediaType: MediaType = MediaType.VIDEO) =
+        MediaItemEntity(
+            id = id,
+            title = title,
+            mediaUri = "file:///storage/$id.mp4",
+            mediaType = mediaType,
+            durationMs = 60_000L,
+            sizeBytes = 1_000_000L,
+            container = "mp4",
+            isImported = false,
+            sourceDownloadTaskId = "task-$id",
+            lastPlaybackPositionMs = 0L,
+            isFavorite = false,
+            addedAtEpochMs = addedAtEpochMs,
+        )
+
+    @Test
+    fun `recent activity is empty when no downloads exist yet`() = runTest {
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.recentActivity.isEmpty())
+    }
+
+    @Test
+    fun `recent activity reflects existing library items on start`() = runTest {
+        fakeLibraryRepository.setItems(listOf(mediaItem("a", addedAtEpochMs = 2000L), mediaItem("b", addedAtEpochMs = 1000L)))
+
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("a", "b"), viewModel.uiState.value.recentActivity.map { it.id })
+    }
+
+    @Test
+    fun `recent activity preserves the repository's newest-first ordering rather than re-sorting`() = runTest {
+        // LibraryRepository.observeAll() (backed by MediaItemDao's own "ORDER BY addedAtEpochMs
+        // DESC" query) is the single source of ordering truth — HomeViewModel must never
+        // re-sort what it's handed, only cap it.
+        val newestFirst = listOf(
+            mediaItem("newest", addedAtEpochMs = 3000L),
+            mediaItem("middle", addedAtEpochMs = 2000L),
+            mediaItem("oldest", addedAtEpochMs = 1000L),
+        )
+        fakeLibraryRepository.setItems(newestFirst)
+
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("newest", "middle", "oldest"), viewModel.uiState.value.recentActivity.map { it.id })
+    }
+
+    @Test
+    fun `recent activity is capped to a short preview, not the full library`() = runTest {
+        val sixItems = (1..6).map { mediaItem("item$it", addedAtEpochMs = it.toLong()) }
+        fakeLibraryRepository.setItems(sixItems)
+
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(5, viewModel.uiState.value.recentActivity.size)
+    }
+
+    @Test
+    fun `a newly completed download appears in recent activity without recreating the ViewModel`() = runTest {
+        dispatcher.scheduler.advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.recentActivity.isEmpty())
+
+        // Simulates MediaVaultDownloadEngine.finish() inserting the completed download's row —
+        // the same Room table Library observes, reused rather than a second history source.
+        fakeLibraryRepository.setItems(listOf(mediaItem("new-download", addedAtEpochMs = 5000L)))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("new-download"), viewModel.uiState.value.recentActivity.map { it.id })
+    }
+
+    @Test
+    fun `resetToCleanState keeps recent activity instead of flashing empty on every Home re-entry`() = runTest {
+        fakeLibraryRepository.setItems(listOf(mediaItem("a", addedAtEpochMs = 1000L)))
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(listOf("a"), viewModel.uiState.value.recentActivity.map { it.id })
+
+        viewModel.resetToCleanState()
+
+        assertEquals(listOf("a"), viewModel.uiState.value.recentActivity.map { it.id })
     }
 
     // --- Reset on fresh Home entry (see HomeScreen's remember(Unit)) -----------------------

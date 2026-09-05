@@ -76,6 +76,7 @@ import com.mediavault.app.ui.components.MediaVaultCard
 import com.mediavault.app.ui.components.MediaVaultTopBar
 import com.mediavault.app.ui.components.SectionLabel
 import com.mediavault.app.util.NetworkStatus
+import com.mediavault.core.database.entity.MediaItemEntity
 import com.mediavault.core.domain.download.FormatSelectionModel
 import com.mediavault.core.domain.download.QualityTier
 import com.mediavault.core.domain.download.ResolvedSelection
@@ -298,7 +299,12 @@ private fun HomeScreenContent(
             if (showDiscovery) {
                 item { PopularSourcesSection(onClick = onNavigateToSources) }
                 item { QuickActionsSection(onNavigateToDestination) }
-                item { RecentActivitySection() }
+                item {
+                    RecentActivitySection(
+                        items = uiState.recentActivity,
+                        onItemClick = { onNavigateToDestination(MediaVaultDestination.LIBRARY) },
+                    )
+                }
                 item { DeviceStatusRow(uiState.freeStorageBytes, uiState.networkStatus) }
             }
 
@@ -539,15 +545,66 @@ private fun QuickActionCard(
     }
 }
 
+/**
+ * The most recent completed downloads/media additions — [items] is
+ * [HomeUiState.recentActivity], a live, capped slice of the exact same Room-backed
+ * [com.mediavault.app.library.LibraryRepository] flow Library itself renders (see
+ * [HomeViewModel]'s init block), so a newly completed download appears here the moment it lands
+ * in the Library, no restart or manual refresh needed. Falls back to the real empty state only
+ * when [items] is genuinely empty — never a hard-coded placeholder.
+ */
 @Composable
-private fun RecentActivitySection() {
+private fun RecentActivitySection(items: List<MediaItemEntity>, onItemClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionLabel(text = stringResource(R.string.home_recent_activity))
-        EmptyStateCard(
-            icon = Icons.Default.History,
-            title = stringResource(R.string.home_recent_activity_empty_title),
-            description = stringResource(R.string.home_recent_activity_empty_body),
-        )
+        if (items.isEmpty()) {
+            EmptyStateCard(
+                icon = Icons.Default.History,
+                title = stringResource(R.string.home_recent_activity_empty_title),
+                description = stringResource(R.string.home_recent_activity_empty_body),
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items.forEach { item ->
+                    RecentActivityRow(item = item, onClick = onItemClick)
+                }
+            }
+        }
+    }
+}
+
+/** One Recent Activity row: thumbnail, title, and [recentActivitySubtitle] — tapping opens Library, the one place this item can actually be played/managed (Home itself has no per-item player/library actions of its own). */
+@Composable
+private fun RecentActivityRow(item: MediaItemEntity, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Thumbnail(
+                thumbnailUrl = item.thumbnailUrl,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(text = item.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                Text(
+                    text = recentActivitySubtitle(item),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
