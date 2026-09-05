@@ -33,3 +33,10 @@ __pycache__/
 
 # Obsidian vault state for this repo — local note-taking tool config, not project source.
 /.obsidian/
+
+# Release-signing secrets — the actual keystore and its real path/passwords/alias must never be
+# committed. Only keystore.properties.example (checked in, no real values) documents the shape;
+# each machine that builds a signed release keeps its own local keystore.properties untracked.
+/keystore.properties
+*.jks
+*.keystore

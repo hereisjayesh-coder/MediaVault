@@ -1,9 +1,51 @@
 # Changelog
 
-All notable changes to this project are documented here. This project has not yet made
-a tagged release; entries below track development stages instead of version numbers.
+All notable changes to this project are documented here. Versions below `[0.1.0]` predate
+tagged releases, so those entries track development stages instead of version numbers.
 
 ## [Unreleased]
+
+## [0.1.1] - 2026-09-05
+
+### Fixed — Home's Recent Activity Always Showed "No Recent Activity"
+
+- **Root cause**: `RecentActivitySection` on the Home screen was a static composable that took no
+  parameters and unconditionally rendered the empty state — a placeholder from before Room
+  persistence existed (see this file's own decision log further down: "Recent Activity shows a
+  real empty state (no download-history persistence exists yet)"). Library's Room-backed
+  persistence was added later, but Recent Activity was never wired to it.
+- **Fix**: `HomeViewModel` now collects the same `LibraryRepository.observeAll()` flow Library
+  itself renders — no second history table — capped to a short newest-first preview, so a
+  completed download appears the moment Room's invalidation tracker fires, with no restart or
+  manual refresh needed. `resetToCleanState()` (which runs every time Home is freshly re-entered)
+  now also preserves this list instead of dropping it back to empty, matching how
+  `freeStorageBytes`/`networkStatus` were already handled.
+- **Verified live on a physical device (Pixel 7a)**: downloaded a real video and confirmed it
+  appeared at the top of Recent Activity ("Just now") without restarting the app, ahead of an
+  older item whose relative timestamp updated correctly; confirmed both items survive a
+  force-stop/relaunch in the same order.
+
+### Fixed — Facebook/Instagram Share Links and Reddit Short Links Failed to Download
+
+- **Root cause**: every extractor backend's `canHandle()` is a cheap, offline, regex-shaped check
+  that can only recognize a URL already containing a content id in a shape it knows. A share/short
+  link (Facebook `/share/...`, Instagram `/share/...`, Reddit `/s/...`, `redd.it`) carries no
+  content id at all — it's a redirect, and the real id only appears after that redirect is
+  followed — so pasting one failed immediately with an "unsupported source" error.
+- **Fix**: a new URL-resolution layer (`UrlNormalizer`, `SourceRegistry`, `HttpRedirectResolver`,
+  `UrlResolvingExtractorEngine`) normalizes a pasted URL and, only for the known share/short-link
+  shapes, follows the redirect chain by hand (HEAD-then-GET, since Reddit's share redirector never
+  answers HEAD; falling back to a Facebook page's own `<link rel="canonical">`/`og:url` tag when no
+  HTTP redirect is sent at all) before handing the resolved URL to the existing backend-routing
+  engine. The resolved destination's host is re-validated against the same source registry before
+  it's trusted, closing off redirect-based source spoofing; the redirect walk itself rejects any
+  hop into a loopback/private/link-local address (SSRF) and caps the number of hops.
+- **Verified**: exhaustive unit coverage for URL normalization, source/short-link classification,
+  canonical-tag extraction, and SSRF/scheme rejection; the redirect-walk mechanics (HEAD-hang
+  fallback, canonical-tag-only response) were confirmed live against real Facebook and Reddit share
+  links during development.
+
+## [0.1.0] - 2026-09-02
 
 ### Fixed — App Lock Could Be Bypassed by a Fast Background/Foreground Round Trip
 
